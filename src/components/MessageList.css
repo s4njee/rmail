@@ -1,0 +1,73 @@
+.message-list {
+  flex: none;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: var(--color-list);
+  border-right: var(--pane-border);
+}
+
+/* Header (6.1) */
+.list-header {
+  flex: none;
+  padding: var(--list-header-pad);
+  border-bottom: var(--list-header-border);
+}
+
+.list-header__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-10px);
+  margin-bottom: var(--space-14px);
+}
+
+.list-title {
+  margin: 0;
+  font-size: var(--list-title-fs);
+  font-weight: var(--list-title-weight);
+  letter-spacing: var(--list-title-tracking);
+  color: var(--color-text-primary);
+}
+
+.list-accounts {
+  font-size: var(--fs-12px);
+  color: var(--list-accounts-color);
+}
+
+.list-search {
+  width: 100%;
+  background: var(--search-bg);
+  border: var(--search-border);
+  border-radius: var(--radius-field);
+  padding: var(--search-pad);
+  font-family: var(--font-sans);
+  font-size: var(--fs-13px);
+  color: var(--color-text-body-soft);
+}
+
+.list-search::placeholder {
+  color: var(--search-placeholder-color);
+}
+
+/* Scrollable, virtualized rows — also the listbox (9.3) */
+.message-list__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--list-pad-x);
+}
+
+.message-list__scroll:focus-visible {
+  outline: var(--space-2px) solid var(--color-selection);
+  outline-offset: -2px;
+}
+
+.list-empty {
+  padding: var(--space-20px) var(--space-10px);
+  font-size: var(--fs-11px);
+  color: var(--color-text-faint);
+  text-align: center;
+}

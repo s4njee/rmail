@@ -1,0 +1,44 @@
+.titlebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--titlebar-h);
+  padding: 0 var(--titlebar-pad-x);
+  background: var(--color-chrome);
+  border-bottom: var(--titlebar-border);
+}
+
+.titlebar__app {
+  margin-left: var(--titlebar-app-offset);
+  font-size: var(--fs-12px);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--color-text-muted);
+}
+
+.titlebar__status {
+  color: var(--color-text-faint);
+}
+
+/* Banded status pill */
+.titlebar__pill {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8px);
+  padding: var(--space-4px) var(--space-12px);
+  border-radius: var(--radius-20px);
+  background: var(--color-reading);
+}
+
+.titlebar__dot {
+  flex: none;
+  width: var(--size-6px);
+  height: var(--size-6px);
+  border-radius: 50%;
+  background: var(--color-offline);
+}
+
+.titlebar__pill[data-connectivity="synced"] .titlebar__dot {
+  background: var(--color-online);
+}

@@ -1,0 +1,13 @@
+[package]
+name = "quill-store"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "SQLite store and domain types for Quill (no Tauri dependency)"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+ts-rs = { version = "12", features = ["serde-compat"] }
+ammonia = "4"
+rusqlite = { version = "0.40", features = ["bundled"] }

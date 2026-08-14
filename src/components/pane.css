@@ -1,0 +1,6 @@
+/* Temporary pane scaffolding (Epic 4) — removed as Epics 5–7 land real
+   content. */
+.pane-placeholder {
+  font-size: var(--fs-11px);
+  color: var(--color-text-faint);
+}

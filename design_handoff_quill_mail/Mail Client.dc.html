@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Public+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #eef1f4; -webkit-font-smoothing: antialiased; }
+  a { color: #3b5bdb; }
+  a:hover { color: #2f49ae; }
+</style>
+</helmet>
+
+<section style="padding: 56px 56px 96px; font-family: 'Instrument Sans', system-ui, sans-serif;">
+  <div style="display: flex; align-items: baseline; gap: 16px; margin-bottom: 8px;">
+    <div style="font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: #64748b; font-weight: 600;">Turn 1</div>
+    <div style="font-size: 26px; font-weight: 600; color: #0f1720; letter-spacing: -0.02em;">Mail client — two visual treatments</div>
+  </div>
+  <div style="font-size: 15px; color: #64748b; max-width: 720px; margin-bottom: 44px; line-height: 1.5;">Same three-pane layout in both. Each column shows the unified inbox, a focused reading view, and account settings.</div>
+
+  <div style="display: flex; flex-wrap: wrap; gap: 72px; align-items: flex-start;">
+
+    <div id="1a" style="display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <div style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; font-weight: 600; color: #fff; background: #0f1720; border-radius: 4px; padding: 4px 8px;">1a</div>
+        <div style="font-size: 17px; font-weight: 600; color: #0f1720;">Hairline — Instrument Sans, ruled rows, cool white</div>
+      </div>
+
+      <div style="width: 1280px; height: 800px; background: #fbfcfd; border: 1px solid #dbe1e8; border-radius: 10px; overflow: hidden; box-shadow: 0 24px 60px -28px rgba(15,23,32,0.28); display: flex; flex-direction: column;">
+        <div style="height: 40px; flex: none; background: #f4f6f8; border-bottom: 1px solid #e3e8ee; display: flex; align-items: center; padding: 0 14px; gap: 8px;">
+          <div style="display: flex; gap: 7px;">
+            <div style="width: 9px; height: 9px; border-radius: 50%; background: #cbd3dc;"></div>
+            <div style="width: 9px; height: 9px; border-radius: 50%; background: #cbd3dc;"></div>
+            <div style="width: 9px; height: 9px; border-radius: 50%; background: #cbd3dc;"></div>
+          </div>
+          <div style="margin-left: 12px; font-size: 12px; font-weight: 500; color: #7c8896; letter-spacing: 0.01em;">Quill</div>
+          <div style="margin-left: auto; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #9aa5b1;">84 MB · 412 MB local</div>
+        </div>
+
+        <div style="flex: 1; display: flex; min-height: 0;">
+          <div style="width: 220px; flex: none; background: #f4f6f8; border-right: 1px solid #e3e8ee; display: flex; flex-direction: column; padding: 20px 0 0;">
+            <div style="padding: 0 18px 18px; font-size: 22px; font-weight: 700; letter-spacing: -0.03em; color: #0f1720;">Quill</div>
+            <div style="padding: 0 18px 8px; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: #94a1af; font-weight: 600;">Unified</div>
+            <sc-for list="{{ folders }}" as="f" hint-placeholder-count="5">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 7px 18px; font-size: 14px; color: #33414f;">
+                <div style="width: 5px; height: 5px; border-radius: 50%; background: #b7c1cc;"></div>
+                <div style="flex: 1;">{{ f.name }}</div>
+                <div style="font-size: 12px; color: #94a1af; font-variant-numeric: tabular-nums;">{{ f.count }}</div>
+              </div>
+            </sc-for>
+            <div style="padding: 22px 18px 8px; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: #94a1af; font-weight: 600;">Accounts</div>
+            <sc-for list="{{ accounts }}" as="a" hint-placeholder-count="3">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 7px 18px; font-size: 13px; color: #4a5764;">
+                <div style="width: 6px; height: 6px; border-radius: 2px; background: {{ a.dot }};"></div>
+                <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ a.addr }}</div>
+              </div>
+            </sc-for>
+            <div style="margin-top: auto; border-top: 1px solid #e3e8ee; padding: 12px 18px; display: flex; align-items: center; gap: 8px;">
+              <div style="width: 6px; height: 6px; border-radius: 50%; background: #b4451f;"></div>
+              <div style="font-size: 12px; color: #5c6874;">Offline — synced 11:42</div>
+            </div>
+          </div>
+
+          <div style="width: 372px; flex: none; border-right: 1px solid #e3e8ee; display: flex; flex-direction: column; background: #fbfcfd;">
+            <div style="padding: 18px 20px 14px; border-bottom: 1px solid #e3e8ee;">
+              <div style="display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px;">
+                <div style="font-size: 17px; font-weight: 600; color: #0f1720;">Inbox</div>
+                <div style="font-size: 12px; color: #94a1af;">3 accounts</div>
+              </div>
+              <div style="border: 1px solid #dbe1e8; border-radius: 5px; padding: 7px 10px; font-size: 13px; color: #9aa5b1; background: #fff;">Search mail</div>
+            </div>
+            <div style="flex: 1; overflow: hidden;">
+              <sc-for list="{{ messages }}" as="m" hint-placeholder-count="8">
+                <div style="border-bottom: 1px solid #edf1f5; padding: 13px 20px; display: flex; gap: 10px;">
+                  <div style="width: 3px; flex: none; border-radius: 2px; background: {{ m.rail }};"></div>
+                  <div style="flex: 1; min-width: 0;">
+                    <div style="display: flex; align-items: baseline; gap: 10px;">
+                      <div style="flex: 1; font-size: 14px; font-weight: {{ m.weight }}; color: #17222d; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ m.from }}</div>
+                      <div style="font-size: 11px; color: #9aa5b1; font-variant-numeric: tabular-nums;">{{ m.time }}</div>
+                    </div>
+                    <div style="font-size: 13px; color: #33414f; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ m.subject }}</div>
+                    <div style="font-size: 12px; color: #94a1af; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ m.snippet }}</div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; background: #fff;">
+            <div style="padding: 30px 40px 20px; border-bottom: 1px solid #e3e8ee;">
+              <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.025em; color: #0f1720; line-height: 1.2; text-wrap: pretty;">Draft agreement for the Meridian lease</div>
+              <div style="display: flex; align-items: center; gap: 10px; margin-top: 16px;">
+                <div style="font-size: 14px; font-weight: 600; color: #17222d;">Rosa Delgado</div>
+                <div style="font-size: 13px; color: #94a1af;">rosa@meridianproperty.co</div>
+                <div style="margin-left: auto; font-size: 12px; color: #94a1af;">Aug 13, 11:38</div>
+              </div>
+              <div style="font-size: 12px; color: #94a1af; margin-top: 4px;">to me, David Okoye — via work@quill.app</div>
+            </div>
+            <div style="flex: 1; padding: 28px 40px; font-size: 15px; line-height: 1.65; color: #2a3642; display: flex; flex-direction: column; gap: 15px; overflow: hidden;">
+              <div>Hi both,</div>
+              <div>Attached is the redlined lease with the changes we discussed on Tuesday. The two open items are the escalation clause in 4.2 and the sublet language in 9. Everything else matches the term sheet.</div>
+              <div>I'd like to send this to their counsel Friday morning, so any comments by Thursday noon would be ideal.</div>
+              <div>Thanks,<br>Rosa</div>
+              <div style="margin-top: 6px; border: 1px solid #dbe1e8; border-radius: 6px; padding: 11px 14px; display: flex; align-items: center; gap: 12px; max-width: 320px;">
+                <div style="width: 30px; height: 38px; border: 1px solid #dbe1e8; border-radius: 3px; background: repeating-linear-gradient(135deg, #f4f6f8 0 4px, #eaeef2 4px 8px);"></div>
+                <div>
+                  <div style="font-size: 13px; font-weight: 500; color: #17222d;">meridian-lease-v4.pdf</div>
+                  <div style="font-size: 11px; color: #94a1af; margin-top: 2px;">248 KB · cached locally</div>
+                </div>
+              </div>
+            </div>
+            <div style="flex: none; border-top: 1px solid #e3e8ee; padding: 14px 40px; display: flex; gap: 10px; align-items: center;">
+              <div style="background: #3b5bdb; color: #fff; font-size: 13px; font-weight: 500; padding: 8px 16px; border-radius: 5px;">Reply</div>
+              <div style="border: 1px solid #dbe1e8; color: #33414f; font-size: 13px; padding: 8px 16px; border-radius: 5px;">Reply all</div>
+              <div style="border: 1px solid #dbe1e8; color: #33414f; font-size: 13px; padding: 8px 16px; border-radius: 5px;">Forward</div>
+              <div style="margin-left: auto; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #9aa5b1;">r · a · f</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 20px;">
+        <div style="width: 630px; height: 420px; background: #fff; border: 1px solid #dbe1e8; border-radius: 10px; overflow: hidden; box-shadow: 0 18px 44px -26px rgba(15,23,32,0.24); display: flex; flex-direction: column;">
+          <div style="padding: 14px 22px; border-bottom: 1px solid #e3e8ee; display: flex; align-items: center; gap: 10px; background: #f4f6f8;">
+            <div style="font-size: 12px; color: #7c8896;">← Inbox</div>
+            <div style="margin-left: auto; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #94a1af; font-weight: 600;">Focused reading</div>
+          </div>
+          <div style="flex: 1; padding: 30px 90px; overflow: hidden;">
+            <div style="font-size: 24px; font-weight: 600; letter-spacing: -0.025em; color: #0f1720; line-height: 1.25;">Draft agreement for the Meridian lease</div>
+            <div style="font-size: 13px; color: #94a1af; margin-top: 10px;">Rosa Delgado · Aug 13, 11:38</div>
+            <div style="font-size: 15px; line-height: 1.7; color: #2a3642; margin-top: 22px;">Attached is the redlined lease with the changes we discussed on Tuesday. The two open items are the escalation clause in 4.2 and the sublet language in 9. Everything else matches the term sheet.</div>
+          </div>
+        </div>
+
+        <div style="width: 630px; height: 420px; background: #fbfcfd; border: 1px solid #dbe1e8; border-radius: 10px; overflow: hidden; box-shadow: 0 18px 44px -26px rgba(15,23,32,0.24); display: flex; flex-direction: column;">
+          <div style="padding: 14px 22px; border-bottom: 1px solid #e3e8ee; background: #f4f6f8; display: flex; align-items: center;">
+            <div style="font-size: 13px; font-weight: 600; color: #17222d;">Settings</div>
+            <div style="margin-left: auto; font-size: 12px; color: #7c8896;">Accounts</div>
+          </div>
+          <div style="flex: 1; padding: 22px; overflow: hidden;">
+            <sc-for list="{{ accounts }}" as="a" hint-placeholder-count="3">
+              <div style="border-bottom: 1px solid #edf1f5; padding: 13px 2px; display: flex; align-items: center; gap: 12px;">
+                <div style="width: 8px; height: 8px; border-radius: 2px; background: {{ a.dot }};"></div>
+                <div style="flex: 1;">
+                  <div style="font-size: 14px; font-weight: 500; color: #17222d;">{{ a.addr }}</div>
+                  <div style="font-size: 12px; color: #94a1af; margin-top: 2px;">{{ a.detail }}</div>
+                </div>
+                <div style="font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #7c8896;">{{ a.size }}</div>
+              </div>
+            </sc-for>
+            <div style="margin-top: 18px; display: flex; align-items: center; gap: 12px;">
+              <div style="border: 1px solid #dbe1e8; color: #33414f; font-size: 13px; padding: 7px 14px; border-radius: 5px;">Add account</div>
+              <div style="font-size: 12px; color: #94a1af;">Mail is stored on this device only.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="1b" style="display: flex; flex-direction: column; gap: 20px; font-family: 'Public Sans', system-ui, sans-serif;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <div style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; font-weight: 600; color: #fff; background: #3b5bdb; border-radius: 4px; padding: 4px 8px;">1b</div>
+        <div style="font-size: 17px; font-weight: 600; color: #0f1720;">Banded — Public Sans, tinted rows, accent-forward</div>
+      </div>
+
+      <div style="width: 1280px; height: 800px; background: #fff; border: 1px solid #d8dfe8; border-radius: 14px; overflow: hidden; box-shadow: 0 24px 60px -28px rgba(15,23,32,0.28); display: flex; flex-direction: column;">
+        <div style="height: 44px; flex: none; background: #f4f6f8; display: flex; align-items: center; padding: 0 16px; gap: 8px;">
+          <div style="display: flex; gap: 7px;">
+            <div style="width: 9px; height: 9px; border-radius: 50%; background: #c3ccdf;"></div>
+            <div style="width: 9px; height: 9px; border-radius: 50%; background: #c3ccdf;"></div>
+            <div style="width: 9px; height: 9px; border-radius: 50%; background: #c3ccdf;"></div>
+          </div>
+          <div style="margin-left: 14px; font-size: 12px; font-weight: 500; color: #5b6a86;">Quill</div>
+          <div style="margin-left: auto; display: flex; align-items: center; gap: 8px; background: #fff; border-radius: 20px; padding: 4px 12px;">
+            <div style="width: 6px; height: 6px; border-radius: 50%; background: #b4451f;"></div>
+            <div style="font-size: 11px; color: #5b6a86;">Offline · synced 11:42</div>
+          </div>
+        </div>
+
+        <div style="flex: 1; display: flex; min-height: 0;">
+          <div style="width: 232px; flex: none; background: #f4f6f8; display: flex; flex-direction: column; padding: 24px 0 0;">
+            <div style="padding: 0 20px 20px; font-size: 24px; font-weight: 700; letter-spacing: -0.03em; color: #1b2740;">Quill</div>
+            <div style="padding: 0 20px 10px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #8593ad; font-weight: 700;">Unified</div>
+            <sc-for list="{{ folders }}" as="f" hint-placeholder-count="5">
+              <div style="margin: 1px 10px; border-radius: 8px; padding: 9px 12px; display: flex; align-items: center; gap: 10px; font-size: 14px; color: #3d4b66; background: {{ f.bg }};">
+                <div style="flex: 1; font-weight: {{ f.weight }};">{{ f.name }}</div>
+                <div style="font-size: 12px; color: #7d8caa; font-variant-numeric: tabular-nums;">{{ f.count }}</div>
+              </div>
+            </sc-for>
+            <div style="padding: 24px 20px 10px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #8593ad; font-weight: 700;">Accounts</div>
+            <sc-for list="{{ accounts }}" as="a" hint-placeholder-count="3">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 8px 22px; font-size: 13px; color: #4d5b74;">
+                <div style="width: 7px; height: 7px; border-radius: 50%; background: {{ a.dot }};"></div>
+                <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ a.addr }}</div>
+              </div>
+            </sc-for>
+            <div style="margin: auto 12px 14px; background: #fff; border-radius: 10px; padding: 12px 14px;">
+              <div style="font-size: 12px; font-weight: 600; color: #1b2740;">On this device</div>
+              <div style="font-size: 11px; color: #7d8caa; margin-top: 4px; line-height: 1.5;">412 MB mail cache<br>84 MB memory</div>
+            </div>
+          </div>
+
+          <div style="width: 384px; flex: none; display: flex; flex-direction: column; background: #fbfcfd; border-right: 1px solid #e8ecf3;">
+            <div style="padding: 22px 22px 16px;">
+              <div style="font-size: 20px; font-weight: 700; letter-spacing: -0.02em; color: #1b2740; margin-bottom: 14px;">Inbox</div>
+              <div style="background: #f2f4f6; border-radius: 9px; padding: 9px 12px; font-size: 13px; color: #8593ad;">Search mail</div>
+            </div>
+            <div style="flex: 1; overflow: hidden; padding: 0 10px;">
+              <sc-for list="{{ messages }}" as="m" hint-placeholder-count="8">
+                <div style="border-radius: 10px; padding: 12px 14px; margin-bottom: 2px; background: {{ m.band }}; display: flex; gap: 11px;">
+                  <div style="width: 8px; height: 8px; margin-top: 5px; flex: none; border-radius: 50%; background: {{ m.dot }};"></div>
+                  <div style="flex: 1; min-width: 0;">
+                    <div style="display: flex; align-items: baseline; gap: 10px;">
+                      <div style="flex: 1; font-size: 14px; font-weight: {{ m.weight }}; color: #1b2740; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ m.from }}</div>
+                      <div style="font-size: 11px; color: #8593ad; font-variant-numeric: tabular-nums;">{{ m.time }}</div>
+                    </div>
+                    <div style="font-size: 13px; color: #3d4b66; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ m.subject }}</div>
+                    <div style="font-size: 12px; color: #8593ad; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ m.snippet }}</div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; background: #fff;">
+            <div style="padding: 32px 42px 22px;">
+              <div style="font-size: 29px; font-weight: 700; letter-spacing: -0.03em; color: #1b2740; line-height: 1.18; text-wrap: pretty;">Draft agreement for the Meridian lease</div>
+              <div style="display: flex; align-items: center; gap: 12px; margin-top: 18px;">
+                <div style="width: 34px; height: 34px; border-radius: 50%; background: #dfe5f7; color: #3b5bdb; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center;">RD</div>
+                <div>
+                  <div style="font-size: 14px; font-weight: 600; color: #1b2740;">Rosa Delgado</div>
+                  <div style="font-size: 12px; color: #8593ad; margin-top: 2px;">to me, David Okoye · via work@quill.app</div>
+                </div>
+                <div style="margin-left: auto; font-size: 12px; color: #8593ad;">Aug 13, 11:38</div>
+              </div>
+            </div>
+            <div style="flex: 1; padding: 0 42px; font-size: 15px; line-height: 1.7; color: #333f57; display: flex; flex-direction: column; gap: 16px; overflow: hidden;">
+              <div>Hi both,</div>
+              <div>Attached is the redlined lease with the changes we discussed on Tuesday. The two open items are the escalation clause in 4.2 and the sublet language in 9. Everything else matches the term sheet.</div>
+              <div>I'd like to send this to their counsel Friday morning, so any comments by Thursday noon would be ideal.</div>
+              <div>Thanks,<br>Rosa</div>
+              <div style="margin-top: 4px; background: #f2f4f6; border-radius: 12px; padding: 12px 16px; display: flex; align-items: center; gap: 12px; max-width: 330px;">
+                <div style="width: 30px; height: 38px; border-radius: 4px; background: repeating-linear-gradient(135deg, #eaedf1 0 4px, #e1e5ea 4px 8px);"></div>
+                <div>
+                  <div style="font-size: 13px; font-weight: 600; color: #1b2740;">meridian-lease-v4.pdf</div>
+                  <div style="font-size: 11px; color: #8593ad; margin-top: 2px;">248 KB · cached locally</div>
+                </div>
+              </div>
+            </div>
+            <div style="flex: none; padding: 18px 42px 22px; display: flex; gap: 10px; align-items: center;">
+              <div style="background: #3b5bdb; color: #fff; font-size: 13px; font-weight: 600; padding: 10px 20px; border-radius: 24px;">Reply</div>
+              <div style="background: #f4f6f8; color: #3d4b66; font-size: 13px; font-weight: 500; padding: 10px 18px; border-radius: 24px;">Reply all</div>
+              <div style="background: #f4f6f8; color: #3d4b66; font-size: 13px; font-weight: 500; padding: 10px 18px; border-radius: 24px;">Forward</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 20px;">
+        <div style="width: 630px; height: 420px; background: #fff; border: 1px solid #d8dfe8; border-radius: 14px; overflow: hidden; box-shadow: 0 18px 44px -26px rgba(15,23,32,0.24); display: flex; flex-direction: column;">
+          <div style="padding: 15px 24px; background: #f4f6f8; display: flex; align-items: center; gap: 10px;">
+            <div style="font-size: 12px; color: #5b6a86;">← Inbox</div>
+            <div style="margin-left: auto; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #8593ad; font-weight: 700;">Focused reading</div>
+          </div>
+          <div style="flex: 1; padding: 32px 92px; overflow: hidden;">
+            <div style="font-size: 25px; font-weight: 700; letter-spacing: -0.03em; color: #1b2740; line-height: 1.22;">Draft agreement for the Meridian lease</div>
+            <div style="font-size: 13px; color: #8593ad; margin-top: 10px;">Rosa Delgado · Aug 13, 11:38</div>
+            <div style="font-size: 15px; line-height: 1.75; color: #333f57; margin-top: 22px;">Attached is the redlined lease with the changes we discussed on Tuesday. The two open items are the escalation clause in 4.2 and the sublet language in 9. Everything else matches the term sheet.</div>
+          </div>
+        </div>
+
+        <div style="width: 630px; height: 420px; background: #fff; border: 1px solid #d8dfe8; border-radius: 14px; overflow: hidden; box-shadow: 0 18px 44px -26px rgba(15,23,32,0.24); display: flex; flex-direction: column;">
+          <div style="padding: 15px 24px; background: #f4f6f8; display: flex; align-items: center;">
+            <div style="font-size: 13px; font-weight: 700; color: #1b2740;">Settings</div>
+            <div style="margin-left: auto; font-size: 12px; color: #5b6a86;">Accounts</div>
+          </div>
+          <div style="flex: 1; padding: 20px; overflow: hidden;">
+            <sc-for list="{{ accounts }}" as="a" hint-placeholder-count="3">
+              <div style="background: #f7f8fa; border-radius: 12px; padding: 14px 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px;">
+                <div style="width: 9px; height: 9px; border-radius: 50%; background: {{ a.dot }};"></div>
+                <div style="flex: 1;">
+                  <div style="font-size: 14px; font-weight: 600; color: #1b2740;">{{ a.addr }}</div>
+                  <div style="font-size: 12px; color: #8593ad; margin-top: 3px;">{{ a.detail }}</div>
+                </div>
+                <div style="font-size: 12px; color: #5b6a86;">{{ a.size }}</div>
+              </div>
+            </sc-for>
+            <div style="margin-top: 14px; display: flex; align-items: center; gap: 12px;">
+              <div style="background: #3b5bdb; color: #fff; font-size: 13px; font-weight: 600; padding: 9px 18px; border-radius: 22px;">Add account</div>
+              <div style="font-size: 12px; color: #8593ad;">Mail is stored on this device only.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#3b5bdb&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;options&quot;:[&quot;#3b5bdb&quot;,&quot;#0f766e&quot;,&quot;#b4451f&quot;,&quot;#111111&quot;]}}">
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? "#3b5bdb";
+    const dots = ["#3b5bdb", "#0f766e", "#b4451f"];
+    const accounts = [
+      { addr: "work@quill.app", detail: "IMAP · syncs every 2 min · 3 folders", size: "218 MB", dot: dots[0] },
+      { addr: "rosa.personal@fastmail.com", detail: "IMAP · syncs on open", size: "141 MB", dot: dots[1] },
+      { addr: "meridian.board@proton.me", detail: "Bridge · manual sync", size: "53 MB", dot: dots[2] }
+    ];
+    const folders = [
+      { name: "Inbox", count: 12, active: true },
+      { name: "Starred", count: 4 },
+      { name: "Drafts", count: 2 },
+      { name: "Sent", count: "" },
+      { name: "Archive", count: "" }
+    ].map(f => ({
+      ...f,
+      bg: f.active ? "#e6eaef" : "transparent",
+      weight: f.active ? 600 : 400
+    }));
+
+    const raw = [
+      { from: "Rosa Delgado", subject: "Draft agreement for the Meridian lease", snippet: "Attached is the redlined lease with the changes we", time: "11:38", unread: true, acct: 0, open: true },
+      { from: "David Okoye", subject: "Re: escalation clause in 4.2", snippet: "I think we can live with 3% if they drop the", time: "10:52", unread: true, acct: 0 },
+      { from: "Fastmail", subject: "New sign-in from Lisbon", snippet: "A device signed in to your account at 09:14 UTC", time: "09:14", unread: false, acct: 1 },
+      { from: "Meridian Board", subject: "Agenda — September meeting", snippet: "Three items so far: budget, the lease, and the", time: "Yest", unread: true, acct: 2 },
+      { from: "Priya Raman", subject: "Photos from the weekend", snippet: "Sending the ones that came out well, the rest are", time: "Yest", unread: false, acct: 1 },
+      { from: "Ledger", subject: "Invoice 2841 paid", snippet: "€4,200.00 received from Meridian Property Co", time: "Tue", unread: false, acct: 0 },
+      { from: "Tomás Ferreira", subject: "Re: Thursday walkthrough", snippet: "11am works. I'll bring the survey and the older", time: "Tue", unread: false, acct: 0 },
+      { from: "Hannah Weiss", subject: "Quick question about the sublet language", snippet: "Section 9 reads like it forbids assignment", time: "Mon", unread: false, acct: 0 },
+      { from: "Proton", subject: "Bridge update available", snippet: "Version 3.14 improves sync on slow connections", time: "Mon", unread: false, acct: 2 }
+    ];
+    const messages = raw.map(m => ({
+      ...m,
+      weight: m.unread ? 600 : 400,
+      dot: m.unread ? dots[m.acct] : "#d3dae6",
+      rail: m.open ? accent : (m.unread ? dots[m.acct] : "transparent"),
+      band: m.open ? "#e6eaef" : (m.unread ? "#f7f8fa" : "transparent")
+    }));
+
+    return { accounts, folders, messages, accent };
+  }
+}
+</script>
+</body>
+</html>

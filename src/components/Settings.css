@@ -1,0 +1,340 @@
+.settings {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-reading);
+}
+
+/* Header strip — same shape as focused reading (10.1) */
+.settings-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-10px);
+  padding: var(--focused-header-pad);
+  border-bottom: var(--focused-header-border);
+  background: var(--color-chrome);
+}
+
+.settings-title {
+  font-size: var(--settings-title-fs);
+  font-weight: var(--settings-title-weight);
+  color: var(--color-sender);
+}
+
+.settings-section-label {
+  margin-left: auto;
+  font-size: var(--fs-12px);
+  color: var(--color-text-muted);
+}
+
+/* Section tabs (extrapolated) */
+.settings-sections {
+  flex: none;
+  display: flex;
+  gap: var(--space-2px);
+  padding: var(--space-8px) var(--space-2px) 0;
+}
+
+.settings-tab {
+  padding: var(--space-4px) var(--space-10px);
+  border: none;
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12px);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-control);
+}
+
+.settings-tab[aria-selected="true"] {
+  background: var(--color-fill-subtle);
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--settings-body-pad);
+}
+
+/* Accounts rows (10.2) */
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: var(--settings-row-gap);
+  padding: var(--settings-row-pad);
+  margin: var(--settings-row-margin);
+  border-bottom: var(--settings-row-border);
+  border-radius: var(--settings-row-radius);
+  background: var(--settings-row-bg);
+}
+
+.settings-row__dot {
+  flex: none;
+  width: var(--settings-dot-size);
+  height: var(--settings-dot-size);
+  border-radius: var(--settings-dot-radius);
+}
+
+.settings-row__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-row__address {
+  font-size: var(--fs-14px);
+  font-weight: var(--settings-address-weight);
+  color: var(--color-sender);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-row__detail {
+  margin-top: var(--space-2px);
+  font-size: var(--fs-12px);
+  color: var(--color-text-faint);
+}
+
+.settings-row__size {
+  font-size: var(--settings-size-fs);
+  color: var(--color-text-muted);
+}
+
+/* Footer: Add account + the on-device note (10.2) */
+.settings-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12px);
+  margin-top: var(--space-18px);
+}
+
+.add-account-btn {
+  background: var(--add-btn-bg);
+  border: var(--add-btn-border);
+  color: var(--add-btn-fg);
+  font-family: var(--font-sans);
+  font-size: var(--fs-13px);
+  font-weight: var(--add-btn-weight);
+  padding: var(--add-btn-pad);
+  border-radius: var(--add-btn-radius);
+  cursor: pointer;
+}
+
+.settings-footer__note {
+  font-size: var(--fs-12px);
+  color: var(--color-text-faint);
+}
+
+/* Appearance options (10.3) — one settings-row per treatment, with a live
+   miniature preview in that treatment's token layer. */
+.appearance-option {
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.appearance-option.is-selected {
+  box-shadow: inset 0 0 0 var(--space-2px) var(--color-selection);
+}
+
+.appearance-option__preview {
+  flex: none;
+  padding: var(--space-8px);
+  background: var(--color-list);
+  border-radius: var(--radius-8px);
+}
+
+.appearance-option__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.appearance-option__name {
+  font-size: var(--fs-13px);
+  font-weight: var(--settings-address-weight);
+  color: var(--color-text-primary);
+  text-transform: capitalize;
+}
+
+.appearance-option__description {
+  margin-top: var(--space-2px);
+  font-size: var(--fs-12px);
+  color: var(--color-text-faint);
+}
+
+/* The miniature message row — tokens resolve per the preview's data-theme. */
+.mini-row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--list-row-gap);
+  width: var(--mini-row-w);
+  padding: var(--space-4px);
+  border-bottom: var(--list-row-border);
+  border-radius: var(--list-row-radius);
+  background: var(--color-fill-unread);
+}
+
+.mini-row__rail {
+  flex: none;
+  align-self: stretch;
+  width: var(--rail-w);
+  border-radius: var(--radius-2px);
+  background: var(--color-selection);
+}
+
+.mini-row__dot {
+  flex: none;
+  display: var(--row-dot-display);
+  width: var(--size-8px);
+  height: var(--size-8px);
+  margin-top: var(--size-5px);
+  border-radius: 50%;
+  background: var(--color-account-1);
+}
+
+.mini-row__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.mini-row__sender {
+  font-size: var(--fs-12px);
+  font-weight: 600;
+  color: var(--color-sender);
+}
+
+.mini-row__subject {
+  margin-top: var(--space-2px);
+  font-size: var(--fs-11px);
+  color: var(--color-text-body-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-empty {
+  padding: var(--space-20px);
+  font-size: var(--fs-12px);
+  color: var(--color-text-faint);
+}
+
+/* Persistent inline auth-failure state on the account row (10.4) */
+.settings-row__auth {
+  color: var(--color-offline);
+}
+
+/* Remove affordance — not designed; flagged for review (10.4) */
+.settings-row__remove {
+  padding: 0;
+  background: transparent;
+  border: none;
+  font-family: var(--font-sans);
+  font-size: var(--fs-11px);
+  color: var(--color-text-faint);
+  cursor: pointer;
+}
+
+.settings-row__remove:hover {
+  color: var(--color-offline);
+}
+
+/* Remove confirm — names exactly what will be deleted */
+.account-confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10px);
+  margin-top: var(--space-14px);
+  padding: var(--space-10px) var(--space-14px);
+  border: var(--list-row-border);
+  border-radius: var(--radius-8px);
+  background: var(--color-fill-subtle);
+  font-size: var(--fs-12px);
+  color: var(--color-text-body);
+}
+
+.account-confirm__text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Add-account form (10.4) — extrapolated from the field/search tokens,
+   flagged for design review */
+.add-account {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12px);
+  max-width: var(--add-form-max-w);
+}
+
+.add-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4px);
+  font-size: var(--fs-12px);
+  color: var(--color-text-muted);
+}
+
+.add-field--row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-12px);
+}
+
+.add-field--grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.add-field--check {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-8px);
+  padding-bottom: var(--space-8px);
+}
+
+.add-field input,
+.add-field select {
+  background: var(--search-bg);
+  border: var(--search-border);
+  border-radius: var(--radius-field);
+  padding: var(--search-pad);
+  font-family: var(--font-sans);
+  font-size: var(--fs-13px);
+  color: var(--color-text-body-soft);
+}
+
+.add-field input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: auto;
+  padding: 0;
+}
+
+.add-account__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10px);
+}
+
+.add-account__test {
+  font-size: var(--fs-12px);
+}
+
+.add-account__test--ok {
+  color: var(--color-online);
+}
+
+.add-account__test--fail {
+  color: var(--color-offline);
+}

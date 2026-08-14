@@ -1,0 +1,469 @@
+/* Quill token layer (Epic 2).
+ *
+ * THE RULE (enforced by the `quill/no-raw-values` stylelint rule, which fails
+ * the build): raw hex and px literals appear in this file and nowhere else in
+ * the frontend. Components consume `var(--…)` tokens.
+ *
+ * Structure — the "only places raw values appear" guarantee works like this:
+ *   - `:root`            shared, theme-invariant tokens: palette that both
+ *                        treatments share, the type/spacing/size/radius
+ *                        scales, the mono stack. A third theme inherits all of
+ *                        these for free.
+ *   - [data-theme=…]     theme-varying tokens: colors, fills, chrome metrics,
+ *                        structural switches (--rail-w, --titlebar-border),
+ *                        semantic radii, the sans face. Every token a
+ *                        component references must be defined here for BOTH
+ *                        themes (checked by scripts/check-token-usage.mjs), so
+ *                        adding a treatment is purely a new block.
+ *
+ * Values are transcribed from design_handoff_quill_mail/README.md §Design
+ * Tokens; scripts/check-readme-drift.mjs asserts they stay in sync.
+ */
+
+/* ---------------------------------------------------------------------------
+ * Shared (theme-invariant) tokens
+ * ------------------------------------------------------------------------ */
+
+:root {
+  /* Colors — shared palette */
+  --accent: #3b5bdb; /* primary button, selected rail, avatar glyph, links */
+  --accent-hover: #2f49ae;
+  --color-account-green: #0f766e; /* account 2 dot, online state */
+  --color-account-rust: #b4451f; /* account 3 dot, offline state */
+  --color-account-1: var(--accent);
+  --color-account-2: var(--color-account-green);
+  --color-account-3: var(--color-account-rust);
+  --canvas: #eef1f4; /* page behind windows — canvas only, never app chrome */
+  --color-online: var(--color-account-green);
+  --color-offline: var(--color-account-rust);
+  /* Selected-row rail. Product decision (deliberate deviation from the mock's
+   * accent-blue rail): orange, so selection stays legible for account-1
+   * messages whose unread rail is already the accent color. */
+  --color-selection: #e8590c;
+  --color-on-accent: #fff; /* text on the accent primary buttons */
+
+  /* Type scale — "Scale in use: 10/11/12/13/14/17/20/22/24/25/27/29px",
+   * plus 15px (message body) */
+  --fs-10px: 10px;
+  --fs-11px: 11px;
+  --fs-12px: 12px;
+  --fs-13px: 13px;
+  --fs-14px: 14px;
+  --fs-15px: 15px;
+  --fs-17px: 17px;
+  --fs-20px: 20px;
+  --fs-22px: 22px;
+  --fs-24px: 24px;
+  --fs-25px: 25px;
+  --fs-27px: 27px;
+  --fs-29px: 29px;
+
+  /* Spacing scale — 2px base, recurring steps from the README */
+  --space-2px: 2px;
+  --space-4px: 4px;
+  --space-8px: 8px;
+  --space-10px: 10px;
+  --space-12px: 12px;
+  --space-14px: 14px;
+  --space-16px: 16px;
+  --space-18px: 18px;
+  --space-20px: 20px;
+  --space-22px: 22px;
+  --space-24px: 24px;
+  --space-30px: 30px;
+  --space-32px: 32px;
+  --space-40px: 40px;
+  --space-42px: 42px;
+
+  /* Element sizes (dots, avatars, thumbnails) */
+  --size-5px: 5px;
+  --size-6px: 6px;
+  --size-7px: 7px;
+  --size-8px: 8px;
+  --size-9px: 9px;
+  --size-30px: 30px;
+  --size-34px: 34px;
+  --size-38px: 38px;
+
+  /* Radius scale — the theme blocks map these onto semantic radii */
+  --radius-2px: 2px;
+  --radius-3px: 3px;
+  --radius-5px: 5px;
+  --radius-6px: 6px;
+  --radius-8px: 8px;
+  --radius-9px: 9px;
+  --radius-10px: 10px;
+  --radius-12px: 12px;
+  --radius-14px: 14px;
+  --radius-20px: 20px;
+  --radius-22px: 22px;
+  --radius-24px: 24px;
+
+  /* Monospace accents (footprint readout, shortcut hints, sizes) */
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Sidebar invariants (Epic 5) */
+  --folder-row-gap: var(--space-10px);
+  --account-row-gap: var(--space-10px);
+
+  /* Message-list invariants (Epic 6) */
+  --row-h: 80px; /* 3 lines + 13px padding need ~81px; the mock's "≈72px" is
+                    approximate (≈8–9 rows at 800px) */
+  --list-row-gap: var(--space-10px);
+  --transition-fast: 120ms; /* selection/mark-read transitions (6.4) */
+
+  /* Settings invariants (Epic 10) */
+  --settings-row-gap: var(--space-12px);
+  --mini-row-w: 190px; /* Appearance preview width (10.3) */
+  --add-form-max-w: 380px; /* add-account form width (10.4) */
+  --composer-label-w: 48px; /* composer field labels (13.1) */
+  --composer-body-min-h: 200px; /* composer body field (13.1) */
+  --modal-w: 480px; /* modal dialog width */
+  --modal-shadow: 0 24px 60px -28px rgba(15, 23, 32, 0.28); /* the window
+    shadow value, reused for overlays */
+}
+
+/* ---------------------------------------------------------------------------
+ * 1a — Hairline
+ * ------------------------------------------------------------------------ */
+
+[data-theme="hairline"] {
+  /* Typography */
+  --font-sans: "Instrument Sans", system-ui, sans-serif;
+  --lh-body: 1.65;
+
+  /* Chrome metrics */
+  --titlebar-h: 40px;
+  --titlebar-pad-x: var(--space-14px);
+  --titlebar-app-offset: var(--space-12px);
+  --sidebar-w: 220px;
+  --list-w: 372px;
+
+  /* Structural switches (Epic 2.2) */
+  --rail-w: 3px; /* selection rail width — zero in Banded */
+  --titlebar-border: 1px solid var(--color-border-pane);
+  --pane-border: 1px solid var(--color-border-pane); /* message-list rule */
+  --sidebar-border-right: var(--pane-border); /* none in Banded */
+  --divider-w: 5px; /* pane resize hit area (≥4px, Epic 4.2) */
+
+  /* Semantic radii */
+  --radius-control: var(--radius-5px);
+  --radius-field: var(--radius-5px);
+  --radius-attachment: var(--radius-6px);
+
+  /* Panes */
+  --color-chrome: #f4f6f8; /* sidebar / titlebar */
+  --color-list: #fbfcfd;
+  --color-reading: #fff;
+
+  /* Borders — strong / pane / row */
+  --color-border-strong: #dbe1e8;
+  --color-border-pane: #e3e8ee;
+  --color-border-row: #edf1f5;
+
+  /* Text tiers (primary/body/muted/faint; -soft is the secondary README value) */
+  --color-text-primary: #0f1720;
+  --color-text-primary-soft: #17222d;
+  --color-text-body: #2a3642;
+  --color-text-body-soft: #33414f;
+  --color-text-muted: #7c8896;
+  --color-text-muted-soft: #64748b;
+  --color-text-faint: #94a1af;
+  --color-text-faint-soft: #9aa5b1;
+
+  /* Dots */
+  --color-dot-idle: #b7c1cc;
+  --color-dot-idle-strong: #cbd3dc;
+
+  /* Fills — Hairline selects with a rail, so fills are transparent */
+  --color-fill-selected: transparent;
+  --color-fill-unread: transparent;
+  --color-fill-hover: #fbfcfd; /* one step lighter than list, per README */
+  --color-fill-subtle: #fff; /* search field */
+  --color-fill-card: transparent; /* settings rows use borders instead */
+  --color-fill-avatar: transparent; /* no avatar in Hairline */
+
+  /* Sidebar (Epic 5) — values from the mock's component specs */
+  --sidebar-pad-top: var(--space-20px);
+  --sidebar-wordmark-fs: var(--fs-22px);
+  --sidebar-wordmark-pad: 0 var(--space-18px) var(--space-18px);
+  --sidebar-label-fs: var(--fs-10px);
+  --sidebar-label-pad: 0 var(--space-18px) var(--space-8px);
+  --sidebar-accounts-label-pad: var(--space-22px) var(--space-18px)
+    var(--space-8px);
+  --sidebar-label-tracking: 0.16em;
+  --sidebar-label-weight: 600;
+  --folder-row-pad: var(--size-7px) var(--space-18px);
+  --folder-row-margin: 0;
+  --folder-row-radius: 0;
+  --folder-row-selected-bg: transparent; /* no selected fill in Hairline */
+  --folder-row-selected-weight: 400;
+  --folder-dot-display: block;
+  --sidebar-count-color: var(--color-text-faint);
+  --account-row-pad: var(--size-7px) var(--space-18px);
+  --account-dot-size: var(--size-6px);
+  --account-dot-radius: var(--radius-2px);
+  --color-text-account: #4a5764;
+  --color-text-footer: #5c6874;
+  --sidebar-footer-pad: var(--space-12px) var(--space-18px);
+  --sidebar-card-margin: auto 0 0; /* card is Banded-only */
+  --sidebar-card-pad: var(--space-12px) var(--space-14px);
+
+  /* Message list (Epic 6) — values from the mock's component specs */
+  --list-header-pad: var(--space-18px) var(--space-20px) var(--space-14px);
+  --list-header-border: var(--pane-border);
+  --list-title-fs: var(--fs-17px);
+  --list-title-weight: 600;
+  --list-title-tracking: 0;
+  --list-accounts-color: var(--color-text-faint);
+  --search-bg: var(--color-reading);
+  --search-border: 1px solid var(--color-border-strong);
+  --search-pad: var(--size-7px) var(--space-10px);
+  --search-placeholder-color: var(--color-text-faint-soft);
+  --list-pad-x: 0;
+  --list-row-pad: 13px var(--space-20px);
+  --list-row-border: 1px solid var(--color-border-row);
+  --list-row-radius: 0;
+  --list-row-margin: 0;
+  --row-dot-display: none; /* Hairline rows select with a rail, no dot */
+  --color-sender: var(--color-text-primary-soft);
+  --color-timestamp: var(--color-text-faint-soft);
+
+  /* Reading pane (Epic 7) — values from the mock's component specs */
+  --reading-header-pad: var(--space-30px) var(--space-40px) var(--space-20px);
+  --reading-header-border: var(--pane-border);
+  --reading-subject-fs: var(--fs-27px);
+  --reading-subject-weight: 600;
+  --reading-subject-tracking: -0.025em;
+  --reading-subject-lh: 1.2;
+  --reading-meta-gap: var(--space-10px);
+  --reading-meta-margin-top: var(--space-16px);
+  --reading-avatar-glyph-fs: var(--fs-13px);
+  --reading-body-pad: 28px var(--space-40px);
+  --reading-body-gap: 15px;
+  --attachment-max-w: 320px;
+  --attachment-bg: var(--color-reading);
+  --attachment-border: 1px solid var(--color-border-strong);
+  --attachment-pad: 11px var(--space-14px);
+  --attachment-thumb-bg: repeating-linear-gradient(
+    135deg,
+    #f4f6f8 0 4px,
+    #eaeef2 4px 8px
+  );
+  --attachment-thumb-border: 1px solid var(--color-border-strong);
+  --attachment-thumb-radius: var(--radius-3px);
+  --actionbar-border: var(--pane-border);
+  --actionbar-pad: var(--space-14px) var(--space-40px);
+  --btn-pad-primary: var(--space-8px) var(--space-16px);
+  --btn-pad-secondary: var(--space-8px) var(--space-16px);
+  --btn-radius: var(--radius-5px);
+  --btn-primary-weight: 500;
+  --btn-secondary-bg: var(--color-reading);
+  --btn-secondary-border: 1px solid var(--color-border-strong);
+  --btn-secondary-weight: 400;
+
+  /* Focused reading (Epic 8) — values from the mock's component specs */
+  --focused-header-pad: var(--space-14px) var(--space-22px);
+  --focused-header-border: var(--pane-border);
+  --focused-label-fs: var(--fs-11px);
+  --focused-label-tracking: 0.14em;
+  --focused-label-weight: 600;
+  --focused-subject-fs: var(--fs-24px);
+  --focused-subject-weight: 600;
+  --focused-subject-tracking: -0.025em;
+  --focused-subject-lh: 1.25;
+  --focused-body-pad: var(--space-30px) 90px;
+  --focused-body-lh: 1.7;
+
+  /* Settings (Epic 10) — values from the mock's component specs */
+  --settings-body-pad: var(--space-22px);
+  --settings-title-fs: var(--fs-13px);
+  --settings-title-weight: 600;
+  --settings-row-border: 1px solid var(--color-border-row);
+  --settings-row-pad: 13px var(--space-2px);
+  --settings-row-radius: 0;
+  --settings-row-margin: 0;
+  --settings-row-bg: transparent;
+  --settings-dot-size: var(--size-8px);
+  --settings-dot-radius: var(--radius-2px);
+  --settings-address-weight: 500;
+  --settings-size-fs: var(--fs-11px);
+  --add-btn-bg: var(--color-reading);
+  --add-btn-border: 1px solid var(--color-border-strong);
+  --add-btn-fg: var(--color-text-body-soft);
+  --add-btn-weight: 400;
+  --add-btn-pad: var(--size-7px) var(--space-14px);
+  --add-btn-radius: var(--radius-5px);
+}
+
+/* ---------------------------------------------------------------------------
+ * 1b — Banded
+ * ------------------------------------------------------------------------ */
+
+[data-theme="banded"] {
+  /* Typography */
+  --font-sans: "Public Sans", system-ui, sans-serif;
+  --lh-body: 1.7;
+
+  /* Chrome metrics */
+  --titlebar-h: 44px;
+  --titlebar-pad-x: var(--space-16px);
+  --titlebar-app-offset: var(--space-14px);
+  --sidebar-w: 232px;
+  --list-w: 384px;
+
+  /* Structural switches */
+  --rail-w: 0px; /* no rail in Banded */
+  --titlebar-border: none;
+  --pane-border: 1px solid var(--color-border-pane);
+  --sidebar-border-right: none; /* no rule on the sidebar in Banded */
+  --divider-w: 5px;
+
+  /* Semantic radii */
+  --radius-control: var(--radius-9px);
+  --radius-field: var(--radius-9px);
+  --radius-attachment: var(--radius-12px);
+
+  /* Panes */
+  --color-chrome: #f4f6f8;
+  --color-list: #fbfcfd;
+  --color-reading: #fff;
+
+  /* Borders — no row rules in Banded */
+  --color-border-strong: #d8dfe8;
+  --color-border-pane: #e8ecf3;
+  --color-border-row: transparent;
+
+  /* Text tiers */
+  --color-text-primary: #1b2740;
+  --color-text-primary-soft: #1b2740;
+  --color-text-body: #333f57;
+  --color-text-body-soft: #3d4b66;
+  --color-text-muted: #5b6a86;
+  --color-text-muted-soft: #5b6a86;
+  --color-text-faint: #8593ad;
+  --color-text-faint-soft: #7d8caa;
+
+  /* Dots */
+  --color-dot-idle: #d3dae6;
+
+  /* Fills */
+  --color-fill-selected: #e6eaef;
+  --color-fill-unread: #f7f8fa;
+  --color-fill-hover: #f2f4f6;
+  --color-fill-subtle: #f2f4f6;
+  --color-fill-card: #f7f8fa;
+  --color-fill-avatar: #dfe5f7;
+
+  /* Sidebar (Epic 5) — values from the mock's component specs */
+  --sidebar-pad-top: var(--space-24px);
+  --sidebar-wordmark-fs: var(--fs-24px);
+  --sidebar-wordmark-pad: 0 var(--space-20px) var(--space-20px);
+  --sidebar-label-fs: var(--fs-11px);
+  --sidebar-label-pad: 0 var(--space-20px) var(--space-10px);
+  --sidebar-accounts-label-pad: var(--space-24px) var(--space-20px)
+    var(--space-10px);
+  --sidebar-label-tracking: 0.12em;
+  --sidebar-label-weight: 700;
+  --folder-row-pad: var(--size-9px) var(--space-12px);
+  --folder-row-margin: 1px var(--space-10px);
+  --folder-row-radius: var(--radius-8px);
+  --folder-row-selected-bg: var(--color-fill-selected);
+  --folder-row-selected-weight: 600;
+  --folder-dot-display: none;
+  --sidebar-count-color: var(--color-text-faint-soft);
+  --account-row-pad: var(--space-8px) var(--space-22px);
+  --account-dot-size: var(--size-7px);
+  --account-dot-radius: 50%;
+  --color-text-account: #4d5b74;
+  --color-text-footer: #7d8caa;
+  --sidebar-footer-pad: var(--space-12px) var(--space-14px);
+  --sidebar-card-margin: auto var(--space-12px) var(--space-14px);
+  --sidebar-card-pad: var(--space-12px) var(--space-14px);
+
+  /* Message list (Epic 6) — values from the mock's component specs */
+  --list-header-pad: var(--space-22px) var(--space-22px) var(--space-16px);
+  --list-header-border: none;
+  --list-title-fs: var(--fs-20px);
+  --list-title-weight: 700;
+  --list-title-tracking: -0.02em;
+  --list-accounts-color: var(--color-text-faint);
+  --search-bg: var(--color-fill-subtle);
+  --search-border: none;
+  --search-pad: var(--size-9px) var(--space-12px);
+  --search-placeholder-color: var(--color-text-faint);
+  --list-pad-x: 0 var(--space-10px);
+  --list-row-pad: var(--space-12px) var(--space-14px);
+  --list-row-border: none;
+  --list-row-radius: var(--radius-10px);
+  --list-row-margin: 0 0 var(--space-2px);
+  --row-dot-display: block; /* Banded rows carry an 8px status dot */
+  --color-sender: var(--color-text-primary);
+  --color-timestamp: var(--color-text-faint);
+
+  /* Reading pane (Epic 7) — values from the mock's component specs */
+  --reading-header-pad: var(--space-32px) var(--space-42px) var(--space-22px);
+  --reading-header-border: none;
+  --reading-subject-fs: var(--fs-29px);
+  --reading-subject-weight: 700;
+  --reading-subject-tracking: -0.03em;
+  --reading-subject-lh: 1.18;
+  --reading-meta-gap: var(--space-12px);
+  --reading-meta-margin-top: var(--space-18px);
+  --reading-avatar-glyph-fs: var(--fs-13px);
+  --reading-body-pad: 0 var(--space-42px);
+  --reading-body-gap: var(--space-16px);
+  --attachment-max-w: 330px;
+  --attachment-bg: var(--color-fill-subtle);
+  --attachment-border: none;
+  --attachment-pad: var(--space-12px) var(--space-16px);
+  --attachment-thumb-bg: repeating-linear-gradient(
+    135deg,
+    #eaedf1 0 4px,
+    #e1e5ea 4px 8px
+  );
+  --attachment-thumb-border: none;
+  --attachment-thumb-radius: 4px;
+  --actionbar-border: none;
+  --actionbar-pad: var(--space-18px) var(--space-42px) var(--space-22px);
+  --btn-pad-primary: var(--space-10px) var(--space-20px);
+  --btn-pad-secondary: var(--space-10px) var(--space-18px);
+  --btn-radius: var(--radius-24px);
+  --btn-primary-weight: 600;
+  --btn-secondary-bg: var(--color-fill-subtle);
+  --btn-secondary-border: none;
+  --btn-secondary-weight: 500;
+
+  /* Focused reading (Epic 8) — values from the mock's component specs */
+  --focused-header-pad: 15px var(--space-24px);
+  --focused-header-border: none;
+  --focused-label-fs: var(--fs-11px);
+  --focused-label-tracking: 0.12em;
+  --focused-label-weight: 700;
+  --focused-subject-fs: var(--fs-25px);
+  --focused-subject-weight: 700;
+  --focused-subject-tracking: -0.03em;
+  --focused-subject-lh: 1.22;
+  --focused-body-pad: var(--space-32px) 92px;
+  --focused-body-lh: 1.75;
+
+  /* Settings (Epic 10) — values from the mock's component specs */
+  --settings-body-pad: var(--space-20px);
+  --settings-title-fs: var(--fs-13px);
+  --settings-title-weight: 700;
+  --settings-row-border: none;
+  --settings-row-pad: var(--space-14px) var(--space-16px);
+  --settings-row-radius: var(--radius-12px);
+  --settings-row-margin: 0 0 var(--space-8px);
+  --settings-row-bg: var(--color-fill-card);
+  --settings-dot-size: var(--size-9px);
+  --settings-dot-radius: 50%;
+  --settings-address-weight: 600;
+  --settings-size-fs: var(--fs-12px);
+  --add-btn-bg: var(--accent);
+  --add-btn-border: none;
+  --add-btn-fg: var(--color-on-accent);
+  --add-btn-weight: 600;
+  --add-btn-pad: var(--size-9px) var(--space-18px);
+  --add-btn-radius: var(--radius-22px);
+}

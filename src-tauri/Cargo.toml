@@ -1,0 +1,29 @@
+[package]
+name = "quill"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "Quill — a lightweight local-first mail client (Tauri shell)"
+
+[lib]
+# The `_lib` suffix is required so the lib name doesn't collide with the bin
+# name on Windows (see https://github.com/rust-lang/cargo/issues/8519).
+name = "quill_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# The `devtools` feature flag is deliberately not enabled: devtools then work
+# only in debug builds and are compiled out of release (Epic 1.2 / 16.3).
+# `protocol-asset` enables the asset protocol used to serve attachments and
+# images (Epic 3.3) — required because assetProtocol.enable is set in the config.
+tauri = { version = "2", features = ["protocol-asset"] }
+quill-store = { path = "../crates/quill-store" }
+quill-mail = { path = "../crates/quill-mail" }
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+tauri-plugin-opener = "2"
+tauri-plugin-window-state = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }

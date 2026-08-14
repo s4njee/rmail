@@ -1,0 +1,121 @@
+.list-row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--list-row-gap);
+  height: var(--row-h);
+  margin: var(--list-row-margin);
+  padding: var(--list-row-pad);
+  border: none;
+  border-radius: var(--list-row-radius);
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+  border-bottom: var(--list-row-border);
+  overflow: hidden;
+  transition: background-color var(--transition-fast) ease-out;
+}
+
+.list-row.is-unread {
+  background: var(--color-fill-unread);
+}
+
+.list-row.is-selected {
+  background: var(--color-fill-selected);
+}
+
+.list-row:not(.is-selected):hover {
+  background: var(--color-fill-hover);
+}
+
+/* Selection rail — 3px full-height in Hairline, zero in Banded */
+.list-row__rail {
+  flex: none;
+  align-self: stretch;
+  width: var(--rail-w);
+  border-radius: var(--radius-2px);
+  background: transparent;
+  transition: background-color var(--transition-fast) ease-out;
+}
+
+.list-row.is-unread .list-row__rail {
+  background: var(--account-color);
+}
+
+.list-row.is-selected .list-row__rail {
+  background: var(--color-selection);
+}
+
+/* Status dot — Banded only */
+.list-row__dot {
+  flex: none;
+  display: var(--row-dot-display);
+  width: var(--size-8px);
+  height: var(--size-8px);
+  margin-top: var(--size-5px);
+  border-radius: 50%;
+  background: var(--color-dot-idle);
+  transition: background-color var(--transition-fast) ease-out;
+}
+
+.list-row.is-unread .list-row__dot {
+  background: var(--account-color);
+}
+
+/* The three text lines */
+.list-row__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 0;
+}
+
+.list-row__top {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-10px);
+}
+
+.list-row__sender {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-14px);
+  font-weight: 400;
+  line-height: 1.25;
+  color: var(--color-sender);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-row.is-unread .list-row__sender {
+  font-weight: 600;
+}
+
+.list-row__time {
+  flex: none;
+  font-size: var(--fs-11px);
+  color: var(--color-timestamp);
+}
+
+.list-row__subject {
+  margin-top: var(--space-2px);
+  font-size: var(--fs-13px);
+  line-height: 1.25;
+  color: var(--color-text-body-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-row__snippet {
+  margin-top: var(--space-2px);
+  font-size: var(--fs-12px);
+  line-height: 1.25;
+  color: var(--color-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

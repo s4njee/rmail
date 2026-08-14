@@ -1,0 +1,8 @@
+# Cargo configuration for the workspace.
+#
+# ts-rs exports TypeScript bindings during `cargo test` (Epic 3.1). This env
+# var routes them straight to the frontend's generated-types dir, so TS types
+# are produced from the Rust contract and never hand-duplicated. Regenerate
+# with `scripts/gen-ipc-types.sh`.
+[env]
+TS_RS_EXPORT_DIR = { value = "src/lib/ipc", relative = true }

@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  frontend:
+    name: Frontend (typecheck, lint, build, format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build (tsc --noEmit, eslint, stylelint, vite build)
+        run: pnpm build
+      - name: Theme checks (README drift + token usage under both treatments)
+        run: pnpm check:theme
+      - name: Format check
+        run: pnpm format:check
+
+  rust:
+    name: Rust (fmt, clippy, build, domain isolation)
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - name: Install Linux system dependencies (Tauri / WebKitGTK)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libxdo-dev \
+            libssl-dev
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Build
+        run: cargo build
+      - name: Test (includes the 100-row IPC budget and no-credential guard)
+        run: cargo test
+      - name: TS bindings are generated, not hand-edited (Epic 3.1)
+        run: |
+          ./scripts/gen-ipc-types.sh
+          git diff --exit-code -- src/lib/ipc
+      - name: Domain-crate isolation (no tauri in quill-store/mail/cal)
+        run: ./scripts/check-domain-isolation.sh

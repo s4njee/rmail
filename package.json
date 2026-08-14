@@ -1,0 +1,38 @@
+{
+  "name": "quill",
+  "version": "0.1.0",
+  "description": "Quill — a lightweight local-first mail client (Rust + Tauri, SolidJS frontend)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "start": "vite",
+    "serve": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "lint:css": "stylelint \"src/**/*.css\"",
+    "check:theme": "node scripts/check-token-usage.mjs && node scripts/check-readme-drift.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "build": "tsc --noEmit && eslint . --max-warnings 0 && stylelint \"src/**/*.css\" && vite build",
+    "tauri": "tauri"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@rcalendar/ui": "link:./rcalendar/packages/calendar-ui",
+    "@tanstack/solid-virtual": "^3.13.36",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "solid-js": "^1.9.3"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "eslint": "^9",
+    "eslint-plugin-solid": "^0.14.5",
+    "prettier": "^3",
+    "stylelint": "^16",
+    "typescript": "~5.6.2",
+    "typescript-eslint": "^8",
+    "vite": "^6.0.3",
+    "vite-plugin-solid": "^2.11.0"
+  }
+}

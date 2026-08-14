@@ -1,0 +1,15 @@
+.divider {
+  flex: none;
+  width: var(--divider-w);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+/* Blend into the pane to the right so the hit strip isn't a visible seam. */
+.divider[data-side="sidebar"] {
+  background: var(--color-list);
+}
+
+.divider[data-side="list"] {
+  background: var(--color-reading);
+}

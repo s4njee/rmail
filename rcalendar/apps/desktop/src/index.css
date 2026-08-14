@@ -1,0 +1,31 @@
+/**
+ * Global CSS styles and Almanac design token setup.
+ */
+
+@import '../../../packages/calendar-ui/src/tokens/tokens.css';
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--al-font-ui, 'Bricolage Grotesque', system-ui, -apple-system, sans-serif);
+  background: var(--al-chrome, #FAFAFA);
+  color: var(--al-ink, #1A1A1A);
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  color: inherit;
+}

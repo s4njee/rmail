@@ -1,0 +1,37 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+/* Focused reading (Epic 8): hide the panes, let the reading pane fill. */
+.workspace--focused .sidebar,
+.workspace--focused .message-list,
+.workspace--focused .divider {
+  display: none;
+}
+
+/* Calendar mode (Epic 14.6): the calendar layout fills right of the sidebar. */
+.calendar-layout {
+  display: none;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace--calendar .calendar-layout {
+  display: flex;
+}
+
+.workspace--calendar .message-list,
+.workspace--calendar .reading-pane,
+.workspace--calendar .divider {
+  display: none;
+}

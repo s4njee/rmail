@@ -1,0 +1,287 @@
+.reading-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-reading);
+}
+
+/* Header (7.1) */
+.reading-header {
+  flex: none;
+  padding: var(--reading-header-pad);
+  border-bottom: var(--reading-header-border);
+}
+
+.reading-subject {
+  margin: 0;
+  font-size: var(--reading-subject-fs);
+  font-weight: var(--reading-subject-weight);
+  letter-spacing: var(--reading-subject-tracking);
+  line-height: var(--reading-subject-lh);
+  color: var(--color-text-primary);
+  text-wrap: pretty;
+}
+
+.reading-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--reading-meta-gap);
+  margin-top: var(--reading-meta-margin-top);
+}
+
+.reading-meta__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.reading-sender {
+  font-size: var(--fs-14px);
+  font-weight: 600;
+  color: var(--color-sender);
+}
+
+.reading-address {
+  font-size: var(--fs-13px);
+  color: var(--color-text-faint);
+}
+
+.reading-recipients {
+  margin-top: var(--space-2px);
+  font-size: var(--fs-12px);
+  color: var(--color-text-faint);
+}
+
+.reading-recipients-line {
+  margin-top: var(--space-4px);
+  font-size: var(--fs-12px);
+  color: var(--color-text-faint);
+}
+
+.reading-date {
+  margin-left: auto;
+  font-size: var(--fs-12px);
+  color: var(--color-text-faint);
+}
+
+.reading-avatar {
+  flex: none;
+  width: var(--size-34px);
+  height: var(--size-34px);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--reading-avatar-glyph-fs);
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--color-fill-avatar);
+}
+
+/* Body (7.2) — scrolls independently; header and actions stay pinned */
+.reading-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--reading-body-pad);
+  font-size: var(--fs-15px);
+  line-height: var(--lh-body);
+  color: var(--color-text-body);
+  display: flex;
+  flex-direction: column;
+  gap: var(--reading-body-gap);
+}
+
+.reading-paragraph {
+  margin: 0;
+}
+
+/* Attachment card (7.4) */
+.attachment-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12px);
+  max-width: var(--attachment-max-w);
+  background: var(--attachment-bg);
+  border: var(--attachment-border);
+  border-radius: var(--radius-attachment);
+  padding: var(--attachment-pad);
+  font-family: var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.attachment-thumb {
+  flex: none;
+  width: var(--size-30px);
+  height: var(--size-38px);
+  border-radius: var(--attachment-thumb-radius);
+  background: var(--attachment-thumb-bg);
+  border: var(--attachment-thumb-border);
+}
+
+.attachment-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.attachment-name {
+  font-size: var(--fs-13px);
+  font-weight: 500;
+  color: var(--color-sender);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-meta {
+  margin-top: var(--space-2px);
+  font-size: var(--fs-11px);
+  color: var(--color-text-faint);
+}
+
+/* Action bar (7.5) */
+.reading-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-10px);
+  padding: var(--actionbar-pad);
+  border-top: var(--actionbar-border);
+}
+
+.btn {
+  font-family: var(--font-sans);
+  font-size: var(--fs-13px);
+  cursor: pointer;
+  border: none;
+}
+
+.btn--primary {
+  background: var(--accent);
+  color: var(--color-on-accent);
+  font-weight: var(--btn-primary-weight);
+  padding: var(--btn-pad-primary);
+  border-radius: var(--btn-radius);
+}
+
+.btn--secondary {
+  background: var(--btn-secondary-bg);
+  border: var(--btn-secondary-border);
+  color: var(--color-text-body-soft);
+  font-weight: var(--btn-secondary-weight);
+  padding: var(--btn-pad-secondary);
+  border-radius: var(--btn-radius);
+}
+
+.reading-hint {
+  margin-left: auto;
+  color: var(--color-text-faint-soft);
+}
+
+/* Empty selection (7.6) — quiet, not blank, not an error. Not-designed copy. */
+.reading-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-12px);
+  color: var(--color-text-faint);
+}
+
+/* Focused reading (Epic 8.1) */
+.reading-pane--focused .focused-scroll {
+  animation: quill-fade-in var(--transition-fast) ease-out;
+}
+
+.focused-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-10px);
+  padding: var(--focused-header-pad);
+  border-bottom: var(--focused-header-border);
+  background: var(--color-chrome);
+}
+
+.focused-header__back {
+  padding: 0;
+  background: transparent;
+  border: none;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12px);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.focused-header__label {
+  margin-left: auto;
+  font-size: var(--focused-label-fs);
+  font-weight: var(--focused-label-weight);
+  letter-spacing: var(--focused-label-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+.focused-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--focused-body-pad);
+  display: flex;
+  flex-direction: column;
+  gap: var(--reading-body-gap);
+  font-size: var(--fs-15px);
+  line-height: var(--focused-body-lh);
+  color: var(--color-text-body);
+}
+
+.focused-subject {
+  margin: 0;
+  font-size: var(--focused-subject-fs);
+  font-weight: var(--focused-subject-weight);
+  letter-spacing: var(--focused-subject-tracking);
+  line-height: var(--focused-subject-lh);
+  color: var(--color-text-primary);
+  text-wrap: pretty;
+}
+
+.focused-byline {
+  font-size: var(--fs-13px);
+  color: var(--color-text-faint);
+}
+
+@keyframes quill-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Link-destination confirm before opening in the OS browser (Epic 7.3). */
+.link-confirm {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-10px);
+  padding: var(--space-8px) var(--space-40px);
+  border-top: var(--pane-border);
+  background: var(--color-list);
+  font-size: var(--fs-12px);
+}
+
+.link-confirm__url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-11px);
+  color: var(--color-text-muted);
+}

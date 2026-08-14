@@ -1,0 +1,49 @@
+/* Global base styles — Epic 1. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--color-text-muted);
+  background: var(--color-reading);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden; /* the app body never scrolls (Epic 4.1) */
+}
+
+/* During a pane-divider drag, text selection must not start (Epic 4.2). */
+body.is-resizing {
+  user-select: none;
+}
+
+/* prefers-reduced-motion (Epic 9.3): no transitions or animations. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}
+
+/* Tabular figures for timestamps, folder counts, and sizes (Epic 1.3). */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Monospace accents: footprint readout, shortcut hints, sizes. */
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11px);
+}

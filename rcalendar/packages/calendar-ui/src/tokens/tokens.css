@@ -1,0 +1,83 @@
+/**
+ * Almanac Design Tokens
+ *
+ * CSS custom properties specifying neutrals, accent, calendar palette + tints,
+ * typography, border radius, box shadows, and spacing (plan.md §4, handoff README).
+ */
+
+:root {
+  /* Neutrals */
+  --al-desk: #E4E4E4;
+  --al-chrome: #FAFAFA;
+  --al-sidebar: #F4F4F4;
+  --al-surface: #FFFFFF;
+  --al-surface-2: #FBFBFB;
+  --al-surface-3: #FCFCFC;
+  --al-segment-track: #EDEDED;
+  --al-segment-track-titlebar: #EBEBEB;
+  --al-border: #E0E0E0;
+  --al-border-soft: #E5E5E5;
+  --al-grid: #EBEBEB;
+  --al-grid-hour: #F2F2F2;
+  --al-ink: #1A1A1A;
+  --al-ink-event: #232323;
+  --al-ink-2: #424242;
+  --al-ink-3: #575757;
+  --al-ink-4: #666666;
+  --al-ink-5: #777777;
+  --al-ink-6: #888888;
+  --al-ink-7: #A0A0A0;
+  --al-ink-8: #B3B3B3;
+  --al-ink-9: #BFBFBF;
+  --al-dashed: #CACACA;
+  --al-track-off: #D9D9D9;
+
+  /* Accent */
+  --al-accent: #1F6FEB;
+  --al-accent-hover: #144a9e;
+  --al-accent-tint: #E4EBF8;
+  --al-today-wash: #FBFCFE;
+  --al-today-wash-2: #FDFDFE;
+
+  /* Calendar Colors */
+  --al-cal-classes: #C2410C;
+  --al-cal-classes-tint: rgba(194, 65, 12, 0.10);
+  --al-cal-personal: #1F6FEB;
+  --al-cal-personal-tint: rgba(31, 111, 235, 0.10);
+  --al-cal-work: #0F766E;
+  --al-cal-work-tint: rgba(15, 118, 110, 0.10);
+  --al-cal-birthdays: #7C5CBF;
+  --al-cal-birthdays-tint: rgba(124, 92, 191, 0.10);
+  --al-cal-home: #A16207;
+  --al-cal-home-tint: rgba(161, 98, 7, 0.10);
+  --al-cal-holidays: #888888;
+  --al-cal-holidays-tint: rgba(136, 136, 136, 0.10);
+
+  /* Fonts */
+  --al-font-ui: 'Bricolage Grotesque', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --al-font-mono: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Radii */
+  --al-radius-bar: 2px;
+  --al-radius-swatch-sm: 3px;
+  --al-radius-swatch-mini: 3.5px;
+  --al-radius-chip: 5px;
+  --al-radius-sm: 6px;
+  --al-radius-md: 7px;
+  --al-radius-button: 8px;
+  --al-radius-day-event: 9px;
+  --al-radius-card: 11px;
+  --al-radius-window: 12px;
+  --al-radius-modal: 14px;
+  --al-radius-pill: 9999px;
+
+  /* Shadows */
+  --al-shadow-window: 0 24px 60px -18px rgba(0, 0, 0, 0.34), 0 0 0 1px rgba(0, 0, 0, 0.08);
+  --al-shadow-modal: 0 40px 80px -20px rgba(0, 0, 0, 0.5);
+  --al-shadow-segment-active: 0 1px 2px rgba(0, 0, 0, 0.10);
+  --al-shadow-event-week: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --al-shadow-event-day: 0 1px 3px rgba(0, 0, 0, 0.06);
+
+  /* Scrim */
+  --al-scrim: rgba(0, 0, 0, 0.34);
+}

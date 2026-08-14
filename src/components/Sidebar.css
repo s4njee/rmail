@@ -1,0 +1,195 @@
+.sidebar {
+  flex: none;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--sidebar-pad-top);
+  background: var(--color-chrome);
+  border-right: var(--sidebar-border-right);
+}
+
+/* Wordmark (5.1) */
+.sidebar__wordmark {
+  font-size: var(--sidebar-wordmark-fs);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--color-text-primary);
+  padding: var(--sidebar-wordmark-pad);
+}
+
+/* Section labels (5.1) */
+.sidebar__label {
+  padding: var(--sidebar-label-pad);
+  font-size: var(--sidebar-label-fs);
+  font-weight: var(--sidebar-label-weight);
+  letter-spacing: var(--sidebar-label-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+  margin: 0;
+}
+
+.sidebar__label--accounts {
+  padding: var(--sidebar-accounts-label-pad);
+}
+
+/* Mail / Calendar section switch (Epic 14.6) — extrapolated */
+.sidebar__section-switch {
+  display: flex;
+  gap: var(--space-2px);
+  padding: 0 var(--space-10px) var(--space-10px);
+}
+
+.sidebar__section-tab {
+  flex: 1;
+  padding: var(--space-8px);
+  border: none;
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12px);
+  color: var(--color-text-muted);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.sidebar__section-tab.is-selected {
+  background: var(--color-fill-subtle);
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+/* The folder + account sections scroll if they grow; the footer/card pins
+   to the bottom via margin-top: auto (5.4). */
+.sidebar__navs {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Folder + account rows are flex columns so each row stretches to the
+   container width *minus its margins* — `width: 100%` + a Banded margin would
+   overflow by the margin (the horizontal-scrollbar bug). */
+.sidebar__folders,
+.sidebar__accounts {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Folder rows (5.2) */
+.sidebar__row {
+  display: flex;
+  align-items: center;
+  gap: var(--folder-row-gap);
+  margin: var(--folder-row-margin);
+  padding: var(--folder-row-pad);
+  border-radius: var(--folder-row-radius);
+  font-size: var(--fs-14px);
+  font-weight: 400;
+  color: var(--color-text-body-soft);
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar__row.is-selected {
+  background: var(--folder-row-selected-bg);
+  font-weight: var(--folder-row-selected-weight);
+}
+
+.sidebar__row-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar__dot {
+  flex: none;
+  display: var(--folder-dot-display);
+  width: var(--size-5px);
+  height: var(--size-5px);
+  border-radius: 50%;
+  background: var(--color-dot-idle);
+}
+
+.sidebar__count {
+  flex: none;
+  font-size: var(--fs-12px);
+  color: var(--sidebar-count-color);
+}
+
+/* Account rows (5.3) */
+.sidebar__account-row {
+  display: flex;
+  align-items: center;
+  gap: var(--account-row-gap);
+  padding: var(--account-row-pad);
+  font-size: var(--fs-13px);
+  color: var(--color-text-account);
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar__account-dot {
+  flex: none;
+  width: var(--account-dot-size);
+  height: var(--account-dot-size);
+  border-radius: var(--account-dot-radius);
+}
+
+.sidebar__account-address {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Footer — Hairline connectivity status (5.4) */
+.sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8px);
+  padding: var(--sidebar-footer-pad);
+  border-top: var(--pane-border);
+  font-size: var(--fs-12px);
+  color: var(--color-text-footer);
+}
+
+.sidebar-footer__dot {
+  flex: none;
+  width: var(--size-6px);
+  height: var(--size-6px);
+  border-radius: 50%;
+  background: var(--color-offline);
+}
+
+.sidebar-footer[data-connectivity="synced"] .sidebar-footer__dot {
+  background: var(--color-online);
+}
+
+/* "On this device" card — Banded footprint (5.4, D2: single line) */
+.sidebar-card {
+  margin-top: auto;
+  margin: var(--sidebar-card-margin);
+  padding: var(--sidebar-card-pad);
+  border-radius: var(--radius-10px);
+  background: var(--color-reading);
+}
+
+.sidebar-card__title {
+  font-size: var(--fs-12px);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.sidebar-card__line {
+  margin-top: var(--space-4px);
+  font-size: var(--fs-11px);
+  color: var(--color-text-footer);
+}

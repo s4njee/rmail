@@ -1,0 +1,106 @@
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10px);
+}
+
+.composer__field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10px);
+  font-size: var(--fs-12px);
+  color: var(--color-text-muted);
+}
+
+.composer__field > span {
+  flex: none;
+  width: var(--composer-label-w);
+}
+
+.composer__field input {
+  flex: 1;
+  min-width: 0;
+  background: var(--search-bg);
+  border: var(--search-border);
+  border-radius: var(--radius-field);
+  padding: var(--search-pad);
+  font-family: var(--font-sans);
+  font-size: var(--fs-13px);
+  color: var(--color-text-body-soft);
+}
+
+.composer__body {
+  min-height: var(--composer-body-min-h);
+  resize: vertical;
+  background: var(--search-bg);
+  border: var(--search-border);
+  border-radius: var(--radius-field);
+  padding: var(--search-pad);
+  font-family: var(--font-sans);
+  font-size: var(--fs-14px);
+  line-height: var(--lh-body);
+  color: var(--color-text-body);
+}
+
+.composer__attachments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.composer__attachment {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10px);
+}
+
+.composer__attachment-name {
+  font-size: var(--fs-12px);
+  color: var(--color-text-body-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer__attachment-size {
+  font-size: var(--fs-11px);
+  color: var(--color-text-faint);
+}
+
+.composer__attachment-remove {
+  padding: 0;
+  background: transparent;
+  border: none;
+  font-family: var(--font-sans);
+  font-size: var(--fs-11px);
+  color: var(--color-text-faint);
+  cursor: pointer;
+}
+
+.composer__error {
+  font-size: var(--fs-12px);
+  color: var(--color-offline);
+}
+
+.composer__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10px);
+  margin-top: var(--space-4px);
+}
+
+.composer__attach {
+  font-size: var(--fs-12px);
+  font-weight: 500;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.composer__hint {
+  margin-left: auto;
+  font-size: var(--fs-11px);
+  color: var(--color-text-faint);
+}

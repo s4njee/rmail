@@ -1,0 +1,14 @@
+# rcalendar — Cargo workspace
+#
+# One workspace for the pure engine (`crates/`) and the Tauri desktop shell
+# (`apps/desktop/src-tauri`). The desktop app is just a third layer composing
+# the first two (see plan.md §2).
+[workspace]
+members = ["crates/*", "apps/desktop/src-tauri"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"

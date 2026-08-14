@@ -1,0 +1,23 @@
+{
+  "name": "rcalendar",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Embeddable calendar engine + UI, wrapped in a Tauri desktop app.",
+  "type": "module",
+  "packageManager": "pnpm@11.15.1",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "eslint packages apps",
+    "lint:fix": "eslint --fix packages apps",
+    "fmt": "prettier --write .",
+    "fmt:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-solid": "^0.14.0",
+    "prettier": "^3.0.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}

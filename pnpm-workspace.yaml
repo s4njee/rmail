@@ -1,0 +1,9 @@
+packages:
+  - "."
+  - "rcalendar/packages/*"
+  - "rcalendar/apps/*"
+
+# pnpm settings (pnpm 11+ reads these here, not from package.json).
+# esbuild's postinstall (platform binary check) is required by Vite.
+allowBuilds:
+  esbuild: true

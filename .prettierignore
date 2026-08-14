@@ -1,0 +1,10 @@
+dist
+node_modules
+public
+target
+src-tauri
+src/lib/ipc
+pnpm-lock.yaml
+Cargo.lock
+plan2.md
+design_handoff_quill_mail

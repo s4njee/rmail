@@ -1,0 +1,22 @@
+# Rust
+/target
+**/target/
+
+# Node
+/node_modules
+**/node_modules/
+/dist
+**/dist/
+
+# Tauri generated
+**/src-tauri/gen/
+
+# OS
+.DS_Store
+
+# Editor / IDE
+.idea/
+*.swp
+
+# Logs
+*.log

@@ -1,0 +1,7 @@
+node_modules
+dist
+target
+pnpm-lock.yaml
+apps/desktop/src-tauri
+# Designer-provided reference files — keep them byte-identical to the handoff.
+design_handoff_almanac_calendar/
