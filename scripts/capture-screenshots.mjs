@@ -61,7 +61,9 @@ async function main() {
 
   await sleep(2000);
 
-  const tmpProfile = fs.mkdtempSync(path.join(path.resolve(__dirname, "../scratch"), "chrome-"));
+  const scratchDir = path.resolve(__dirname, "../scratch");
+  fs.mkdirSync(scratchDir, { recursive: true });
+  const tmpProfile = fs.mkdtempSync(path.join(scratchDir, "chrome-"));
 
   console.log("Starting headless Chrome...");
   const chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
