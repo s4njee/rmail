@@ -12,7 +12,16 @@ import type {
 } from "@rcalendar/ui";
 import { createSignal, untrack } from "solid-js";
 import type { CalendarEvent } from "./ipc/CalendarEvent";
-import { createEvent, deleteEvent, listCalendars, listEvents, updateEvent } from "./tauri";
+import type { CalendarTask } from "./ipc/CalendarTask";
+import {
+  createEvent,
+  deleteEvent,
+  listCalendars,
+  listEvents,
+  listTasks as listTasksCmd,
+  toggleTask as toggleTaskCmd,
+  updateEvent,
+} from "./tauri";
 import { useAccounts } from "./mail";
 
 const DISABLED_CALS_KEY = "quill_disabled_calendars";
@@ -30,8 +39,9 @@ function loadDisabledCalendarIds(): Set<string> {
 // Reactive, so the calendar sidebar's show/hide toggles update the views
 // immediately (calendars() + the occurrence filter both track this). The set
 // is persisted to localStorage so the choice survives restarts.
-const [disabledCalendarIds, setDisabledCalendarIdsSignal] =
-  createSignal<Set<string>>(loadDisabledCalendarIds());
+const [disabledCalendarIds, setDisabledCalendarIdsSignal] = createSignal<
+  Set<string>
+>(loadDisabledCalendarIds());
 
 /** Reactive set of currently-hidden calendar ids. */
 export function getDisabledCalendarIds(): Set<string> {
@@ -74,8 +84,9 @@ function loadHiddenFromSidebar(): Set<string> {
 // Calendars the user removed from the *sidebar* only — their data stays synced
 // and they remain manageable in Settings (unlike a full removal). Also
 // persisted, and reactive like the disabled set.
-const [hiddenFromSidebar, setHiddenFromSidebarSignal] =
-  createSignal<Set<string>>(loadHiddenFromSidebar());
+const [hiddenFromSidebar, setHiddenFromSidebarSignal] = createSignal<
+  Set<string>
+>(loadHiddenFromSidebar());
 
 /** Reactive set of calendar ids hidden from the sidebar (still in Settings). */
 export function getHiddenFromSidebarIds(): Set<string> {
@@ -83,7 +94,10 @@ export function getHiddenFromSidebarIds(): Set<string> {
 }
 
 /** Remove a calendar from the sidebar (or bring it back). */
-export function setHiddenFromSidebar(calendarId: string, hidden: boolean): void {
+export function setHiddenFromSidebar(
+  calendarId: string,
+  hidden: boolean,
+): void {
   const next = new Set(untrack(hiddenFromSidebar));
   if (hidden) {
     next.add(calendarId);
@@ -123,9 +137,10 @@ export function eventCalendarId(event: CalendarEvent): string {
 }
 
 /** Split a calendar id back into its account id and optional source. */
-export function parseCalendarId(
-  calId: string,
-): { accountId: number; source?: string } {
+export function parseCalendarId(calId: string): {
+  accountId: number;
+  source?: string;
+} {
   const rest = calId.replace(/^cal-/, "");
   const idx = rest.indexOf(":");
   if (idx === -1) return { accountId: Number(rest) || 1 };
@@ -148,6 +163,22 @@ async function sourceMeta(
   return {
     name: match?.name ?? source.split("@")[0] ?? source,
     color: match?.color ?? "#3b5bdb",
+  };
+}
+
+/** Map a stored task to the rcalendar `Task` shape (P0.4). */
+export function quillTaskToDomain(t: CalendarTask): Task {
+  const now = new Date().toISOString();
+  return {
+    id: String(t.id),
+    calendarId: calendarIdFor(t.accountId, null),
+    title: t.title,
+    dueAt: t.dueAtMs ? new Date(t.dueAtMs).toISOString() : null,
+    completedAt: t.completedAtMs
+      ? new Date(t.completedAtMs).toISOString()
+      : null,
+    createdAt: now,
+    updatedAt: now,
   };
 }
 
@@ -327,7 +358,10 @@ export class QuillCalendarDataSource implements CalendarDataSource {
     // Tag the event with its source calendar (if any) and keep that calendar's
     // name/color so the sidebar row survives edits — and new events created in
     // a synced calendar land in the right row.
-    const { name: calName, color: calColor } = await sourceMeta(accountId, source ?? null);
+    const { name: calName, color: calColor } = await sourceMeta(
+      accountId,
+      source ?? null,
+    );
 
     const base: Omit<CalendarEvent, "alarm_minutes_before"> = {
       id: id ? Number(id) : 0,
@@ -348,7 +382,10 @@ export class QuillCalendarDataSource implements CalendarDataSource {
 
     if (id) {
       const existingAlarm = await this.alarmMinutesFor(Number(id));
-      const updated: CalendarEvent = { ...base, alarm_minutes_before: existingAlarm };
+      const updated: CalendarEvent = {
+        ...base,
+        alarm_minutes_before: existingAlarm,
+      };
       await updateEvent(updated);
       return [quillEventToDomain(updated, draft.calendarId).event];
     } else {
@@ -364,11 +401,13 @@ export class QuillCalendarDataSource implements CalendarDataSource {
   }
 
   async listTasks(): Promise<Task[]> {
-    return [];
+    const raw = await listTasksCmd();
+    return raw.map(quillTaskToDomain);
   }
 
-  async toggleTask(_id: string): Promise<Task> {
-    throw new Error("Tasks not implemented in Quill");
+  async toggleTask(id: string): Promise<Task> {
+    const t = await toggleTaskCmd(Number(id));
+    return quillTaskToDomain(t);
   }
 
   async search(query: string): Promise<SearchResults> {

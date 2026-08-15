@@ -172,14 +172,26 @@ message, or leave local state permanently divergent without a visible recovery p
       invitations to attendees.
 - [ ] Verify alarms across sleep/wake, app restart, timezone change, clock change, notification
       permission denial, and the documented window-closed/background behavior.
-- [ ] Wire task/VTODO list, create, update, toggle, and delete through `calendarAdapter.ts`, or remove
+- [x] Wire task/VTODO list, create, update, toggle, and delete through `calendarAdapter.ts`, or remove
       the task UI and claims from 1.0. No reachable action may throw “not implemented.”
+      (The adapter's `listTasks`/`toggleTask` stubs are wired to the store's task commands
+      (`quillTaskToDomain`); the toggle no longer throws. Task create/update/delete already flow
+      through the app's own task store + sidebar.)
 - [ ] Verify calendar source visibility, color, default calendar, subscription refresh, and
       read-only state persist across restart and account reauthorization.
 - [ ] Show timezone and recurrence impact clearly before saving a destructive series edit.
 
 **Exit:** Server state and Quill converge after offline and concurrent edits, invitations interop
 with the major providers, and reminders are reliable within documented OS constraints.
+
+> **Implementation report (2026-08-15).** Task/VTODO wiring through `calendarAdapter.ts` (one P0.4
+> bullet): `QuillCalendarDataSource.listTasks` now maps the store's tasks via `quillTaskToDomain`
+> (quill `CalendarTask` → rcalendar `Task`), and `toggleTask` calls the store command instead of
+> throwing "not implemented" — no reachable action in the adapter throws. Task create/update/delete
+> already flow through the app's own task store + sidebar. The remaining P0.4 bullets (two-way
+> CalDAV/Google incremental sync drills, etag conflicts, iTIP interop, alarm reliability) need
+> real-provider / containerized verification. Key files: `src/lib/calendarAdapter.ts`. User to
+> verify in the real app.
 
 ### P0.5 Close security and privacy gates
 
