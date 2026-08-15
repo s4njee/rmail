@@ -1829,6 +1829,30 @@ impl SqliteStore {
         Ok(conn.last_insert_rowid())
     }
 
+    /// Contact groups whose name matches `query` — for expanding a group into
+    /// its recipients in the composer (P2).
+    pub fn suggest_groups(&self, query: &str, limit: u32) -> Vec<ContactGroup> {
+        if query.trim().is_empty() {
+            return Vec::new();
+        }
+        let pattern = format!("%{}%", Self::escape_like(query.trim()));
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, name FROM contact_groups WHERE lower(name) LIKE ?1 ESCAPE '\\' \
+             ORDER BY name LIMIT ?2",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt
+            .query_map(params![pattern, limit], |r| Ok(ContactGroup { id: r.get(0)?, name: r.get(1)? }))
+            .map_err(|_| ());
+        match rows {
+            Ok(rows) => rows.flatten().collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
     pub fn delete_contact_group(&self, id: i64) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM contact_groups WHERE id = ?1", params![id])

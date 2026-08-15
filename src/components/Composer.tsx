@@ -16,11 +16,14 @@ import type { AccountIdentity } from "../lib/ipc/AccountIdentity";
 import type { ContactSuggestion } from "../lib/ipc/ContactSuggestion";
 import { useAccounts } from "../lib/mail";
 import {
+  contactGroupMembers,
   getSettings,
   hideRecipient,
   recentRecipients,
+  suggestGroups,
   suggestRecipients,
 } from "../lib/tauri";
+import type { ContactGroup } from "../lib/ipc/ContactGroup";
 import { Modal } from "./Modal";
 import { SendLaterMenu } from "./SendLaterMenu";
 import "./Composer.css";
@@ -89,9 +92,13 @@ function splitRecipients(raw: string): string[] {
 
 function AddressInput(props: AddressInputProps) {
   const [inputVal, setInputVal] = createSignal("");
-  // P1.2 autocomplete: suggestions from mail history (or recent when empty),
-  // with a highlighted index for arrow-key navigation.
-  const [suggestions, setSuggestions] = createSignal<ContactSuggestion[]>([]);
+  // P1.2/P2 autocomplete: recipients from mail history (or recent when empty)
+  // plus contact groups (which expand to their members), with a highlighted
+  // index for arrow-key navigation.
+  type SuggestionItem =
+    | { kind: "recipient"; s: ContactSuggestion }
+    | { kind: "group"; g: ContactGroup };
+  const [suggestions, setSuggestions] = createSignal<SuggestionItem[]>([]);
   const [open, setOpen] = createSignal(false);
   const [selIdx, setSelIdx] = createSignal(-1);
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -113,22 +120,51 @@ function AddressInput(props: AddressInputProps) {
     setSelIdx(-1);
   };
 
-  const insertSuggestion = (s: ContactSuggestion) => {
-    const display =
-      s.name && s.name.trim() ? `${s.name} <${s.address}>` : s.address;
-    addAddresses(display);
+  const insertSuggestion = (item: SuggestionItem) => {
+    if (item.kind === "recipient") {
+      const s = item.s;
+      const display =
+        s.name && s.name.trim() ? `${s.name} <${s.address}>` : s.address;
+      addAddresses(display);
+    } else {
+      // A group expands to its members' addresses. Capture the callback and
+      // current values up front so the async continuation stays non-reactive.
+      const current = [...props.values];
+      const commit = props.onChange;
+      void contactGroupMembers(item.g.id).then((members) => {
+        const next = [...current];
+        for (const addr of members.map((m) => m.address)) {
+          if (!next.includes(addr)) next.push(addr);
+        }
+        commit(next);
+      });
+      setInputVal("");
+      setOpen(false);
+      setSelIdx(-1);
+    }
   };
 
   const dismissSuggestion = async (s: ContactSuggestion) => {
     await hideRecipient(s.address);
-    setSuggestions((prev) => prev.filter((x) => x.address !== s.address));
+    setSuggestions((prev) =>
+      prev.filter(
+        (x) => x.kind !== "recipient" || x.s.address !== s.address,
+      ),
+    );
   };
 
   const loadSuggestions = (raw: string) => {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(async () => {
       const q = raw.trim();
-      const list = q ? await suggestRecipients(q) : await recentRecipients();
+      const recipients: ContactSuggestion[] = q
+        ? await suggestRecipients(q)
+        : await recentRecipients();
+      const groups: ContactGroup[] = q ? await suggestGroups(q) : [];
+      const list: SuggestionItem[] = [
+        ...recipients.map((s) => ({ kind: "recipient" as const, s })),
+        ...groups.map((g) => ({ kind: "group" as const, g })),
+      ];
       setSuggestions(list);
       setSelIdx(-1);
       setOpen(list.length > 0);
@@ -234,7 +270,7 @@ function AddressInput(props: AddressInputProps) {
             onMouseDown={(e) => e.preventDefault() /* keep the input focused */}
           >
             <For each={suggestions()}>
-              {(s, i) => (
+              {(item, i) => (
                 <li
                   class="composer__autocomplete-row"
                   classList={{ "is-selected": selIdx() === i() }}
@@ -244,23 +280,38 @@ function AddressInput(props: AddressInputProps) {
                   <button
                     type="button"
                     class="composer__autocomplete-insert"
-                    onClick={() => insertSuggestion(s)}
+                    onClick={() => insertSuggestion(item)}
                   >
-                    <span class="composer__autocomplete-name">
-                      {s.name || s.address}
-                    </span>
-                    <span class="composer__autocomplete-address">
-                      {s.name ? s.address : ""}
-                    </span>
+                    {item.kind === "recipient" ? (
+                      <>
+                        <span class="composer__autocomplete-name">
+                          {item.s.name || item.s.address}
+                        </span>
+                        <span class="composer__autocomplete-address">
+                          {item.s.name ? item.s.address : ""}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span class="composer__autocomplete-name">
+                          Group: {item.g.name}
+                        </span>
+                        <span class="composer__autocomplete-address">
+                          expands to all members
+                        </span>
+                      </>
+                    )}
                   </button>
-                  <button
-                    type="button"
-                    class="composer__autocomplete-hide"
-                    aria-label={`Never suggest ${s.address}`}
-                    onClick={() => void dismissSuggestion(s)}
-                  >
-                    ×
-                  </button>
+                  {item.kind === "recipient" && (
+                    <button
+                      type="button"
+                      class="composer__autocomplete-hide"
+                      aria-label={`Never suggest ${item.s.address}`}
+                      onClick={() => void dismissSuggestion(item.s)}
+                    >
+                      ×
+                    </button>
+                  )}
                 </li>
               )}
             </For>

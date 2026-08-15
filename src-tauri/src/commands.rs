@@ -477,6 +477,17 @@ pub fn delete_contact_group(store: State<'_, SqliteStore>, id: i64) -> Result<()
     store.delete_contact_group(id)
 }
 
+/// Contact groups matching a query — the composer expands a group into its
+/// recipients (P2).
+#[tauri::command]
+pub fn suggest_groups(
+    store: State<'_, SqliteStore>,
+    query: String,
+    limit: Option<u32>,
+) -> Vec<ContactGroup> {
+    store.suggest_groups(&query, limit.unwrap_or(5))
+}
+
 #[tauri::command]
 pub fn add_contact_to_group(
     store: State<'_, SqliteStore>,

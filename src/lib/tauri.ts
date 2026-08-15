@@ -562,6 +562,14 @@ export const contactGroupMembers = async (
   return [];
 };
 
+export const suggestGroups = async (
+  query: string,
+  limit?: number,
+): Promise<ContactGroup[]> => {
+  if (isTauri()) return invoke<ContactGroup[]>("suggest_groups", { query, limit });
+  return [];
+};
+
 export const sendMessage = async (outgoing: OutgoingMessage): Promise<void> => {
   if (isTauri()) return invoke<void>("send", { outgoing });
 };

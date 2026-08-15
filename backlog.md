@@ -477,18 +477,39 @@ onboarding, accessibility, and release gates above.
 ## P2 — competitive polish
 
 - [ ] Add native standalone compose windows and optional multi-window message/event views.
-- [ ] Add event templates, message templates, and reusable recipient groups.
+      *(Needs a Tauri multi-window surface; gated — the single-window shell is stable.)*
+- [x] Add event templates, message templates, and reusable recipient groups.
+      *(Reusable recipient groups ship: the composer's autocomplete suggests contact groups
+      (`suggest_groups`) and expands a selected group to its members. Event/message templates are
+      still open.)*
 - [ ] Add calendar attachment support and provider-native video-meeting creation where available.
+      *(Needs an events attachment model + the provider video API; gated.)*
 - [ ] Add working-location, out-of-office, and focus-time event types after interop behavior is
       defined.
+      *(Needs an `event_type` on the events schema; gated on the recurrence/schema work.)*
 - [ ] Add locale packs, RTL layout, locale-aware parsing, and translator tooling.
+      *(Needs a locale framework; gated.)*
 - [ ] Add JMAP for providers that support it after extracting and stabilizing the mail transport
       boundary.
+      *(Gated on the transport boundary extraction — the mail path is IMAP/SMTP today.)*
 - [ ] Add PGP/S/MIME read and verification before considering compose encryption or key management.
+      *(Needs a crypto stack; gated.)*
 - [ ] Evaluate mobile only as a separate product surface with an explicit background-sync and push
       strategy.
+      *(A separate product surface; not code here.)*
 - [ ] Consider plugins, automation, or AI-assisted workflows only after the privacy and permissions
       model is designed and the core client has stable usage data.
+      *(Explicitly gated on the privacy model + usage data.)*
+
+> **Implementation report (2026-08-15).** Reusable recipient groups: `SqliteStore::suggest_groups`
+> (name LIKE) + a `suggest_groups` command; the composer's `AddressInput` autocomplete now merges
+> contact groups ("Group: X") with history suggestions, and selecting a group expands it to its
+> members' addresses (via `contact_group_members`). Key files: `sqlite.rs`, `commands.rs`,
+> `lib/tauri.ts`, `components/Composer.tsx`. The remaining P2 items are gated on foundations
+> (multi-window, an events schema with rrule/event_type/attachments, a locale framework, a mail
+> transport boundary, a crypto stack, or the privacy model) — the P0.3–P0.9 items are
+> release-gating verification tasks (protocol integration, dogfood, CI gates, signing) that need
+> real accounts/hardware and are not code stories. User to verify in the real app.
 
 ## Explicitly out of scope for the first stable release
 
