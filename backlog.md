@@ -122,8 +122,12 @@ developer intervention or inspecting logs.
       attachments, folder counts, drafts, or sent copies.
 - [ ] Exercise the offline action queue with ordered and conflicting read/star/move/archive/delete
       actions, including the message changing remotely before replay.
-- [ ] Make queued, retrying, failed, and permanently rejected actions visible and recoverable from
+- [x] Make queued, retrying, failed, and permanently rejected actions visible and recoverable from
       the UI; never leave an indefinite spinner or silent failure.
+      (Migration 24 `action_queue.last_error`; the replay records the failure, and Settings →
+      Accounts → "Sync & queue" lists every pending/retrying/stuck action (state badge, last error,
+      subject+to for sends) with Retry (reset) and Remove (confirm for an unsent message); a
+      StatusBar bar flags stuck actions and opens the queue. No silent failure.)
 - [ ] Verify send exactly-once behavior across SMTP timeout-after-accept, app crash, lost network,
       retry, provider-generated Sent copies, and attachment upload failure.
 - [ ] Ensure Outbox and Drafts survive process termination and machine restart; offer Retry, Edit,
@@ -138,6 +142,21 @@ developer intervention or inspecting logs.
 
 **Exit:** Forced termination and network fault injection cannot lose a draft, double-send a
 message, or leave local state permanently divergent without a visible recovery path.
+
+> **Implementation report (2026-08-15).** Queued actions are now visible and recoverable (one P0.3
+> bullet). `action_queue.last_error` (migration 24 + repair) records the last replay failure;
+> `replay_pending_actions` sets it on a transient failure and removes on a permanent one.
+> `list_queued_actions` (per account or all) exposes the queue, `retry_queued_action` resets a stuck
+> action (retries=0 + clears the error) so the next sync replays it, and `discard_queued_action`
+> removes it. The UI: Settings → Accounts → "Sync & queue" lists each action with a state badge
+> (pending / retrying / stuck at ≥5 retries), the last error, and for sends the subject+recipients
+> (parsed from the payload); Retry and Remove (Remove on an unsent message confirms). The StatusBar
+> shows a persistent "N queued actions need attention" bar that opens the queue. The queue refreshes
+> after each sync cycle (store-events) and after retry/remove. The remaining P0.3 bullets are
+> protocol/crash/fault-injection verification against containerized + real providers — still open.
+> Key files: `sqlite.rs` (migration 24 + methods + tests), `quill-mail/src/sync.rs`,
+> `commands.rs`/`lib.rs`, `src/lib/queue.ts`, `components/settings/AccountsSection.tsx`,
+> `components/StatusBar.tsx`. User to verify in the real app.
 
 ### P0.4 Prove calendar sync and scheduling correctness
 

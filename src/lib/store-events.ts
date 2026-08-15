@@ -4,6 +4,7 @@ import { formatClock } from "./format";
 import type { ConnectivityUpdate } from "./ipc/ConnectivityUpdate";
 import type { SearchIndexUpdate } from "./ipc/SearchIndexUpdate";
 import { loadRows, refreshMail, setDetailProgress } from "./mail";
+import { refreshQueued } from "./queue";
 import { getFootprint, onStoreEvent } from "./tauri";
 
 // Push events from Rust (Epic 3.2) — the frontend never polls. Connectivity
@@ -59,6 +60,9 @@ export function initStoreEvents(): void {
       if (event.state === "synced") {
         void loadRows();
         void refreshMail();
+        // P0.3: after a sync attempt, surface any queued failures (a failed
+        // replay recorded a last_error the StatusBar can flag).
+        void refreshQueued();
       } else if (event.state === "offline") {
         void refreshMail();
       }

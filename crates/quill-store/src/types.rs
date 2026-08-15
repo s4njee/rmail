@@ -89,6 +89,9 @@ pub struct QueuedAction {
     #[ts(type = "number")]
     pub created_at_ms: i64,
     pub retries: u32,
+    /// The last replay failure, when the action couldn't be applied (P0.3).
+    /// `None` = pending or successful.
+    pub last_error: Option<String>,
 }
 
 /// One triage action applied to many messages at once (P1.1). `Move` carries

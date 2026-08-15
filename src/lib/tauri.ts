@@ -30,6 +30,7 @@ import type { OAuthInitPayload } from "./ipc/OAuthInitPayload";
 import type { OAuthWaitResult } from "./ipc/OAuthWaitResult";
 import type { OutgoingMessage } from "./ipc/OutgoingMessage";
 import type { ProviderPreset } from "./ipc/ProviderPreset";
+import type { QueuedAction } from "./ipc/QueuedAction";
 import type { RulePreview } from "./ipc/RulePreview";
 import type { RulePreviewResult } from "./ipc/RulePreviewResult";
 import type { SavedSearch } from "./ipc/SavedSearch";
@@ -343,6 +344,24 @@ export const latestDraft = async (): Promise<Draft | null> => {
   return null;
 };
 
+// P0.3 queued actions (the "Sync & queue" surface)
+export const listQueuedActions = async (
+  accountId?: number,
+): Promise<QueuedAction[]> => {
+  if (isTauri()) {
+    return invoke<QueuedAction[]>("list_queued_actions", { accountId });
+  }
+  return [];
+};
+
+export const retryQueuedAction = async (id: number): Promise<void> => {
+  if (isTauri()) return invoke<void>("retry_queued_action", { id });
+};
+
+export const discardQueuedAction = async (id: number): Promise<void> => {
+  if (isTauri()) return invoke<void>("discard_queued_action", { id });
+};
+
 // P1.6 import / export / backup
 export const exportMessageEml = async (id: number): Promise<string> => {
   if (isTauri()) return invoke<string>("export_message_eml", { id });
@@ -566,7 +585,8 @@ export const suggestGroups = async (
   query: string,
   limit?: number,
 ): Promise<ContactGroup[]> => {
-  if (isTauri()) return invoke<ContactGroup[]>("suggest_groups", { query, limit });
+  if (isTauri())
+    return invoke<ContactGroup[]>("suggest_groups", { query, limit });
   return [];
 };
 

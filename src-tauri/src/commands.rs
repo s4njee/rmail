@@ -834,6 +834,27 @@ pub fn remove_account(store: State<'_, SqliteStore>, id: AccountId) -> Result<()
     Ok(())
 }
 
+/// P0.3: the queued (offline) actions — for the "Sync & queue" surface.
+#[tauri::command]
+pub fn list_queued_actions(
+    store: State<'_, SqliteStore>,
+    account_id: Option<AccountId>,
+) -> Vec<QueuedAction> {
+    store.list_queued_actions(account_id)
+}
+
+/// P0.3: reset a stuck action so the next sync retries it fresh.
+#[tauri::command]
+pub fn retry_queued_action(store: State<'_, SqliteStore>, id: i64) -> Result<(), String> {
+    store.retry_queued_action(id)
+}
+
+/// P0.3: discard a queued action (removing an unsent message warns in the UI).
+#[tauri::command]
+pub fn discard_queued_action(store: State<'_, SqliteStore>, id: i64) -> Result<(), String> {
+    store.remove_action(id)
+}
+
 /// Provider presets for the first-run provider chooser (P0.2).
 #[tauri::command]
 pub fn list_provider_presets() -> Vec<ProviderPreset> {

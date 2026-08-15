@@ -28,6 +28,26 @@
   text-overflow: ellipsis;
 }
 
+/* P0.3: stuck queued actions are never silent — a persistent, clickable bar. */
+.status-stuck {
+  flex: none;
+  align-self: stretch;
+  border: none;
+  border-top: var(--pane-border);
+  background: var(--color-offline);
+  color: var(--color-on-accent);
+  font-family: var(--font-sans);
+  font-size: var(--fs-11px);
+  font-weight: 600;
+  cursor: pointer;
+  padding: var(--space-8px) var(--space-14px);
+  text-align: left;
+}
+
+.status-stuck:hover {
+  text-decoration: underline;
+}
+
 @keyframes status-bar-in {
   from {
     opacity: 0;

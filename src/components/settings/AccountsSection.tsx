@@ -1,13 +1,17 @@
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, For, onMount, Show } from "solid-js";
 import { setCalendarSyncing } from "../../lib/calendar";
 import { openContextMenu } from "../../lib/context-menu";
 import { formatBytes } from "../../lib/format";
 import type { Account } from "../../lib/ipc/Account";
 import type { AccountRemovalInfo } from "../../lib/ipc/AccountRemovalInfo";
+import type { QueuedAction } from "../../lib/ipc/QueuedAction";
 import { openAccountEdit, refreshMail, useAccounts } from "../../lib/mail";
+import { actionLabel, refreshQueued, useQueued } from "../../lib/queue";
 import {
   accountRemovalInfo,
+  discardQueuedAction,
   removeAccount,
+  retryQueuedAction,
   syncCalendar,
 } from "../../lib/tauri";
 import { useTheme } from "../../lib/theme";
@@ -29,6 +33,35 @@ export function AccountsSection() {
   const [removalConfirmText, setRemovalConfirmText] = createSignal("");
   const [syncingId, setSyncingId] = createSignal<number | null>(null);
   const [syncMsg, setSyncMsg] = createSignal<string | null>(null);
+  const queued = useQueued();
+  const [confirmDiscard, setConfirmDiscard] = createSignal<QueuedAction | null>(
+    null,
+  );
+
+  onMount(() => void refreshQueued());
+
+  const retry = async (id: number) => {
+    await retryQueuedAction(id);
+    await refreshQueued();
+  };
+  const discard = async (a: QueuedAction) => {
+    await discardQueuedAction(a.id);
+    setConfirmDiscard(null);
+    await refreshQueued();
+  };
+
+  // For a queued Send, show its subject/recipients instead of raw JSON.
+  const sendDisplay = (
+    a: QueuedAction,
+  ): { subject: string; to: string[] } | null => {
+    if (!a.payload) return null;
+    try {
+      const parsed = JSON.parse(a.payload);
+      return { subject: parsed.subject ?? "", to: parsed.to ?? [] };
+    } catch {
+      return null;
+    }
+  };
 
   const startRemove = (account: Account) => {
     setRemoving(account);
@@ -228,6 +261,99 @@ export function AccountsSection() {
           Mail is stored on this device only.
         </span>
       </div>
+
+      {/* P0.3 Sync & queue — queued/retrying/stuck offline actions, recoverable. */}
+      <Show when={queued().length > 0}>
+        <h3 class="settings-note">Sync & queue</h3>
+        <p class="settings-note">
+          Changes made while offline wait here until they can sync. A stuck
+          action shows its last error; Retry resets it, Remove discards it.
+        </p>
+        <div class="queue-list">
+          <For each={queued()}>
+            {(a) => {
+              const { label, state } = actionLabel(a);
+              const send = a.action_type === "send" ? sendDisplay(a) : null;
+              return (
+                <div class="queue-row" data-state={state}>
+                  <div class="queue-row__main">
+                    <span class="queue-row__label">
+                      {send ? send.subject || label : label}
+                    </span>
+                    <span class="queue-row__meta">
+                      {send && send.to.length > 0
+                        ? `to ${send.to.join(", ")}`
+                        : a.folder}
+                      {a.retries > 0 ? ` · retried ${a.retries}×` : ""}
+                      <Show when={state !== "pending"}>
+                        <span class="queue-row__state">({state})</span>
+                      </Show>
+                    </span>
+                    <Show when={a.last_error}>
+                      <span class="queue-row__error">{a.last_error}</span>
+                    </Show>
+                  </div>
+                  <div class="queue-row__actions">
+                    <button
+                      type="button"
+                      class="btn btn--secondary btn--sm"
+                      onClick={() => void retry(a.id)}
+                    >
+                      Retry
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn--secondary btn--sm"
+                      onClick={() =>
+                        a.action_type === "send"
+                          ? setConfirmDiscard(a)
+                          : void discard(a)
+                      }
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              );
+            }}
+          </For>
+        </div>
+
+        {/* Discarding an unsent message warns explicitly. */}
+        <Show when={confirmDiscard()}>
+          {(a) => (
+            <div
+              class="account-confirm"
+              role="alertdialog"
+              aria-label="Discard queued action"
+            >
+              <span class="account-confirm__text">
+                Discard the queued action
+                {sendDisplay(a())?.subject
+                  ? ` "${sendDisplay(a())?.subject}"`
+                  : ""}
+                ? An unsent message will not be delivered.
+              </span>
+              <div class="account-confirm__actions">
+                <button
+                  type="button"
+                  class="btn btn--secondary"
+                  onClick={() => setConfirmDiscard(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  class="btn btn--primary"
+                  onClick={() => void discard(a())}
+                >
+                  Discard
+                </button>
+              </div>
+            </div>
+          )}
+        </Show>
+      </Show>
 
       <Show when={adding()}>
         <Modal title="Add account" onClose={() => setAdding(false)}>

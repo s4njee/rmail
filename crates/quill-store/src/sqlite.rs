@@ -183,7 +183,7 @@ fn now_ms() -> i64 {
 }
 
 /// Forward-only migrations, indexed by target `user_version`.
-const MIGRATIONS: [&str; 23] = [
+const MIGRATIONS: [&str; 24] = [
     r#"
 CREATE TABLE accounts (
   id INTEGER PRIMARY KEY,
@@ -472,6 +472,11 @@ CREATE TABLE IF NOT EXISTS saved_searches (
     r#"
 ALTER TABLE events ADD COLUMN color TEXT;
 "#,
+    // P0.3: track the last replay failure per queued action, so a stuck
+    // offline change is visible and recoverable instead of silent.
+    r#"
+ALTER TABLE action_queue ADD COLUMN last_error TEXT;
+"#,
 ];
 
 pub struct SqliteStore {
@@ -617,6 +622,19 @@ impl SqliteStore {
                     .map_err(|e| e.to_string())?;
                 repaired = true;
             }
+        }
+        // Migration 24 (P0.3): the action_queue failure-text column.
+        let aq_cols: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('action_queue')")
+            .map_err(|e| e.to_string())?
+            .query_map([], |r| r.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        if !aq_cols.iter().any(|c| c == "last_error") {
+            conn.execute_batch("ALTER TABLE action_queue ADD COLUMN last_error TEXT;")
+                .map_err(|e| e.to_string())?;
+            repaired = true;
         }
         // Same for migration 15's table — a database stamped past it (the old
         // code-migration collision) would otherwise be missing it.
@@ -3409,44 +3427,90 @@ impl SqliteStore {
     }
 
     pub fn peek_pending_actions(&self, account_id: AccountId) -> Vec<QueuedAction> {
+        self.list_queued_actions(Some(account_id))
+    }
+
+    /// P0.3: the queued actions for one account (or all when `None`), newest
+    /// first — the "Sync & queue" surface's data.
+    pub fn list_queued_actions(&self, account_id: Option<AccountId>) -> Vec<QueuedAction> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = match conn.prepare(
-            "SELECT id, account_id, action_type, folder, uid, payload, created_at_ms, retries \
-             FROM action_queue WHERE account_id = ?1 ORDER BY id ASC LIMIT 50",
-        ) {
+        let (sql, arg): (&str, Option<AccountId>) = match account_id {
+            Some(id) => (
+                "SELECT id, account_id, action_type, folder, uid, payload, created_at_ms, retries, last_error \
+                 FROM action_queue WHERE account_id = ?1 ORDER BY id ASC LIMIT 200",
+                Some(id),
+            ),
+            None => (
+                "SELECT id, account_id, action_type, folder, uid, payload, created_at_ms, retries, last_error \
+                 FROM action_queue ORDER BY id ASC LIMIT 200",
+                None,
+            ),
+        };
+        let mut stmt = match conn.prepare(sql) {
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };
-        let rows = stmt.query_map(params![account_id], |r| {
-            let type_str: String = r.get(2)?;
-            let action_type = match type_str.as_str() {
-                "mark_read" => ActionType::MarkRead,
-                "mark_unread" => ActionType::MarkUnread,
-                "star" => ActionType::Star,
-                "unstar" => ActionType::Unstar,
-                "archive" => ActionType::Archive,
-                "delete" => ActionType::Delete,
-                "move" => ActionType::Move,
-                "mark_junk" => ActionType::MarkJunk,
-                "mark_not_junk" => ActionType::MarkNotJunk,
-                "mark_answered" => ActionType::MarkAnswered,
-                "mark_forwarded" => ActionType::MarkForwarded,
-                "send" => ActionType::Send,
-                _ => ActionType::MarkRead,
-            };
-            Ok(QueuedAction {
-                id: r.get(0)?,
-                account_id: r.get(1)?,
-                action_type,
-                folder: r.get(3)?,
-                uid: r.get(4)?,
-                payload: r.get(5)?,
-                created_at_ms: r.get(6)?,
-                retries: r.get::<_, i64>(7)? as u32,
-            })
-        });
+        let mut qparams: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(id) = arg {
+            qparams.push(rusqlite::types::Value::Integer(i64::from(id)));
+        }
+        let rows = stmt.query_map(
+            rusqlite::params_from_iter(qparams.iter()),
+            |r| {
+                let type_str: String = r.get(2)?;
+                let action_type = match type_str.as_str() {
+                    "mark_read" => ActionType::MarkRead,
+                    "mark_unread" => ActionType::MarkUnread,
+                    "star" => ActionType::Star,
+                    "unstar" => ActionType::Unstar,
+                    "archive" => ActionType::Archive,
+                    "delete" => ActionType::Delete,
+                    "move" => ActionType::Move,
+                    "mark_junk" => ActionType::MarkJunk,
+                    "mark_not_junk" => ActionType::MarkNotJunk,
+                    "mark_answered" => ActionType::MarkAnswered,
+                    "mark_forwarded" => ActionType::MarkForwarded,
+                    "send" => ActionType::Send,
+                    _ => ActionType::MarkRead,
+                };
+                Ok(QueuedAction {
+                    id: r.get(0)?,
+                    account_id: r.get(1)?,
+                    action_type,
+                    folder: r.get(3)?,
+                    uid: r.get(4)?,
+                    payload: r.get(5)?,
+                    created_at_ms: r.get(6)?,
+                    retries: r.get::<_, i64>(7)? as u32,
+                    last_error: r.get(8)?,
+                })
+            },
+        );
         rows.map(|iter| iter.flatten().collect())
             .unwrap_or_default()
+    }
+
+    /// Record the last replay failure (or clear it on success) — P0.3.
+    pub fn set_action_error(&self, id: i64, error: Option<&str>) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE action_queue SET last_error = ?1 WHERE id = ?2",
+            params![error, id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// P0.3 "Retry": reset a stuck action's retries and error so the next sync
+    /// cycle replays it fresh without losing its payload.
+    pub fn retry_queued_action(&self, id: i64) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE action_queue SET retries = 0, last_error = NULL WHERE id = ?1",
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     pub fn remove_action(&self, id: i64) -> Result<(), String> {
@@ -3464,6 +3528,20 @@ impl SqliteStore {
         )
         .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// The subject + recipients of a queued `Send` (parsed from its payload) —
+    /// the queue view shows what an unsent message is instead of raw JSON.
+    pub fn queued_send_display(&self, id: i64) -> Option<(String, Vec<String>)> {
+        let conn = self.conn.lock().unwrap();
+        let payload: String = conn
+            .query_row(
+                "SELECT payload FROM action_queue WHERE id = ?1 AND action_type = 'send'",
+                params![id],
+                |r| r.get(0),
+            )
+            .ok()?;
+        Some(scheduled_display(&payload))
     }
 
     /// Number of queued (unsent/unapplied) actions for an account — the
@@ -5726,6 +5804,53 @@ mod tests {
 
         store.remove_action(action_id).unwrap();
         assert!(store.peek_pending_actions(1).is_empty());
+    }
+
+    /// P0.3: a failed replay records its error, Retry resets it, and the queue
+    /// surfaces a Send's subject/recipients.
+    #[test]
+    fn queued_action_recovery_lifecycle() {
+        let store = seeded();
+        let id = store
+            .enqueue_action(1, ActionType::Star, "Inbox", Some(5), None)
+            .unwrap();
+
+        // Pending: no error yet.
+        let q = store.peek_pending_actions(1);
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].retries, 0);
+        assert_eq!(q[0].last_error, None);
+
+        // A failed replay records the failure.
+        store.increment_action_retry(id).unwrap();
+        store.set_action_error(id, Some("offline")).unwrap();
+        let q = store.peek_pending_actions(1);
+        assert_eq!(q[0].retries, 1);
+        assert_eq!(q[0].last_error.as_deref(), Some("offline"));
+
+        // Retry resets both.
+        store.retry_queued_action(id).unwrap();
+        let q = store.peek_pending_actions(1);
+        assert_eq!(q[0].retries, 0);
+        assert_eq!(q[0].last_error, None);
+
+        // Cross-account listing + Send payload display.
+        assert_eq!(store.list_queued_actions(None).len(), 1);
+        let sid = store
+            .enqueue_action(
+                1,
+                ActionType::Send,
+                "Outbox",
+                None,
+                Some(r#"{"to":["b@x.com"],"subject":"Hi"}"#),
+            )
+            .unwrap();
+        let (subject, to) = store.queued_send_display(sid).unwrap();
+        assert_eq!(subject, "Hi");
+        assert_eq!(to, vec!["b@x.com"]);
+
+        store.remove_action(sid).unwrap();
+        assert!(store.peek_pending_actions(1).iter().all(|a| a.id != sid));
     }
 
     #[test]

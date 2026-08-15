@@ -1091,6 +1091,9 @@ pub async fn replay_pending_actions(
                     let _ = store.remove_action(action.id);
                 } else {
                     let _ = store.increment_action_retry(action.id);
+                    // P0.3: surface the failure so a stuck action is visible
+                    // and recoverable in the UI.
+                    let _ = store.set_action_error(action.id, Some(&e));
                 }
             }
         }
