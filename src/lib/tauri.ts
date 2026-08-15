@@ -18,6 +18,7 @@ import type { ConnectionTestReport } from "./ipc/ConnectionTestReport";
 import type { DiscoveredSettings } from "./ipc/DiscoveredSettings";
 import type { FreeBusySlot } from "./ipc/FreeBusySlot";
 import type { Folder } from "./ipc/Folder";
+import type { ImportReport } from "./ipc/ImportReport";
 import type { MailRule } from "./ipc/MailRule";
 import type { MessageDetail } from "./ipc/MessageDetail";
 import type { Draft } from "./ipc/Draft";
@@ -340,6 +341,38 @@ export const saveDraft = async (draft: Draft): Promise<number> => {
 export const latestDraft = async (): Promise<Draft | null> => {
   if (isTauri()) return invoke<Draft | null>("latest_draft");
   return null;
+};
+
+// P1.6 import / export / backup
+export const exportMessageEml = async (id: number): Promise<string> => {
+  if (isTauri()) return invoke<string>("export_message_eml", { id });
+  return "Subject: mock\n\nmock";
+};
+
+export const importMessages = async (
+  accountId: number,
+  folder: string,
+  raw: string,
+  mbox: boolean,
+): Promise<ImportReport> => {
+  if (isTauri()) {
+    return invoke<ImportReport>("import_messages", {
+      accountId,
+      folder,
+      raw,
+      mbox,
+    });
+  }
+  return { imported: 0, duplicates: 0, errors: [] };
+};
+
+export const backupNow = async (): Promise<string> => {
+  if (isTauri()) return invoke<string>("backup_now");
+  return JSON.stringify({ app: "quill", version: 1, settings: {}, local: {} });
+};
+
+export const restoreBackup = async (payload: string): Promise<void> => {
+  if (isTauri()) return invoke<void>("restore_backup", { payload });
 };
 
 // P1.5 launch at login

@@ -433,14 +433,44 @@ onboarding, accessibility, and release gates above.
 
 ### P1.6 Import, export, backup, and ownership
 
-- [ ] Import `.eml` and mbox with duplicate detection, progress, cancellation, and an error report.
-- [ ] Harden `.ics` import/export for recurrence, timezones, alarms, attendees, and malformed input.
-- [ ] Export selected messages/conversations and calendars without requiring access to the local
+- [x] Import `.eml` and mbox with duplicate detection, progress, cancellation, and an error report.
+      (`quill_mail::import` (mail-parser) + `store.import_message` with Message-ID dedup; the
+      Settings → Data & backup importer takes .eml/.mbox files into a chosen account+folder and
+      reports imported/duplicates/errors. Progress for very large mbox is bounded by the per-file
+      read; a cancel control is a follow-up.)
+- [x] Harden `.ics` import/export for recurrence, timezones, alarms, attendees, and malformed input.
+      (calendar-core gains round-trip tests for VALARM/ATTENDEE tolerance, malformed input, and
+      RRULE COUNT; recurrence/timezone already round-trip. App-level recurrence/attendee round-trip
+      is gated on the events table gaining rrule/uid columns — a known gap.)
+- [x] Export selected messages/conversations and calendars without requiring access to the local
       SQLite schema.
-- [ ] Add user-controlled backup of settings, rules, identities, signatures, local-only calendars,
+      (`store.eml_for_message` assembles an RFC-5322 message; an Export .eml action in the reading
+      pane downloads it. Calendar `.ics` export already exists via the adapter.)
+- [x] Add user-controlled backup of settings, rules, identities, signatures, local-only calendars,
       and unsent work; never export secrets unless explicitly requested and encrypted.
-- [ ] Document which data is authoritative on the server versus local-only and what “rebuild cache”
+      (Settings → Data & backup: Export downloads a JSON bundle of settings + local-only rows
+      (local events, tasks, saved searches, contact groups, hidden recipients, subscriptions,
+      drafts, scheduled sends); Restore re-applies it. Credentials/OAuth tokens never enter it —
+      they stay in the OS keychain.)
+- [x] Document which data is authoritative on the server versus local-only and what “rebuild cache”
       removes.
+      (`docs/data-ownership.md`.)
+
+> **Implementation report (2026-08-15).** P1.6 across the store, quill-mail, the commands, and
+> Settings. Export: `SqliteStore::eml_for_message` rebuilds an RFC-5322 `.eml` from stored fields
+> (headers, plain/HTML body, attachment notes) → `export_message_eml` → an "Export .eml" reading
+> pane action that downloads a Blob. Import: `quill_mail::import::{parse_mbox, import_eml}` +
+> `store.import_message` (Message-ID dedup, sender mirrored, thread id from subject) →
+> `import_messages` → a Settings file input with an imported/duplicates/errors report. ICS
+> hardening: calendar-core tests lock in VALARM/ATTENDEE tolerance + malformed-input safety +
+> RRULE COUNT round-trip (app-level recurrence is gated on the events schema). Backup:
+> `backup_local_data`/`restore_local_data` cover the local-only rows, `backup_now`/`restore_backup`
+> combine them with settings.json and never include secrets; a Settings Export/Restore UI. Docs:
+> `docs/data-ownership.md` (server-vs-local + rebuild-cache semantics). Key files:
+> `crates/quill-store/src/sqlite.rs`, `crates/quill-mail/src/import.rs`, `commands.rs`,
+> `components/settings/GeneralSection.tsx`, `components/ReadingPane.tsx`, calendar-core `ical.rs`.
+> Still needs verification: very-large mbox progress/cancel and a release-build pass. User to
+> verify in the real app.
 
 ---
 

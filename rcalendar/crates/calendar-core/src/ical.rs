@@ -527,4 +527,45 @@ mod tests {
             "unsupported rule is dropped, event kept"
         );
     }
+
+    // P1.6 hardening: reminder/attendee lines and malformed input are tolerated.
+    #[test]
+    fn ignores_valarm_and_attendee_lines() {
+        let ics = concat!(
+            "BEGIN:VCALENDAR\r\n",
+            "VERSION:2.0\r\n",
+            "BEGIN:VEVENT\r\n",
+            "UID:r@example.com\r\n",
+            "DTSTART:20260813T100000Z\r\n",
+            "DTEND:20260813T110000Z\r\n",
+            "SUMMARY:Meet\r\n",
+            "ATTENDEE;CN=Alice;PARTSTAT=ACCEPTED:mailto:alice@example.com\r\n",
+            "BEGIN:VALARM\r\n",
+            "TRIGGER:-PT15M\r\n",
+            "ACTION:DISPLAY\r\n",
+            "END:VALARM\r\n",
+            "END:VEVENT\r\n",
+            "END:VCALENDAR",
+        );
+        let events = parse_ical(ics).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].title, "Meet");
+        assert_eq!(events[0].tz, None, "floating times parse as UTC");
+    }
+
+    #[test]
+    fn malformed_input_does_not_panic() {
+        let _ = parse_ical("not ical at all");
+        let _ = parse_ical("BEGIN:VCALENDAR\r\nVERSION:2.0"); // no VEVENT
+        let _ = parse_ical("BEGIN:VEVENT\r\nUID:x\r\n"); // unterminated
+    }
+
+    #[test]
+    fn rrule_with_count_round_trips() {
+        let mut e = sample_event();
+        e.rrule = Some("FREQ=DAILY;COUNT=5".into());
+        let ics = write_ical(&[e.clone()]).unwrap();
+        let imported = parse_ical(&ics).unwrap();
+        assert_eq!(imported[0].rrule, e.rrule);
+    }
 }

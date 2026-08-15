@@ -556,6 +556,80 @@ pub fn is_launch_at_login(app: AppHandle) -> bool {
     app.autolaunch().is_enabled().unwrap_or(false)
 }
 
+/// P1.6: assemble a stored message as an `.eml` string for export.
+#[tauri::command]
+pub fn export_message_eml(
+    store: State<'_, SqliteStore>,
+    id: MessageId,
+) -> Result<String, String> {
+    store.eml_for_message(id).ok_or_else(|| "message not found".to_string())
+}
+
+/// P1.6: import a raw `.eml` (or an mbox when `mbox` is set) into a folder,
+/// deduping by Message-ID. Returns an ImportReport.
+#[tauri::command]
+pub fn import_messages(
+    store: State<'_, SqliteStore>,
+    account_id: AccountId,
+    folder: String,
+    raw: String,
+    mbox: bool,
+) -> Result<ImportReport, String> {
+    let parts: Vec<&str> = if mbox {
+        quill_mail::import::parse_mbox(&raw)
+    } else {
+        vec![raw.as_str()]
+    };
+    let mut report = ImportReport::default();
+    for part in parts {
+        match quill_mail::import::import_eml(&store, account_id, &folder, part) {
+            Ok(true) => report.imported += 1,
+            Ok(false) => report.duplicates += 1,
+            Err(e) => report.errors.push(e),
+        }
+    }
+    Ok(report)
+}
+
+/// P1.6: a JSON backup of settings + LOCAL-ONLY data. No secrets — keychain
+/// credentials and OAuth tokens never enter it.
+#[tauri::command]
+pub fn backup_now(app: AppHandle, store: State<'_, SqliteStore>) -> Result<String, String> {
+    let settings = crate::settings::get_settings(app);
+    let local = store.backup_local_data()?;
+    let created = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let payload = serde_json::json!({
+        "app": "quill",
+        "version": 1,
+        "created_at_ms": created,
+        "settings": settings,
+        "local": local,
+    });
+    serde_json::to_string(&payload).map_err(|e| e.to_string())
+}
+
+/// P1.6: restore a backup (settings + local-only rows, best-effort per table).
+#[tauri::command]
+pub fn restore_backup(
+    app: AppHandle,
+    store: State<'_, SqliteStore>,
+    payload: String,
+) -> Result<(), String> {
+    let v: serde_json::Value = serde_json::from_str(&payload).map_err(|e| e.to_string())?;
+    if let Some(settings) = v.get("settings") {
+        if let Ok(s) = serde_json::from_value::<AppSettings>(settings.clone()) {
+            crate::settings::set_settings(app, s)?;
+        }
+    }
+    if let Some(local) = v.get("local") {
+        store.restore_local_data(local)?;
+    }
+    Ok(())
+}
+
 /// Outgoing mail via SMTP (Epic 12.3 & 13), with the account's credential
 /// (password or OAuth bearer). If sending fails due to network/server
 /// unavailability, it is queued for retry.

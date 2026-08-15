@@ -18,6 +18,7 @@ pub mod auth;
 pub mod autodiscover;
 pub mod credentials;
 pub mod error;
+pub mod import;
 pub mod oauth;
 pub mod oauth_store;
 pub mod provider;

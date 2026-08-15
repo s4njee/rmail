@@ -27,6 +27,7 @@ import { useSettings, updateSettings } from "../lib/settings";
 import { useTheme } from "../lib/theme";
 import {
   attachmentPath,
+  exportMessageEml,
   getThreadMessages,
   saveAllAttachments,
   unsubscribe,
@@ -37,6 +38,30 @@ import { MailBody } from "./MailBody";
 import { Modal } from "./Modal";
 import { SnoozeMenu } from "./SnoozeMenu";
 import "./ReadingPane.css";
+
+// P1.6: download a string as a file (the same Blob pattern the calendar's ICS
+// export uses).
+function downloadText(filename: string, text: string): void {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function exportEml(id: number, subject: string): Promise<void> {
+  const text = await exportMessageEml(id);
+  const safe =
+    subject
+      .replace(/[^\w\- ]/g, "")
+      .slice(0, 60)
+      .trim() || "message";
+  downloadText(`${safe}.eml`, text);
+}
 
 function QuickPreviewModal(props: {
   attachment: Attachment;
@@ -824,6 +849,14 @@ export function ReadingPane(props: { focused?: boolean }) {
                     title="Print this message (⌘P)"
                   >
                     Print
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn--secondary"
+                    onClick={() => void exportEml(d.row.id, d.row.subject)}
+                    title="Export this message as .eml"
+                  >
+                    Export .eml
                   </button>
                   <Show when={theme() === "hairline"}>
                     <span class="reading-hint mono">r · a · f</span>

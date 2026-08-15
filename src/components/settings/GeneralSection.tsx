@@ -4,12 +4,16 @@ import { loadRows } from "../../lib/mail";
 import { useSettings, updateSettings } from "../../lib/settings";
 import { useSearchIndex } from "../../lib/store-events";
 import {
+  backupNow,
   cancelSearchRebuild,
+  importMessages,
   isLaunchAtLogin,
   rebuildSearchIndexProgress,
+  restoreBackup,
   searchIndexStatus,
   setLaunchAtLogin,
 } from "../../lib/tauri";
+import { useAccounts, useFolders } from "../../lib/mail";
 import "../Settings.css";
 
 export function GeneralSection() {
@@ -38,6 +42,70 @@ export function GeneralSection() {
       await setLaunchAtLogin(next);
     } catch {
       setLaunchAtLoginState(!next);
+    }
+  };
+  // P1.6 import (.eml/mbox) + backup.
+  const accounts = useAccounts();
+  const folders = useFolders();
+  const [importAccount, setImportAccount] = createSignal<number>(0);
+  const [importFolder, setImportFolder] = createSignal("Inbox");
+  const [importing, setImporting] = createSignal(false);
+  const [importReport, setImportReport] = createSignal<string | null>(null);
+  const [backupMsg, setBackupMsg] = createSignal<string | null>(null);
+  let importInput: HTMLInputElement | undefined;
+  let restoreInput: HTMLInputElement | undefined;
+
+  const handleImportFile = async (file: File) => {
+    const text = await file.text();
+    const mbox =
+      file.name.toLowerCase().endsWith(".mbox") ||
+      text.trimStart().startsWith("From ");
+    setImporting(true);
+    setImportReport(null);
+    try {
+      const report = await importMessages(
+        importAccount(),
+        importFolder(),
+        text,
+        mbox,
+      );
+      setImportReport(
+        `Imported ${report.imported}, ${report.duplicates} duplicate(s)${
+          report.errors.length ? `, ${report.errors.length} error(s)` : ""
+        }.`,
+      );
+    } catch (e) {
+      setImportReport(`Import failed: ${e}`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const exportBackup = async () => {
+    try {
+      const payload = await backupNow();
+      const blob = new Blob([payload], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `quill-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setBackupMsg("Backup exported — local data + settings, no passwords.");
+    } catch (e) {
+      setBackupMsg(`Backup failed: ${e}`);
+    }
+  };
+
+  const handleRestoreFile = async (file: File) => {
+    const text = await file.text();
+    try {
+      await restoreBackup(text);
+      setBackupMsg("Backup restored.");
+    } catch (e) {
+      setBackupMsg(`Restore failed: ${e}`);
     }
   };
 
@@ -260,7 +328,9 @@ export function GeneralSection() {
             <input
               type="checkbox"
               checked={launchAtLogin()}
-              onChange={(e) => void toggleLaunchAtLogin(e.currentTarget.checked)}
+              onChange={(e) =>
+                void toggleLaunchAtLogin(e.currentTarget.checked)
+              }
             />
             <span class="general-option__text">
               <span class="general-option__title">Launch Quill at login</span>
@@ -271,6 +341,96 @@ export function GeneralSection() {
               </span>
             </span>
           </label>
+        </div>
+      </div>
+
+      {/* P1.6 import (.eml/mbox) + backup */}
+      <div class="privacy-settings-group">
+        <h3 class="privacy-settings-group__title">Data & backup</h3>
+        <p class="privacy-settings-group__desc">
+          Import external mail, and back up your local-only data (settings,
+          local calendars, saved searches, groups, drafts, scheduled sends).
+          Credentials never enter a backup.
+        </p>
+        <div
+          class="settings-row general-option"
+          style={{ "flex-wrap": "wrap", gap: "8px" }}
+        >
+          <select
+            class="settings-select"
+            value={importAccount()}
+            onChange={(e) => setImportAccount(Number(e.currentTarget.value))}
+            aria-label="Import into account"
+          >
+            <For each={accounts()}>
+              {(a) => <option value={a.id}>{a.address}</option>}
+            </For>
+          </select>
+          <select
+            class="settings-select"
+            value={importFolder()}
+            onChange={(e) => setImportFolder(e.currentTarget.value)}
+            aria-label="Import into folder"
+          >
+            <For each={folders()}>
+              {(f) => <option value={f.name}>{f.name}</option>}
+            </For>
+          </select>
+          <button
+            type="button"
+            class="btn btn--secondary btn--sm"
+            disabled={importing() || accounts().length === 0}
+            onClick={() => importInput?.click()}
+          >
+            {importing() ? "Importing…" : "Import .eml / mbox"}
+          </button>
+          <input
+            ref={importInput}
+            type="file"
+            accept=".eml,.mbox"
+            hidden
+            onChange={(e) => {
+              const f = e.currentTarget.files?.[0];
+              if (f) void handleImportFile(f);
+              e.currentTarget.value = "";
+            }}
+          />
+          <Show when={importReport()}>
+            <span class="settings-sync-msg">{importReport()}</span>
+          </Show>
+        </div>
+        <div
+          class="settings-row general-option"
+          style={{ "flex-wrap": "wrap", gap: "8px" }}
+        >
+          <button
+            type="button"
+            class="btn btn--secondary btn--sm"
+            onClick={() => void exportBackup()}
+          >
+            Export backup
+          </button>
+          <button
+            type="button"
+            class="btn btn--secondary btn--sm"
+            onClick={() => restoreInput?.click()}
+          >
+            Restore backup
+          </button>
+          <input
+            ref={restoreInput}
+            type="file"
+            accept=".json"
+            hidden
+            onChange={(e) => {
+              const f = e.currentTarget.files?.[0];
+              if (f) void handleRestoreFile(f);
+              e.currentTarget.value = "";
+            }}
+          />
+          <Show when={backupMsg()}>
+            <span class="settings-sync-msg">{backupMsg()}</span>
+          </Show>
         </div>
       </div>
 

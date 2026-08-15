@@ -714,6 +714,18 @@ pub struct MailtoPayload {
     pub body: String,
 }
 
+/// Result of an `.eml`/mbox import (P1.6): counts + per-message errors.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ImportReport {
+    #[ts(type = "number")]
+    pub imported: u32,
+    #[ts(type = "number")]
+    pub duplicates: u32,
+    pub errors: Vec<String>,
+}
+
 /// Search-index status/progress (P1.3).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]

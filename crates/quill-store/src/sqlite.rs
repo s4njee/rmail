@@ -3958,6 +3958,327 @@ impl SqliteStore {
         })
     }
 
+    /// P1.6: assemble an RFC-5322 `.eml` from a stored message, for export
+    /// without touching the SQLite schema. Rebuilds the headers the DB keeps
+    /// (raw headers like the original Date are not retained) + a plain/HTML
+    /// body; attachment bytes are noted, not embedded.
+    pub fn eml_for_message(&self, id: MessageId) -> Option<String> {
+        let detail = self.get_message(id)?;
+        let row = detail.row;
+        let addr = |name: &str, address: &str| -> String {
+            if name.trim().is_empty() {
+                address.to_string()
+            } else {
+                format!("{name} <{address}>")
+            }
+        };
+        let date = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(row.received_at_ms)
+            .map(|d| d.to_rfc2822())
+            .unwrap_or_default();
+
+        let mut out = String::new();
+        out.push_str(&format!(
+            "From: {}\r\n",
+            addr(&row.sender_name, &row.sender_address)
+        ));
+        for r in &detail.to {
+            out.push_str(&format!("To: {}\r\n", addr(&r.name, &r.address)));
+        }
+        for r in &detail.cc {
+            out.push_str(&format!("Cc: {}\r\n", addr(&r.name, &r.address)));
+        }
+        for r in &detail.bcc {
+            out.push_str(&format!("Bcc: {}\r\n", addr(&r.name, &r.address)));
+        }
+        out.push_str(&format!("Date: {date}\r\n"));
+        if let Some(mid) = detail.message_id_header.as_deref() {
+            out.push_str(&format!("Message-ID: {mid}\r\n"));
+        }
+        if let Some(ir) = detail.in_reply_to.as_deref() {
+            out.push_str(&format!("In-Reply-To: {ir}\r\n"));
+        }
+        if let Some(rf) = detail.references.as_deref() {
+            out.push_str(&format!("References: {rf}\r\n"));
+        }
+        out.push_str(&format!("Subject: {}\r\n", row.subject));
+        out.push_str("MIME-Version: 1.0\r\n");
+
+        let plain = detail.body.join("\n");
+        let has_html = detail
+            .body_html
+            .as_deref()
+            .map(|h| !h.is_empty())
+            .unwrap_or(false);
+        if has_html {
+            out.push_str(
+                "Content-Type: multipart/alternative; boundary=\"qeml\"\r\n\r\n\
+                 --qeml\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n",
+            );
+            out.push_str(&plain);
+            out.push_str("\r\n--qeml\r\nContent-Type: text/html; charset=utf-8\r\n\r\n");
+            out.push_str(detail.body_html.as_deref().unwrap_or(""));
+            out.push_str("\r\n--qeml--\r\n");
+        } else {
+            out.push_str("Content-Type: text/plain; charset=utf-8\r\n\r\n");
+            out.push_str(&plain);
+        }
+        for a in &detail.attachments {
+            out.push_str(&format!("\r\n(attachment: {})", a.filename));
+        }
+        Some(out)
+    }
+
+    /// P1.6: import an external message (from `.eml`/mbox) into a folder.
+    /// Dedups by Message-ID — returns `Ok(false)` when the account already has
+    /// that header. The sender is mirrored to both name+address columns (as
+    /// `save_draft` does) and the thread id is derived from the subject.
+    pub fn import_message(
+        &self,
+        account_id: AccountId,
+        folder: &str,
+        sender: &str,
+        recipients: &[(String, String)], // (kind, address)
+        subject: &str,
+        body: &str,
+        received_at_ms: i64,
+        message_id_header: Option<&str>,
+    ) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap();
+        if let Some(mid) = message_id_header {
+            let existing: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM messages \
+                     WHERE account_id = ?1 AND message_id_header = ?2",
+                    params![account_id, mid],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            if existing > 0 {
+                return Ok(false);
+            }
+        }
+        let snippet: String = body.chars().take(120).collect();
+        let thread_id = crate::threading::compute_thread_id(None, None, subject);
+        conn.execute(
+            "INSERT INTO messages (account_id, folder, sender_name, sender_address, subject, \
+             snippet, received_at_ms, unread, flagged, has_attachments, message_id_header, thread_id) \
+             VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6, 1, 0, 0, ?7, ?8)",
+            params![
+                account_id,
+                folder,
+                sender,
+                subject,
+                snippet,
+                received_at_ms,
+                message_id_header,
+                thread_id
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        let id = conn.last_insert_rowid() as MessageId;
+        conn.execute(
+            "INSERT INTO bodies (message_id, plain) VALUES (?1, ?2)",
+            params![id, body],
+        )
+        .map_err(|e| e.to_string())?;
+        for (i, (kind, address)) in recipients.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO recipients (message_id, kind, name, address, position) \
+                 VALUES (?1, ?2, ?3, ?3, ?4)",
+                params![id, kind, address, i as i64],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(true)
+    }
+
+    /// All non-deleted drafts — a backup must include the user's unsent mail.
+    pub fn list_drafts(&self) -> Vec<Draft> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, account_id, subject, in_reply_to, references_header \
+             FROM messages WHERE folder = 'Drafts' AND deleted_at_ms IS NULL \
+             ORDER BY received_at_ms DESC, id DESC",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?)))
+            .map_err(|_| ());
+        let rows: Vec<(i64, i64, String, Option<String>, Option<String>)> =
+            match rows { Ok(r) => r.flatten().collect(), Err(_) => return Vec::new() };
+        rows.into_iter()
+            .filter_map(|(id, account_id, subject, in_reply_to, references)| {
+                let body: String = conn
+                    .query_row(
+                        "SELECT COALESCE(plain, '') FROM bodies WHERE message_id = ?1",
+                        params![id as MessageId],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or_default();
+                let mut to = Vec::new();
+                let mut cc = Vec::new();
+                let mut bcc = Vec::new();
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT kind, address FROM recipients WHERE message_id = ?1 ORDER BY position",
+                    )
+                    .ok()?;
+                let recs = stmt
+                    .query_map(params![id as MessageId], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                    .ok()?;
+                for row in recs.flatten() {
+                    match row.0.as_str() {
+                        "to" => to.push(row.1),
+                        "cc" => cc.push(row.1),
+                        "bcc" => bcc.push(row.1),
+                        _ => {}
+                    }
+                }
+                Some(Draft {
+                    id: Some(id as MessageId),
+                    account_id: account_id as AccountId,
+                    to, cc, bcc,
+                    subject,
+                    body,
+                    in_reply_to,
+                    references,
+                })
+            })
+            .collect()
+    }
+
+    /// The scheduled sends with their full payloads — send-later mail is
+    /// local-only and would be lost without them (P1.6 backup).
+    pub fn scheduled_for_backup(&self) -> Vec<(i64, AccountId, i64, String, String, i64)> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, account_id, send_at_ms, payload, draft, created_at_ms \
+             FROM scheduled_messages ORDER BY id",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+            .map_err(|_| ());
+        match rows { Ok(r) => r.flatten().collect(), Err(_) => Vec::new() }
+    }
+
+    /// P1.6 backup: a JSON bundle of the LOCAL-ONLY data (never OS-keychain
+    /// secrets). Server-authoritative mail is excluded — it re-syncs.
+    pub fn backup_local_data(&self) -> Result<serde_json::Value, String> {
+        let events: Vec<CalendarEvent> = self
+            .list_events(0, i64::MAX / 2)
+            .into_iter()
+            .filter(|e| e.calendar_source.is_none())
+            .collect();
+        let groups = self.list_contact_groups();
+        let members: Vec<(i64, Vec<ContactSuggestion>)> = groups
+            .iter()
+            .map(|g| (g.id, self.contact_group_members(g.id)))
+            .collect();
+        let hidden: Vec<String> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT address FROM hidden_recipients")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        };
+        Ok(serde_json::json!({
+            "version": 1,
+            "events": events,
+            "tasks": self.list_tasks(None),
+            "saved_searches": self.list_saved_searches(),
+            "contact_groups": groups,
+            "contact_group_members": members,
+            "hidden_recipients": hidden,
+            "subscriptions": self.list_subscriptions(),
+            "drafts": self.list_drafts(),
+            "scheduled": self.scheduled_for_backup(),
+        }))
+    }
+
+    /// P1.6 restore: re-apply a backup's local-only rows (best-effort per
+    /// table; ids are re-assigned where the source table auto-increments).
+    pub fn restore_local_data(&self, value: &serde_json::Value) -> Result<(), String> {
+        let v = value;
+        // Local events (INSERT-OR-REPLACE by id).
+        if let Some(events) = v.get("events").and_then(|x| x.as_array()) {
+            for e in events {
+                if let Ok(ev) = serde_json::from_value::<CalendarEvent>(e.clone()) {
+                    let _ = self.restore_event(ev);
+                }
+            }
+        }
+        if let Some(tasks) = v.get("tasks").and_then(|x| x.as_array()) {
+            for t in tasks {
+                if let Ok(task) = serde_json::from_value::<CalendarTask>(t.clone()) {
+                    let _ = self.create_task(task);
+                }
+            }
+        }
+        if let Some(searches) = v.get("saved_searches").and_then(|x| x.as_array()) {
+            for s in searches {
+                if let Ok(ss) = serde_json::from_value::<SavedSearch>(s.clone()) {
+                    let _ = self.save_search(&ss.name, &ss.query);
+                }
+            }
+        }
+        if let Some(groups) = v.get("contact_groups").and_then(|x| x.as_array()) {
+            for g in groups {
+                if let Ok(cg) = serde_json::from_value::<ContactGroup>(g.clone()) {
+                    if let Ok(gid) = self.create_contact_group(&cg.name) {
+                        if let Some(members) = v.get("contact_group_members").and_then(|x| x.as_array()) {
+                            for m in members {
+                                if let Ok((old_id, suggestions)) = serde_json::from_value::<(i64, Vec<ContactSuggestion>)>(m.clone()) {
+                                    if old_id == cg.id {
+                                        for s in suggestions {
+                                            let _ = self.add_contact_to_group(gid, &s.address);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(hidden) = v.get("hidden_recipients").and_then(|x| x.as_array()) {
+            for h in hidden {
+                if let Some(addr) = h.as_str() {
+                    let _ = self.hide_recipient(addr);
+                }
+            }
+        }
+        if let Some(subs) = v.get("subscriptions").and_then(|x| x.as_array()) {
+            for s in subs {
+                if let Ok(sub) = serde_json::from_value::<CalendarSubscription>(s.clone()) {
+                    let _ = self.create_subscription(&sub.name, &sub.url, &sub.color, sub.refresh_interval_min);
+                }
+            }
+        }
+        if let Some(drafts) = v.get("drafts").and_then(|x| x.as_array()) {
+            for d in drafts {
+                if let Ok(draft) = serde_json::from_value::<Draft>(d.clone()) {
+                    let _ = self.save_draft(&draft);
+                }
+            }
+        }
+        if let Some(scheduled) = v.get("scheduled").and_then(|x| x.as_array()) {
+            for s in scheduled {
+                if let Ok((_id, account_id, send_at_ms, payload, draft, _created)) =
+                    serde_json::from_value::<(i64, AccountId, i64, String, String, i64)>(s.clone())
+                {
+                    let _ = self.schedule_message(account_id, send_at_ms, &payload, &draft);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Seed the demo content (Epic 3.4) into SQLite.
     pub fn seed_demo(&self, attachments_root: &Path) -> Result<(), String> {
         let mut conn = self.conn.lock().unwrap();
@@ -4892,6 +5213,89 @@ mod tests {
         // A soft-deleted draft is not resumed.
         store.delete(d.id.unwrap()).unwrap();
         assert_eq!(store.latest_draft().unwrap().subject, "Older");
+    }
+
+    /// P1.6: an `.eml` export round-trips the stored headers, and import dedups
+    /// by Message-ID.
+    #[test]
+    fn eml_export_and_import_dedup() {
+        let store = seeded();
+        let eml = store.eml_for_message(1).unwrap();
+        assert!(eml.contains("Subject:"));
+        assert!(eml.contains("From:"));
+        assert!(eml.contains("Date:"));
+        assert!(eml.contains("MIME-Version: 1.0"));
+
+        let imported = store
+            .import_message(
+                1,
+                "Inbox",
+                "Importer <imp@example.com>",
+                &[("to".into(), "me@example.com".into())],
+                "Imported message",
+                "hello",
+                1000,
+                Some("import-1@example.com"),
+            )
+            .unwrap();
+        assert!(imported);
+        let dup = store
+            .import_message(
+                1,
+                "Inbox",
+                "Importer",
+                &[],
+                "Imported message",
+                "hello",
+                1000,
+                Some("import-1@example.com"),
+            )
+            .unwrap();
+        assert!(!dup, "Message-ID dedup skips a re-import");
+    }
+
+    /// P1.6: a backup captures local-only data (a local event + a saved
+    /// search) and restore re-applies it.
+    #[test]
+    fn backup_restore_local_data() {
+        let store = seeded();
+        let local_event = store
+            .create_event(CalendarEvent {
+                id: 0,
+                account_id: 1,
+                title: "Local only".into(),
+                start_ms: 5000,
+                end_ms: 6000,
+                all_day: false,
+                location: None,
+                notes: None,
+                alarm_minutes_before: None,
+                timezone: None,
+                travel_time_minutes: None,
+                calendar_source: None,
+                calendar_name: None,
+                calendar_color: None,
+                color: None,
+            })
+            .unwrap();
+        store.save_search("Unread", "is:unread").unwrap();
+
+        let backup = store.backup_local_data().unwrap();
+        assert!(backup.get("events").is_some());
+        assert!(backup.get("saved_searches").is_some());
+
+        // Wipe the local-only rows, then restore.
+        store.delete_event(local_event.id).unwrap();
+        let search_id = store.list_saved_searches()[0].id;
+        store.delete_saved_search(search_id).unwrap();
+        assert!(!store.list_events(0, i64::MAX / 2).iter().any(|e| e.id == local_event.id));
+
+        store.restore_local_data(&backup).unwrap();
+        assert!(store
+            .list_events(0, i64::MAX / 2)
+            .iter()
+            .any(|e| e.id == local_event.id));
+        assert!(store.list_saved_searches().iter().any(|s| s.name == "Unread"));
     }
 
     /// Downgrade safety (E2.2): a database stamped by a newer app version must
