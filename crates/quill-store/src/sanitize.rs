@@ -62,20 +62,49 @@ pub fn snippet_from_bodies(plain: &str, html: Option<&str>) -> String {
     collapsed.chars().take(SNIPPET_MAX).collect()
 }
 
+/// Elements whose content is markup or metadata rather than visible text
+/// (active content, CSS rules, document scaffolding). Both the tags and the
+/// content are dropped from a text extraction.
+const HIDDEN_TEXT_TAGS: [&str; 6] = ["script", "style", "head", "title", "template", "noscript"];
+
 /// Reduce HTML markup to readable text for a snippet. HTML-only messages
 /// expose their markup as the body; a tag-strip recovers the visible text,
-/// with block-level tags acting as word separators.
+/// with block-level tags acting as word separators. Content inside
+/// `HIDDEN_TEXT_TAGS` is dropped entirely, so raw CSS/JS never surfaces in a
+/// snippet.
 pub fn html_to_text(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut in_tag = false;
+    let mut hidden_depth = 0usize;
+    let mut tag = String::with_capacity(8);
     for c in raw.chars() {
         match c {
             '<' => {
                 in_tag = true;
+                tag.clear();
                 out.push(' ');
             }
-            '>' if in_tag => in_tag = false,
-            _ if in_tag => {}
+            '>' if in_tag => {
+                in_tag = false;
+                let tag_body = tag.trim();
+                let name = tag_body
+                    .trim_start_matches('/')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim_end_matches('/')
+                    .to_ascii_lowercase();
+                if HIDDEN_TEXT_TAGS.contains(&name.as_str()) {
+                    if tag_body.starts_with('/') {
+                        hidden_depth = hidden_depth.saturating_sub(1);
+                    } else if !tag_body.ends_with('/') {
+                        // Not self-closing: its content is hidden until `</name>`.
+                        hidden_depth += 1;
+                    }
+                }
+            }
+            _ if in_tag => tag.push(c),
+            _ if hidden_depth > 0 => {}
             _ => out.push(c),
         }
     }
@@ -402,5 +431,26 @@ mod tests {
         assert_eq!(decode_rfc2047("a =?not-well-formed"), "a =?not-well-formed");
         // Encoded-word followed by plain text.
         assert_eq!(decode_rfc2047("=?UTF-8?Q?Hi?= there"), "Hi there");
+    }
+
+    /// P0.5: the hostile-mail fixture corpus — every adversarial input is
+    /// neutralized (no active content survives) and never panics, through
+    /// `sanitize_html`, `html_to_text`, and the snippet path.
+    #[test]
+    fn hostile_corpus_is_neutralized() {
+        for (attack, raw) in crate::hostile::hostile_mail() {
+            let sanitized = sanitize_html(&raw);
+            assert!(
+                !crate::hostile::has_active_content(&sanitized.html),
+                "sanitize_html survived active content for attack '{attack}'"
+            );
+            let text = html_to_text(&raw);
+            assert!(
+                !crate::hostile::has_active_content(&text),
+                "html_to_text survived active content for attack '{attack}'"
+            );
+            let _ = snippet_from_bodies(text.as_str(), None);
+            let _ = snippet_from_bodies("", Some(&sanitized.html));
+        }
     }
 }

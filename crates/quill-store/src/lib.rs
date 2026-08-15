@@ -15,6 +15,7 @@
 
 pub mod credentials;
 pub mod demo;
+pub mod hostile;
 pub mod pdf;
 pub mod rules;
 pub mod sanitize;
