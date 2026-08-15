@@ -33,3 +33,38 @@ export function applyTheme(next: ThemeName): void {
   setTheme(next);
   document.documentElement.dataset.theme = next;
 }
+
+// P1.5 dark palettes: a `data-color-scheme` attribute flips the color tokens
+// for BOTH treatments (the `[data-color-scheme="dark"]` override block in
+// tokens.css). Seeded from the Rust init script (no flash); persisted so it
+// survives restart.
+const darkInitial =
+  document.documentElement.dataset.colorScheme === "dark" ||
+  (() => {
+    try {
+      return localStorage.getItem("quill_dark") === "1";
+    } catch {
+      return false;
+    }
+  })();
+
+const [dark, setDark] = createSignal(darkInitial);
+
+/** Reactive dark-mode accessor. */
+export function useDark(): () => boolean {
+  return dark;
+}
+
+export function applyDark(next: boolean): void {
+  setDark(next);
+  document.documentElement.dataset.colorScheme = next ? "dark" : "light";
+  try {
+    localStorage.setItem("quill_dark", next ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+}
+
+export function toggleDark(): void {
+  applyDark(!dark());
+}

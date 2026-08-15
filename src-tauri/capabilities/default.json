@@ -11,6 +11,14 @@
     {
       "identifier": "opener:allow-open-path",
       "allow": [{ "path": "$APPDATA/attachments/**" }]
-    }
+    },
+    "core:tray:default",
+    "core:tray:allow-new",
+    "core:tray:allow-set-icon",
+    "core:tray:allow-set-menu",
+    "core:tray:allow-set-tooltip",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-set-focus"
   ]
 }

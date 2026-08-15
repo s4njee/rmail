@@ -64,7 +64,24 @@ export function CalendarView() {
 
   const dataSource = new QuillCalendarDataSource();
 
-  const [view, setView] = createSignal<ViewMode>("Month");
+  // P1.5: the calendar view mode survives restart.
+  const initialView: ViewMode = (() => {
+    try {
+      const v = localStorage.getItem("quill_calendar_view");
+      const modes: ViewMode[] = ["Month", "Week", "3-day", "Day", "Agenda", "Year"];
+      return modes.includes(v as ViewMode) ? (v as ViewMode) : "Month";
+    } catch {
+      return "Month";
+    }
+  })();
+  const [view, setView] = createSignal<ViewMode>(initialView);
+  createEffect(() => {
+    try {
+      localStorage.setItem("quill_calendar_view", view());
+    } catch {
+      /* ignore */
+    }
+  });
   // Navigation and tasks are shared with the embedded calendar sidebar
   // (lib/calendar) so a click in one updates the other.
   const focusedDate = useCalendarFocusedDate();

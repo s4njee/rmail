@@ -20,6 +20,40 @@ fn ioerr(e: String) -> std::io::Error {
     std::io::Error::other(e)
 }
 
+/// The app handle, captured in setup so the deep-link / tray handlers can emit
+/// store events after startup (P1.5).
+static APP: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+
+/// A `mailto:`/`webcal:` deep link (or a tray action) → the frontend opens a
+/// compose via `StoreEvent::Mailto`.
+fn handle_deep_link(url: url::Url) {
+    let Some(app) = APP.get() else {
+        return;
+    };
+    let mut payload = quill_store::types::MailtoPayload::default();
+    if url.scheme() == "mailto" {
+        // mailto:a@b,cc@d?subject=X&body=Y
+        payload.to = url.path().trim().to_string();
+        for (k, v) in url.query_pairs() {
+            match k.as_ref() {
+                "subject" => payload.subject = v.to_string(),
+                "body" => payload.body = v.to_string(),
+                "to" => payload.to = v.to_string(),
+                _ => {}
+            }
+        }
+    } else if url.scheme() == "webcal" {
+        // Open the feed in the browser for now — subscribing to a calendar from
+        // a webcal: link is a follow-up.
+        use tauri_plugin_opener::OpenerExt;
+        let _ = app
+            .opener()
+            .open_url(url.to_string().replace("webcal://", "https://"), None::<&str>);
+        return;
+    }
+    let _ = app.emit("store", quill_store::types::StoreEvent::Mailto(payload));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Crash capture (E2.3): installed before the builder runs so a panic during
@@ -62,6 +96,13 @@ pub fn run() {
                 ])
                 .build(),
         )
+        // P1.5 OS integration: `mailto:` / `webcal:` deep links open a compose,
+        // and the app can register to launch at login.
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .invoke_handler(tauri::generate_handler![
             commands::list_folders,
             commands::list_accounts,
@@ -115,6 +156,9 @@ pub fn run() {
             commands::list_synced_folders,
             commands::account_removal_info,
             commands::save_draft,
+            commands::latest_draft,
+            commands::set_launch_at_login,
+            commands::is_launch_at_login,
             commands::search,
             commands::rebuild_search_index,
             commands::rebuild_search_index_progress,
@@ -168,6 +212,63 @@ pub fn run() {
             // persisted log level, and spawn the upload/ping task. Early so a
             // panic anywhere during setup is still captured.
             diagnostics::init(app.handle());
+
+            // P1.5: capture the app handle for the deep-link handler, then
+            // handle `mailto:`/`webcal:` links, then build the system tray.
+            let _ = APP.set(app.handle().clone());
+            {
+                let deep = app.state::<tauri_plugin_deep_link::DeepLink<tauri::Wry>>();
+                deep.on_open_url(|event| {
+                    for url in event.urls() {
+                        handle_deep_link(url.clone());
+                    }
+                });
+            }
+            if let Some(icon) = app.default_window_icon() {
+                use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+                let menu = Menu::new(app)
+                    .and_then(|m| {
+                        m.append(
+                            &MenuItem::with_id(app, "show", "Show Quill", true, None::<&str>)?,
+                        )?;
+                        m.append(&MenuItem::with_id(
+                            app,
+                            "newmail",
+                            "New Message",
+                            true,
+                            None::<&str>,
+                        )?)?;
+                        m.append(&PredefinedMenuItem::separator(app)?)?;
+                        m.append(&MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?)?;
+                        Ok(m)
+                    })
+                    .ok();
+                if let Some(menu) = menu {
+                    let _ = tauri::tray::TrayIconBuilder::new()
+                        .icon(icon.clone())
+                        .menu(&menu)
+                        .show_menu_on_left_click(false)
+                        .on_menu_event(|app, event| match event.id.as_ref() {
+                            "show" => {
+                                if let Some(w) = app.get_webview_window("main") {
+                                    let _ = w.show();
+                                    let _ = w.set_focus();
+                                }
+                            }
+                            "newmail" => {
+                                let _ = app.emit(
+                                    "store",
+                                    quill_store::types::StoreEvent::Mailto(
+                                        quill_store::types::MailtoPayload::default(),
+                                    ),
+                                );
+                            }
+                            "quit" => app.exit(0),
+                            _ => {}
+                        })
+                        .build(app);
+                }
+            }
 
             // Demo mode (Epic 3.4): only when explicitly requested with
             // `--demo`. Real development runs use the persistent store so

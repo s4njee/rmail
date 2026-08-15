@@ -8,6 +8,7 @@ import {
   useDetail,
   useSelectedId,
 } from "./mail";
+import { openShortcuts } from "./shortcuts";
 import {
   closeSettings,
   effectiveMode,
@@ -127,6 +128,18 @@ export function initKeymap(): () => void {
             ids,
             d && d.row.folder !== "Junk" ? "markJunk" : "markNotJunk",
           );
+        }
+        break;
+      }
+      case "?": {
+        event.preventDefault();
+        openShortcuts();
+        break;
+      }
+      case "p": {
+        if (event.metaKey || event.ctrlKey) {
+          event.preventDefault();
+          window.print();
         }
         break;
       }

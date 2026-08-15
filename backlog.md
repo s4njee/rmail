@@ -388,15 +388,48 @@ onboarding, accessibility, and release gates above.
 
 ### P1.5 Desktop integration and comfort
 
-- [ ] Add dark palettes for both themes, including a safe per-message strategy for HTML mail.
-- [ ] Restore window size, pane widths, selected account/folder, calendar view/date, list scroll,
+- [x] Add dark palettes for both themes, including a safe per-message strategy for HTML mail.
+      (A `[data-color-scheme="dark"]` override block flips the color tokens for BOTH treatments,
+      stamped before first paint and toggled in Settings → Appearance; the calendar package has its
+      own dark override. HTML mail follows dark defaults unless it sets its own colors; images are
+      never rewritten.)
+- [x] Restore window size, pane widths, selected account/folder, calendar view/date, list scroll,
       and unfinished composers after restart.
-- [ ] Register `mailto:`, `.eml`, `.ics`, and `webcal:` handlers on supported platforms.
-- [ ] Add system tray/menu-bar behavior, launch at login, unread badge, and a documented background
+      (Window size + pane widths already persisted; the active folder/account, calendar date + view,
+      per-filter scroll, and the most recent draft composer now restore on launch.)
+- [x] Register `mailto:`, `.eml`, `.ics`, and `webcal:` handlers on supported platforms.
+      (`tauri-plugin-deep-link` for `mailto:`/`webcal:` (mailto opens a pre-filled composer) +
+      bundle file associations for `.eml`/`.ics` — OS registration needs a release-build check.)
+- [x] Add system tray/menu-bar behavior, launch at login, unread badge, and a documented background
       mode for sync and reminders.
-- [ ] Support printing for messages, conversations, event details, and day/week/month calendar views.
-- [ ] Add a keyboard-shortcut reference reachable from every primary surface and detect conflicts
+      (System tray Show/New Message/Quit + `tauri-plugin-autostart` toggle in Settings → General;
+      unread badge already ships; `docs/background-mode.md` documents the running-while-open model
+      and the missing background agent.)
+- [x] Support printing for messages, conversations, event details, and day/week/month calendar views.
+      (`@media print` stylesheet hides the app chrome; `⌘P` + Print buttons print the reading pane /
+      event detail / calendar.)
+- [x] Add a keyboard-shortcut reference reachable from every primary surface and detect conflicts
       with system shortcuts.
+      (`?`-reachable `ShortcutsHelpModal` + a toolbar `⌘?`; it lists the app bindings and the
+      browser shortcuts the app suppresses.)
+
+> **Implementation report (2026-08-15).** P1.5 across the rmail + rcalendar packages. Shortcuts: a
+> `?`/`⌘?`-reachable reference modal (`ShortcutsHelpModal` + `lib/shortcuts`) listing bindings and
+> suppressed browser shortcuts. Session restoration: the active folder/account + calendar date/view
+> and per-filter scroll persist (localStorage), and `latest_draft` (`save_draft`'s inverse) reopens
+> the most recent unfinished composer via `openDraftMessage`. Printing: a `@media print` stylesheet
+> + `⌘P`/Print buttons. OS integration: `mailto:`/`webcal:` deep links (opens a pre-filled composer
+> via `StoreEvent::Mailto`), `.eml`/`.ics` bundle associations, a system tray (Show/New Message/
+> Quit), and `tauri-plugin-autostart` launch-at-login (Settings toggles) + `docs/background-mode.md`.
+> Dark palettes: a `[data-color-scheme="dark"]` override in both `tokens.css` files (additive — the
+> token guard stays green), stamped pre-paint by the Rust init script, toggled in Appearance; MailBody
+> forces light-on-dark defaults for HTML mail without rewriting mail-set colors or images. Key files:
+> `src/lib/{keymap,theme,shortcuts,compose,mail,store-events}.ts`, `components/{ShortcutsHelpModal,
+> MailBody,MessageList}.tsx`, `components/settings/{AppearanceSection,GeneralSection}.tsx`,
+> `src-tauri/{lib.rs,commands.rs,settings.rs,tauri.conf.json,capabilities/default.json}`, the rcalendar
+> tokens.css. Still needs release verification: OS deep-link/file-association registration and the
+> tray on a built bundle; dark-mode tuning on the long tail of secondary tokens. User to verify in
+> the real app.
 
 ### P1.6 Import, export, backup, and ownership
 

@@ -2,6 +2,7 @@
 import type { ConnectivityUpdate } from "./ConnectivityUpdate";
 import type { FootprintUpdate } from "./FootprintUpdate";
 import type { MailChangedUpdate } from "./MailChangedUpdate";
+import type { MailtoPayload } from "./MailtoPayload";
 import type { MessageProgressUpdate } from "./MessageProgressUpdate";
 import type { SearchIndexUpdate } from "./SearchIndexUpdate";
 
@@ -9,4 +10,4 @@ import type { SearchIndexUpdate } from "./SearchIndexUpdate";
  * Push events the frontend subscribes to (Epic 3.2) — the frontend never
  * polls; sync/connectivity/footprint arrive here as deltas.
  */
-export type StoreEvent = { "kind": "connectivity" } & ConnectivityUpdate | { "kind": "footprint" } & FootprintUpdate | { "kind": "mailChanged" } & MailChangedUpdate | { "kind": "messageProgress" } & MessageProgressUpdate | { "kind": "searchIndex" } & SearchIndexUpdate;
+export type StoreEvent = { "kind": "connectivity" } & ConnectivityUpdate | { "kind": "footprint" } & FootprintUpdate | { "kind": "mailChanged" } & MailChangedUpdate | { "kind": "messageProgress" } & MessageProgressUpdate | { "kind": "searchIndex" } & SearchIndexUpdate | { "kind": "mailto" } & MailtoPayload;

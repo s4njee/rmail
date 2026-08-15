@@ -15,6 +15,10 @@
         "https://github.com/YOUR-GITHUB-ORG/rmail/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRDNkJFMzRBNTcwMjZENEUKUldST2JRSlhTdU5yVEt2eCtTc2liM0s1b0duMlNhblY1TTNlU3N0Ti8rdEdXNkV1bkpzNHZiTmEK"
+    },
+    "deepLink": {
+      "enable": true,
+      "schemes": ["mailto", "webcal"]
     }
   },
   "app": {
@@ -36,6 +40,20 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["eml"],
+        "name": "Quill Email Message",
+        "role": "Viewer",
+        "description": "Email message (.eml)"
+      },
+      {
+        "ext": ["ics"],
+        "name": "Quill Calendar Event",
+        "role": "Editor",
+        "description": "Calendar event (.ics)"
+      }
     ],
     "macOS": {
       "minimumSystemVersion": "11.0",

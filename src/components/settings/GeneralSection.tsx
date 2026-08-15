@@ -5,8 +5,10 @@ import { useSettings, updateSettings } from "../../lib/settings";
 import { useSearchIndex } from "../../lib/store-events";
 import {
   cancelSearchRebuild,
+  isLaunchAtLogin,
   rebuildSearchIndexProgress,
   searchIndexStatus,
+  setLaunchAtLogin,
 } from "../../lib/tauri";
 import "../Settings.css";
 
@@ -27,6 +29,17 @@ export function GeneralSection() {
     const ev = searchIndexEvent();
     if (ev) setIndexStatus(ev);
   });
+  // P1.5 launch at login (tauri-plugin-autostart).
+  const [launchAtLogin, setLaunchAtLoginState] = createSignal(false);
+  onMount(() => void isLaunchAtLogin().then(setLaunchAtLoginState));
+  const toggleLaunchAtLogin = async (next: boolean) => {
+    setLaunchAtLoginState(next);
+    try {
+      await setLaunchAtLogin(next);
+    } catch {
+      setLaunchAtLoginState(!next);
+    }
+  };
 
   // Same hydration pattern as NotificationsSection: settings may not be loaded
   // when the section first renders.
@@ -236,6 +249,28 @@ export function GeneralSection() {
               + Add sender
             </button>
           </form>
+        </div>
+      </div>
+
+      {/* P1.5 launch at login */}
+      <div class="privacy-settings-group">
+        <h3 class="privacy-settings-group__title">Startup</h3>
+        <div class="settings-row general-option">
+          <label class="general-option__label">
+            <input
+              type="checkbox"
+              checked={launchAtLogin()}
+              onChange={(e) => void toggleLaunchAtLogin(e.currentTarget.checked)}
+            />
+            <span class="general-option__text">
+              <span class="general-option__title">Launch Quill at login</span>
+              <span class="general-option__desc">
+                Start Quill when you sign in to your computer, so sync and
+                reminders run in the background (the system tray keeps it
+                accessible).
+              </span>
+            </span>
+          </label>
         </div>
       </div>
 

@@ -337,6 +337,21 @@ export const saveDraft = async (draft: Draft): Promise<number> => {
   return draft.id || Date.now();
 };
 
+export const latestDraft = async (): Promise<Draft | null> => {
+  if (isTauri()) return invoke<Draft | null>("latest_draft");
+  return null;
+};
+
+// P1.5 launch at login
+export const setLaunchAtLogin = async (enabled: boolean): Promise<void> => {
+  if (isTauri()) return invoke<void>("set_launch_at_login", { enabled });
+};
+
+export const isLaunchAtLogin = async (): Promise<boolean> => {
+  if (isTauri()) return invoke<boolean>("is_launch_at_login");
+  return false;
+};
+
 // Messages
 export const pageMessages = async (
   query: MessageQuery,

@@ -30,6 +30,7 @@ import { useTheme } from "../lib/theme";
 import { formatRelativeTime } from "../lib/format";
 import { openContextMenu } from "../lib/context-menu";
 import type { MessageRow as MessageRowData } from "../lib/ipc/MessageRow";
+import { openShortcuts } from "../lib/shortcuts";
 import { BulkActionBar } from "./BulkActionBar";
 import { MessageRow } from "./MessageRow";
 import { SearchHelp } from "./SearchHelp";
@@ -38,6 +39,26 @@ import "./MessageList.css";
 
 const ROW_H = 80; // keep in sync with --row-h in tokens.css
 const BANDED_ROW_STEP = ROW_H + 2; // rows carry a 2px margin-bottom in Banded
+
+// P1.5: per-filter scroll position persists across restarts.
+function scrollKey(key: string): string {
+  return `quill_scroll_${key}`;
+}
+function persistedScroll(key: string): number | null {
+  try {
+    const raw = localStorage.getItem(scrollKey(key));
+    return raw == null ? null : Number(raw);
+  } catch {
+    return null;
+  }
+}
+function saveScroll(key: string, top: number): void {
+  try {
+    localStorage.setItem(scrollKey(key), String(top));
+  } catch {
+    /* ignore */
+  }
+}
 
 function HighlightedSnippet(props: { text: string }) {
   const parts = () => {
@@ -123,9 +144,11 @@ export function MessageList() {
       // restore the *old* filter's scroll offset over the new one.
       const keyAtLoad = key;
       void loadRows().then(() => {
-        // `el` was captured in the tracking scope above.
+        // `el` was captured in the tracking scope above. P1.5: restore the
+        // last scroll for this filter from the in-memory map or localStorage.
         if (el && filterKey() === keyAtLoad) {
-          el.scrollTop = scrollOffsets[keyAtLoad] ?? 0;
+          const stored = scrollOffsets[keyAtLoad] ?? persistedScroll(keyAtLoad);
+          el.scrollTop = stored ?? 0;
         }
       });
     } else {
@@ -293,9 +316,11 @@ export function MessageList() {
 
   // Scrolling to the top of the list is the manual refresh gesture: trigger a
   // sync (throttled to once per 20s so a long scroll doesn't fire a storm).
+  // P1.5: persist the scroll position per filter across restarts.
   let lastManualSyncAt = 0;
   const handleScroll = (e: Event) => {
     const el = e.currentTarget as HTMLElement;
+    saveScroll(filterKey(), el.scrollTop);
     if (el.scrollTop > 0) return;
     const now = Date.now();
     if (now - lastManualSyncAt < 20_000) return;
@@ -360,6 +385,14 @@ export function MessageList() {
             placeholder="Search mail and events… (/)"
           />
           <SearchHelp />
+          <button
+            type="button"
+            class="list-search-save-btn"
+            onClick={openShortcuts}
+            aria-label="Keyboard shortcuts"
+          >
+            ⌘?
+          </button>
           <Show when={isSearching()}>
             <Show
               when={!saving()}

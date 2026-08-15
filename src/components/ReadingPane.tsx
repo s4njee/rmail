@@ -817,6 +817,14 @@ export function ReadingPane(props: { focused?: boolean }) {
                   <SnoozeMenu
                     onSnooze={(untilMs) => void snooze([d.row.id], untilMs)}
                   />
+                  <button
+                    type="button"
+                    class="btn btn--secondary"
+                    onClick={() => window.print()}
+                    title="Print this message (⌘P)"
+                  >
+                    Print
+                  </button>
                   <Show when={theme() === "hairline"}>
                     <span class="reading-hint mono">r · a · f</span>
                   </Show>

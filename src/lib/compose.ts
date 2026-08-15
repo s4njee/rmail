@@ -1,12 +1,14 @@
 import { createSignal } from "solid-js";
 import type { AccountIdentity } from "./ipc/AccountIdentity";
 import type { AppSettings } from "./ipc/AppSettings";
+import type { Draft } from "./ipc/Draft";
 import type { MessageDetail } from "./ipc/MessageDetail";
 import type { OutgoingMessage } from "./ipc/OutgoingMessage";
 import { refreshMail, useAccounts, useDetail } from "./mail";
 import {
   deleteMessage,
   getSettings,
+  latestDraft,
   saveDraft,
   scheduleSend,
   sendMessage,
@@ -468,6 +470,67 @@ function composerSnapshot(): string {
     draftId: draftId(),
     attachments: [...attachments()],
   });
+}
+
+/** Reopen the composer from a stored Draft message (P1.5 resume). */
+export function openDraftMessage(d: Draft): void {
+  setDraft({
+    intent: "new",
+    accountId: d.account_id,
+    identityId: null,
+    fromName: null,
+    fromAddress:
+      useAccounts()().find((a) => a.id === d.account_id)?.address ?? null,
+    replyTo: null,
+    to: d.to,
+    cc: d.cc,
+    bcc: d.bcc,
+    subject: d.subject,
+    body: d.body,
+    bodyHtml: null,
+    inReplyTo: d.in_reply_to,
+    references: d.references,
+    originalMessageId: null,
+    isForward: null,
+    originalAccountId: null,
+  });
+  setDraftId(d.id ?? null);
+  setAttachments([]);
+  setSendError("");
+  setOpen(true);
+}
+
+/** Open the composer from a `mailto:` deep link or tray action (P1.5). */
+export async function openMailto(p: {
+  to: string;
+  subject: string;
+  body: string;
+}): Promise<void> {
+  await openNewComposer();
+  const d = draft();
+  if (!d) return;
+  updateDraft({
+    to: p.to
+      ? p.to
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : d.to,
+    subject: p.subject || d.subject,
+    body: p.body ? `${p.body}${d.body ? `\n\n${d.body}` : ""}` : d.body,
+  });
+}
+
+/** Resume the most recent unfinished draft into the composer (P1.5). */
+export async function resumeDraft(): Promise<void> {
+  try {
+    const d = await latestDraft();
+    if (d && (d.subject || d.body || d.to.length > 0)) {
+      openDraftMessage(d);
+    }
+  } catch {
+    /* non-fatal */
+  }
 }
 
 /** Reopen the composer from a snapshot produced by `composerSnapshot`. */

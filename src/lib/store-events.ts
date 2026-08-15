@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { openMailto } from "./compose";
 import { formatClock } from "./format";
 import type { ConnectivityUpdate } from "./ipc/ConnectivityUpdate";
 import type { SearchIndexUpdate } from "./ipc/SearchIndexUpdate";
@@ -73,6 +74,8 @@ export function initStoreEvents(): void {
       setFootprintBytes(event.on_disk_bytes);
     } else if (event.kind === "searchIndex") {
       setSearchIndex(event);
+    } else if (event.kind === "mailto") {
+      void openMailto(event);
     }
   });
 }

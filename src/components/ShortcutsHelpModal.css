@@ -1,0 +1,34 @@
+/* P1.5 keyboard-shortcut reference — tokens only. */
+
+.shortcuts-help__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8px);
+}
+
+.shortcuts-help__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-14px);
+  font-size: var(--fs-13px);
+  color: var(--color-text-body);
+}
+
+.shortcuts-help__keys {
+  flex: none;
+  min-width: var(--size-240px);
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12px);
+  color: var(--accent);
+}
+
+.shortcuts-help__conflict {
+  margin: var(--space-16px) 0 0;
+  font-size: var(--fs-12px);
+  color: var(--color-text-muted);
+  line-height: var(--lh-body);
+}

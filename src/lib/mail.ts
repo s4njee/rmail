@@ -116,10 +116,39 @@ export async function refreshMail(): Promise<void> {
 
 export function selectFolder(folderId: number): void {
   setFilter({ kind: "folder", folderId });
+  persistFilter();
 }
 
 export function selectAccount(accountId: number): void {
   setFilter({ kind: "account", accountId });
+  persistFilter();
+}
+
+// P1.5 session restoration: the active filter survives restart.
+export function persistFilter(): void {
+  try {
+    localStorage.setItem("quill_last_filter", JSON.stringify(filter()));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function restoreFilter(): void {
+  try {
+    const raw = localStorage.getItem("quill_last_filter");
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as MailFilter;
+    if (parsed.kind === "folder" && typeof parsed.folderId === "number") {
+      setFilter({ kind: "folder", folderId: parsed.folderId });
+    } else if (
+      parsed.kind === "account" &&
+      typeof parsed.accountId === "number"
+    ) {
+      setFilter({ kind: "account", accountId: parsed.accountId });
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Rows loaded for the current filter (Epic 6) — a reactive store array. */

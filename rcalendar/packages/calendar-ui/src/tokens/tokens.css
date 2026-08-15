@@ -83,3 +83,31 @@
   /* Scrim */
   --al-scrim: rgba(0, 0, 0, 0.34);
 }
+
+/* P1.5 dark palette: a `data-color-scheme="dark"` attribute (set by the host
+ * app's theme layer) flips the neutrals for the calendar package. */
+[data-color-scheme="dark"] {
+  --al-desk: #0f1115;
+  --al-chrome: #15181d;
+  --al-surface: #1c2128;
+  --al-surface-event: #232a33;
+  --al-border: #2c323b;
+  --al-border-soft: #262b33;
+  --al-grid: #262b33;
+  --al-grid-hour: #21262e;
+  --al-ink: #e8ecf2;
+  --al-ink-event: #dce2ea;
+  --al-ink-2: #c2cbd6;
+  --al-ink-3: #b6c0cc;
+  --al-ink-4: #8b97a6;
+  --al-ink-5: #7e8b9b;
+  --al-ink-6: #6a7684;
+  --al-ink-7: #5f6b7a;
+  --al-ink-8: #525d6b;
+  --al-ink-9: #454e5a;
+  --al-accent: #6c8cff;
+  --al-accent-hover: #8aa4ff;
+  --al-accent-tint: #2a3350;
+  --al-today-wash-2: #20262d;
+  --al-outside-hours: #14171c;
+}

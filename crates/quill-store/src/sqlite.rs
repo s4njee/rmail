@@ -3901,6 +3901,63 @@ impl SqliteStore {
         Ok(id)
     }
 
+    /// The most recent non-deleted draft, so an unfinished composer can be
+    /// resumed after a restart (P1.5). None when there are no drafts.
+    pub fn latest_draft(&self) -> Option<Draft> {
+        let conn = self.conn.lock().unwrap();
+        let (id, account_id, subject, in_reply_to, references): (
+            MessageId,
+            AccountId,
+            String,
+            Option<String>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT id, account_id, subject, in_reply_to, references_header \
+                 FROM messages WHERE folder = 'Drafts' AND deleted_at_ms IS NULL \
+                 ORDER BY received_at_ms DESC, id DESC LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .ok()?;
+        let body: String = conn
+            .query_row(
+                "SELECT COALESCE(plain, '') FROM bodies WHERE message_id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap_or_default();
+        let mut to = Vec::new();
+        let mut cc = Vec::new();
+        let mut bcc = Vec::new();
+        let mut stmt = conn
+            .prepare(
+                "SELECT kind, address FROM recipients \
+                 WHERE message_id = ?1 ORDER BY position",
+            )
+            .ok()?;
+        let rows = stmt.query_map(params![id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).ok()?;
+        for row in rows.flatten() {
+            match row.0.as_str() {
+                "to" => to.push(row.1),
+                "cc" => cc.push(row.1),
+                "bcc" => bcc.push(row.1),
+                _ => {}
+            }
+        }
+        Some(Draft {
+            id: Some(id),
+            account_id,
+            to,
+            cc,
+            bcc,
+            subject,
+            body,
+            in_reply_to,
+            references,
+        })
+    }
+
     /// Seed the demo content (Epic 3.4) into SQLite.
     pub fn seed_demo(&self, attachments_root: &Path) -> Result<(), String> {
         let mut conn = self.conn.lock().unwrap();
@@ -4777,6 +4834,64 @@ mod tests {
         // Duplicate group names are rejected.
         store.create_contact_group("Team").unwrap();
         assert!(store.create_contact_group("Team").is_err());
+    }
+
+    /// P1.5: `latest_draft` returns the most recent draft for resuming an
+    /// unfinished composer.
+    #[test]
+    fn latest_draft_resumes_most_recent() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        assert!(store.latest_draft().is_none());
+
+        let acc = store
+            .create_account(
+                &NewAccount {
+                    address: "a@example.com".into(),
+                    protocol: "IMAP".into(),
+                    server: "imap.example.com".into(),
+                    port: 993,
+                    tls: true,
+                    sync_mode: "every 2 min".into(),
+                },
+                "#3b5bdb".into(),
+            )
+            .unwrap();
+        let first = store
+            .save_draft(&Draft {
+                id: None,
+                account_id: acc.id,
+                to: vec!["b@example.com".into()],
+                cc: vec![],
+                bcc: vec![],
+                subject: "Older".into(),
+                body: "one".into(),
+                in_reply_to: None,
+                references: None,
+            })
+            .unwrap();
+        store
+            .save_draft(&Draft {
+                id: None,
+                account_id: acc.id,
+                to: vec!["c@example.com".into()],
+                cc: vec![],
+                bcc: vec![],
+                subject: "Newer".into(),
+                body: "two".into(),
+                in_reply_to: None,
+                references: None,
+            })
+            .unwrap();
+
+        let d = store.latest_draft().unwrap();
+        assert_eq!(d.subject, "Newer");
+        assert_eq!(d.to, vec!["c@example.com"]);
+        assert_eq!(d.body, "two");
+        assert_ne!(d.id, Some(first));
+
+        // A soft-deleted draft is not resumed.
+        store.delete(d.id.unwrap()).unwrap();
+        assert_eq!(store.latest_draft().unwrap().subject, "Older");
     }
 
     /// Downgrade safety (E2.2): a database stamped by a newer app version must

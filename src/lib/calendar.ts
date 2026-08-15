@@ -50,10 +50,36 @@ export function useCalendarSelectedDate(): () => Date {
 
 export function setCalendarFocusedDate(d: Date): void {
   setFocusedDate(d);
+  persistCalendarDates();
 }
 
 export function setCalendarSelectedDate(d: Date): void {
   setSelectedDate(d);
+  persistCalendarDates();
+}
+
+// P1.5 session restoration: the calendar's selected date survives restart.
+const CAL_DATE_KEY = "quill_calendar_date";
+function persistCalendarDates(): void {
+  try {
+    localStorage.setItem(CAL_DATE_KEY, String(selectedDate().getTime()));
+  } catch {
+    /* ignore */
+  }
+}
+export function restoreCalendarDates(): void {
+  try {
+    const raw = localStorage.getItem(CAL_DATE_KEY);
+    if (raw == null) return;
+    const ms = Number(raw);
+    if (Number.isFinite(ms)) {
+      const d = new Date(ms);
+      setFocusedDate(d);
+      setSelectedDate(d);
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 export function useCalendarTasks(): () => Task[] {

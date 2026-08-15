@@ -532,6 +532,30 @@ pub fn save_draft(store: State<'_, SqliteStore>, draft: Draft) -> Result<Message
     store.save_draft(&draft)
 }
 
+/// The most recent draft, for resuming an unfinished composer (P1.5).
+#[tauri::command]
+pub fn latest_draft(store: State<'_, SqliteStore>) -> Option<Draft> {
+    store.latest_draft()
+}
+
+/// P1.5 launch-at-login (via tauri-plugin-autostart).
+#[tauri::command]
+pub fn set_launch_at_login(app: AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let autostart = app.autolaunch();
+    if enabled {
+        autostart.enable().map_err(|e| e.to_string())
+    } else {
+        autostart.disable().map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+pub fn is_launch_at_login(app: AppHandle) -> bool {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
 /// Outgoing mail via SMTP (Epic 12.3 & 13), with the account's credential
 /// (password or OAuth bearer). If sending fails due to network/server
 /// unavailability, it is queued for retry.

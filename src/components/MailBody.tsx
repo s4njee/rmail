@@ -1,5 +1,6 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import type { MessageDetail } from "../lib/ipc/MessageDetail";
+import { useDark } from "../lib/theme";
 import "./MailBody.css";
 
 type MailBodyProps = {
@@ -19,12 +20,24 @@ type MailBodyProps = {
 const SCRIPT_NONCE = "quill-mail-handler";
 
 /** The theme's reading-pane background, so the iframe doesn't flash white in
- * either treatment (and follows a future dark palette — Epic 2.4). */
+ * either treatment (and follows the dark palette — Epic 2.4 / P1.5). */
 function readingBackground(): string {
   return (
     getComputedStyle(document.documentElement)
       .getPropertyValue("--color-reading")
       .trim() || "#fff"
+  );
+}
+
+/** P1.5: force a light-on-dark default for HTML mail in dark mode, so a
+ * message without its own background stays readable. Messages that set their
+ * own background/colors keep them (images are never rewritten). */
+function darkMailStyles(): string {
+  return (
+    "color:#dce2ea;" +
+    "a{color:#8aa4ff}" +
+    "table,tr,td,div,span{color:inherit}" +
+    "body{color-scheme:dark}"
   );
 }
 
@@ -42,7 +55,11 @@ function readingBackground(): string {
  * Remote images are gated by `img-src`: data:/blob: by default, https/http
  * only when the user (per sender) opts in.
  */
-function buildSrcdoc(sanitizedHtml: string, allowImages: boolean): string {
+function buildSrcdoc(
+  sanitizedHtml: string,
+  allowImages: boolean,
+  dark: boolean,
+): string {
   const csp = [
     "default-src 'none'",
     "style-src 'unsafe-inline'",
@@ -93,7 +110,7 @@ function buildSrcdoc(sanitizedHtml: string, allowImages: boolean): string {
   return (
     `<!doctype html><html><head><meta charset="utf-8">` +
     `<meta http-equiv="Content-Security-Policy" content="${csp}">` +
-    `<style>html,body{margin:0}body{background:${readingBackground()};word-wrap:break-word}</style>` +
+    `<style>html,body{margin:0}body{background:${readingBackground()};word-wrap:break-word;${dark ? darkMailStyles() : ""}}</style>` +
     `</head><body>${body}` +
     `<script nonce="${SCRIPT_NONCE}">${script}</script></body></html>`
   );
@@ -150,7 +167,11 @@ export function MailBody(props: MailBodyProps) {
         class="mail-body__frame"
         title="Message body"
         sandbox="allow-scripts"
-        srcdoc={buildSrcdoc(props.detail.body_html ?? "", props.allowImages)}
+        srcdoc={buildSrcdoc(
+          props.detail.body_html ?? "",
+          props.allowImages,
+          useDark()(),
+        )}
         style={{ height: `${frameHeight()}px` }}
       />
     </div>

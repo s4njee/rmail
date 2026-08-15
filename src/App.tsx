@@ -10,6 +10,7 @@ import { Divider } from "./components/Divider";
 import { MessageList } from "./components/MessageList";
 import { ReadingPane } from "./components/ReadingPane";
 import { Settings } from "./components/Settings";
+import { ShortcutsHelpModal } from "./components/ShortcutsHelpModal";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { TriageUndoBar } from "./components/TriageUndoBar";
@@ -21,8 +22,10 @@ import {
   resizeSidebar,
 } from "./lib/panes";
 import { startAlarmScheduler } from "./lib/alarms";
+import { restoreCalendarDates } from "./lib/calendar";
 import { initKeymap } from "./lib/keymap";
-import { refreshMail, useAccounts } from "./lib/mail";
+import { loadRows, refreshMail, restoreFilter, useAccounts } from "./lib/mail";
+import { resumeDraft } from "./lib/compose";
 import { initSettings } from "./lib/settings";
 import { initStoreEvents } from "./lib/store-events";
 import { THEMES, applyTheme, isThemeName, useTheme } from "./lib/theme";
@@ -119,6 +122,12 @@ function App() {
       setGate(
         accounts().length > 0 || dismissed === "1" ? "app" : "onboarding",
       );
+      // P1.5 session restoration: the active folder/account, calendar date,
+      // and an unfinished composer survive restart.
+      restoreFilter();
+      restoreCalendarDates();
+      void loadRows();
+      void resumeDraft();
     });
 
     // Start background calendar alarms scheduler (Roadmap 4.2)
@@ -217,6 +226,7 @@ function App() {
         <StatusBar />
         <ContextMenu />
         <AccountEditModal />
+        <ShortcutsHelpModal />
 
         {/* "What's new" after an update, and the restart-to-apply banner once an
           update is downloaded. */}

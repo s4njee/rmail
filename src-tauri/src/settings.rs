@@ -68,12 +68,15 @@ pub fn set_settings(app: AppHandle, mut settings: AppSettings) -> Result<(), Str
     save(&app, &settings)
 }
 
-/// Initialization script that stamps the saved treatment on the root element
-/// before first paint — the mechanism behind "no flash of the wrong theme"
-/// (Epic 2.3).
+/// Initialization script that stamps the saved treatment (and the P1.5 dark
+/// palette) on the root element before first paint — the mechanism behind "no
+/// flash of the wrong theme" (Epic 2.3).
 pub fn theme_init_script(app: &AppHandle) -> String {
     format!(
-        "document.documentElement.dataset.theme = '{}';",
+        "document.documentElement.dataset.theme = '{}'; \
+         try {{ document.documentElement.dataset.colorScheme = \
+           localStorage.getItem('quill_dark') === '1' ? 'dark' : 'light'; }} \
+         catch (e) {{ document.documentElement.dataset.colorScheme = 'light'; }}",
         load(app).theme
     )
 }

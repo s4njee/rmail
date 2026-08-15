@@ -460,3 +460,56 @@
   --add-btn-pad: var(--size-9px) var(--space-18px);
   --add-btn-radius: var(--radius-22px);
 }
+
+/* ---------------------------------------------------------------------------
+ * P1.5 dark palettes — a `data-color-scheme="dark"` attribute (set by
+ * theme.ts before/at first paint) flips the color tokens for BOTH treatments.
+ * This block overrides the theme-invariant + theme-varying color tokens with
+ * accessible dark values; the structure of the light themes is unchanged.
+ * ------------------------------------------------------------------------ */
+
+[data-color-scheme="dark"] {
+  color-scheme: dark;
+
+  /* Shared palette — brighten the accent for dark surfaces. */
+  --accent: #6c8cff;
+  --accent-hover: #8aa4ff;
+  --color-account-1: #6c8cff;
+  --color-selection: #ff8a3d;
+  --canvas: #101216;
+
+  /* Panes */
+  --color-chrome: #15181d;
+  --color-list: #181c22;
+  --color-reading: #1c2128;
+
+  /* Borders */
+  --color-border-strong: #2c323b;
+  --color-border-pane: #262b33;
+  --color-border-row: #21262e;
+
+  /* Text tiers */
+  --color-text-primary: #e8ecf2;
+  --color-text-primary-soft: #dce2ea;
+  --color-text-body: #c2cbd6;
+  --color-text-body-soft: #b6c0cc;
+  --color-text-muted: #8b97a6;
+  --color-text-muted-soft: #7e8b9b;
+  --color-text-faint: #5f6b7a;
+  --color-text-faint-soft: #677383;
+
+  /* Dots */
+  --color-dot-idle: #3a424d;
+  --color-dot-idle-strong: #454e5a;
+
+  /* Fills */
+  --color-fill-selected: #232a33;
+  --color-fill-unread: #20262d;
+  --color-fill-hover: #20252c;
+  --color-fill-subtle: #22272f;
+  --color-fill-card: #1f242b;
+
+  /* Sidebar text */
+  --color-text-account: #a7b2c0;
+  --color-text-footer: #8b97a6;
+}

@@ -76,3 +76,46 @@ body.is-resizing {
   font-family: var(--font-mono);
   font-size: var(--fs-11px);
 }
+
+/* P1.5 printing: hide the app chrome and print the active surface (reading
+ * pane / message / event detail / calendar). */
+@media print {
+  @page {
+    margin: 12mm;
+  }
+  /* Let the browser's print defaults pick white paper + black ink. */
+  /* Hide chrome, panes, and overlays. */
+  .sidebar,
+  .message-list,
+  .status-bar,
+  .composer,
+  .context-menu,
+  .modal,
+  .onboarding,
+  .account-confirm,
+  .undo-send-bar,
+  .triage-undo,
+  .calendar-undo,
+  .diagnostics-nudge,
+  .update-ready,
+  .alarm-banner,
+  .divider {
+    display: none !important;
+  }
+  /* Show the reading pane / event detail / calendar full-width. */
+  .workspace {
+    display: block !important;
+  }
+  .reading-pane,
+  .event-detail,
+  .calendar-layout {
+    width: 100% !important;
+    max-width: none !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  .reading-pane .reading-actions,
+  .event-detail__actions {
+    display: none !important;
+  }
+}

@@ -699,6 +699,19 @@ pub enum StoreEvent {
     /// indexed/total; `"fresh"` / `"idle"` mark completion (fresh = done,
     /// idle = cancelled/errored).
     SearchIndex(SearchIndexUpdate),
+    /// A `mailto:` deep link (or the tray "New Message" action) arrived —
+    /// the frontend opens the composer pre-filled (P1.5).
+    Mailto(MailtoPayload),
+}
+
+/// A compose request from an OS integration (P1.5).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MailtoPayload {
+    pub to: String,
+    pub subject: String,
+    pub body: String,
 }
 
 /// Search-index status/progress (P1.3).

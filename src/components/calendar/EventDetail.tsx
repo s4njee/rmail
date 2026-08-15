@@ -208,6 +208,14 @@ export function EventDetail() {
               <button
                 type="button"
                 class="btn btn--secondary"
+                onClick={() => window.print()}
+                title="Print this event (⌘P)"
+              >
+                Print
+              </button>
+              <button
+                type="button"
+                class="btn btn--secondary"
                 onClick={() => void duplicate()}
               >
                 Duplicate
