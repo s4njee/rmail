@@ -46,6 +46,145 @@ pub fn sanitize_html(raw: &str) -> SanitizedHtml {
     }
 }
 
+/// Maximum length of a stored list-row snippet.
+pub const SNIPPET_MAX: usize = 200;
+
+/// A list-row preview from a message's plain-text body, falling back to the
+/// HTML body with markup stripped for HTML-only mail. Whitespace is collapsed
+/// and the result is capped at [`SNIPPET_MAX`] chars.
+pub fn snippet_from_bodies(plain: &str, html: Option<&str>) -> String {
+    let source = if plain.trim().is_empty() {
+        html.map(html_to_text).unwrap_or_default()
+    } else {
+        plain.to_string()
+    };
+    let collapsed = source.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.chars().take(SNIPPET_MAX).collect()
+}
+
+/// Reduce HTML markup to readable text for a snippet. HTML-only messages
+/// expose their markup as the body; a tag-strip recovers the visible text,
+/// with block-level tags acting as word separators.
+pub fn html_to_text(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut in_tag = false;
+    for c in raw.chars() {
+        match c {
+            '<' => {
+                in_tag = true;
+                out.push(' ');
+            }
+            '>' if in_tag => in_tag = false,
+            _ if in_tag => {}
+            _ => out.push(c),
+        }
+    }
+    out.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+}
+
+/// Decode RFC 2047 encoded-words (`=?charset?Q?…?=` / `=?charset?B?…?=`)
+/// interleaved with plain text, as found in Subject and From headers. Text
+/// that isn't an encoded-word passes through unchanged; unknown charsets fall
+/// back to a lossy UTF-8 decode.
+pub fn decode_rfc2047(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(eq) = rest.find("=?") {
+        out.push_str(&rest[..eq]);
+        let word = &rest[eq..];
+        match decode_one_encoded_word(word) {
+            Some((decoded, consumed)) => {
+                out.push_str(&decoded);
+                rest = &word[consumed..];
+                // RFC 2047 §6.2: linear whitespace between two adjacent
+                // encoded-words is ignored, so "…Confidently?= =?with…" joins
+                // as one space (from the trailing `_`) rather than two.
+                let after_ws = rest.trim_start_matches([' ', '\t', '\r', '\n']);
+                if after_ws.len() < rest.len() && after_ws.starts_with("=?") {
+                    rest = after_ws;
+                }
+            }
+            None => {
+                // Not a well-formed encoded-word; keep the literal text.
+                out.push_str("=?");
+                rest = &word[2..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Decode one `=?charset?X?data?=` encoded-word starting at `input[0]`.
+/// Returns the decoded text and the number of chars consumed (including the
+/// trailing `?=`).
+fn decode_one_encoded_word(input: &str) -> Option<(String, usize)> {
+    let charset_end = input[2..].find('?')? + 2;
+    let charset = &input[2..charset_end];
+    let encoding = *input.as_bytes().get(charset_end + 1)?;
+    // `=?charset?X?data?=` — data begins after the `?` that closes the
+    // encoding letter.
+    let data_start = charset_end + 3;
+    let end_rel = input[data_start..].find("?=")?;
+    let data = &input[data_start..data_start + end_rel];
+
+    let bytes = match encoding {
+        b'Q' | b'q' => decode_quoted_printable_word(data),
+        b'B' | b'b' => {
+            use base64::engine::general_purpose::STANDARD;
+            use base64::Engine as _;
+            STANDARD.decode(data.as_bytes()).ok()?
+        }
+        _ => return None,
+    };
+    let text = decode_charset(&bytes, charset);
+    Some((text, data_start + end_rel + 2))
+}
+
+/// RFC 2047 Q-encoding: `_` is a space, `=XX` is a byte in hex.
+fn decode_quoted_printable_word(data: &str) -> Vec<u8> {
+    let bytes = data.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'_' => out.push(b' '),
+            b'=' if i + 2 < bytes.len() => match (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                (Some(h), Some(l)) => {
+                    out.push(h * 16 + l);
+                    i += 2;
+                }
+                _ => out.push(b'='),
+            },
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    out
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn decode_charset(bytes: &[u8], charset: &str) -> String {
+    match charset.to_ascii_lowercase().as_str() {
+        "iso-8859-1" | "latin1" | "latin-1" | "iso_8859-1" | "windows-1252" => {
+            bytes.iter().map(|&b| b as char).collect()
+        }
+        _ => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
+
 /// Replace remote `src` on `<img>` elements with the placeholder, parking the
 /// original URL in `data-src`. Returns the rewritten HTML and the count.
 fn rewrite_remote_images(html: &str) -> (String, usize) {
@@ -204,5 +343,64 @@ mod tests {
     fn allows_inline_style_but_drops_style_elements() {
         assert!(clean(r#"<p style="color: red">hi</p>"#).contains("style=\"color: red\""));
         assert!(!clean(r#"<style>p { color: red }</style>"#).contains("<style"));
+    }
+
+    #[test]
+    fn snippet_prefers_plain_text() {
+        assert_eq!(
+            snippet_from_bodies("plain body", Some("<p>html</p>")),
+            "plain body"
+        );
+    }
+
+    #[test]
+    fn snippet_strips_html_markup() {
+        let s = snippet_from_bodies("", Some("<!DOCTYPE html><p>Hi there</p>"));
+        assert_eq!(s, "Hi there");
+    }
+
+    #[test]
+    fn html_to_text_keeps_block_text_separated() {
+        assert_eq!(html_to_text("<p>a</p><p>b</p>"), " a  b ");
+    }
+
+    #[test]
+    fn snippet_caps_length() {
+        let long = "x".repeat(SNIPPET_MAX * 4);
+        assert_eq!(snippet_from_bodies(&long, None).len(), SNIPPET_MAX);
+    }
+
+    #[test]
+    fn decodes_rfc2047_q_encoded_utf8() {
+        // The exact shape that was showing up as a subject.
+        let s = decode_rfc2047(
+            "=?UTF-8?Q?=F0=9F=9A=98_Sanjee,_Drive_Confidently_?= =?UTF-8?Q?with_FREE_Duralast_Brake_Pads?=",
+        );
+        assert_eq!(s, "🚘 Sanjee, Drive Confidently with FREE Duralast Brake Pads");
+    }
+
+    #[test]
+    fn decodes_rfc2047_base64() {
+        assert_eq!(
+            decode_rfc2047("=?ISO-8859-1?B?SWYgeW91IGNhbiByZWFkIHRoaXMgeW8=?="),
+            "If you can read this yo"
+        );
+    }
+
+    #[test]
+    fn decodes_rfc2047_latin1() {
+        assert_eq!(
+            decode_rfc2047("=?ISO-8859-1?Q?Patrik_F=E4ltstr=F6m?="),
+            "Patrik Fältström"
+        );
+    }
+
+    #[test]
+    fn rfc2047_leaves_plain_and_malformed_text_alone() {
+        assert_eq!(decode_rfc2047("Just a normal subject"), "Just a normal subject");
+        // A bare "=?" that isn't a well-formed encoded-word is left intact.
+        assert_eq!(decode_rfc2047("a =?not-well-formed"), "a =?not-well-formed");
+        // Encoded-word followed by plain text.
+        assert_eq!(decode_rfc2047("=?UTF-8?Q?Hi?= there"), "Hi there");
     }
 }

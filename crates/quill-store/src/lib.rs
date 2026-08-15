@@ -13,11 +13,17 @@
 //! layer stays portable (see `scripts/check-domain-isolation.sh`); the Tauri
 //! shell lives in `src-tauri` (package `quill`).
 
+pub mod credentials;
 pub mod demo;
 pub mod pdf;
+pub mod rules;
 pub mod sanitize;
 pub mod sqlite;
 pub mod store;
+pub mod threading;
 pub mod types;
 
+pub use rules::*;
+
 pub use store::MemoryStore;
+pub use types::*;

@@ -8,15 +8,6 @@
   border-right: var(--sidebar-border-right);
 }
 
-/* Wordmark (5.1) */
-.sidebar__wordmark {
-  font-size: var(--sidebar-wordmark-fs);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  color: var(--color-text-primary);
-  padding: var(--sidebar-wordmark-pad);
-}
-
 /* Section labels (5.1) */
 .sidebar__label {
   padding: var(--sidebar-label-pad);
@@ -57,6 +48,34 @@
   font-weight: 600;
 }
 
+.sidebar__compose-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--size-6px);
+  margin: 0 var(--space-10px) var(--space-12px);
+  padding: var(--size-6px) var(--space-12px);
+  background: var(--accent);
+  color: var(--color-on-accent);
+  border: none;
+  border-radius: var(--radius-control);
+  font-family: var(--font-sans);
+  font-size: var(--fs-12px);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    filter 120ms ease,
+    transform 60ms ease;
+}
+
+.sidebar__compose-btn:hover {
+  filter: brightness(1.08);
+}
+
+.sidebar__compose-btn:active {
+  transform: translateY(calc(var(--space-2px) / 2));
+}
+
 /* The folder + account sections scroll if they grow; the footer/card pins
    to the bottom via margin-top: auto (5.4). */
 .sidebar__navs {
@@ -95,6 +114,46 @@
 .sidebar__row.is-selected {
   background: var(--folder-row-selected-bg);
   font-weight: var(--folder-row-selected-weight);
+}
+
+/* P1.1 send-later Outbox entry — a utility row, not a mailbox */
+.sidebar__row--scheduled {
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.sidebar__row--scheduled:hover {
+  color: var(--color-text-body);
+}
+
+/* P1.3 saved searches */
+.sidebar__saved-row {
+  display: flex;
+  align-items: center;
+}
+
+.sidebar__saved-open {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar__saved-remove {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--color-text-faint);
+  font-size: var(--fs-13px);
+  cursor: pointer;
+  padding: var(--space-4px);
+  visibility: hidden;
+}
+
+.sidebar__saved-row:hover .sidebar__saved-remove {
+  visibility: visible;
+}
+
+.sidebar__saved-remove:hover {
+  color: var(--color-offline);
 }
 
 .sidebar__row-text {

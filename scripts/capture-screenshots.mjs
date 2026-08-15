@@ -66,7 +66,8 @@ async function main() {
   const tmpProfile = fs.mkdtempSync(path.join(scratchDir, "chrome-"));
 
   console.log("Starting headless Chrome...");
-  const chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+  const chromePath =
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
   const chrome = spawn(chromePath, [
     "--headless=new",
     "--remote-debugging-port=9222",
@@ -109,114 +110,150 @@ async function main() {
 
     // 1. Mail Inbox View (Hairline Theme)
     console.log("Capturing 01-mail-inbox.png...");
-    await evalInPage(ws, `
+    await evalInPage(
+      ws,
+      `
       const mailTab = Array.from(document.querySelectorAll('.sidebar__section-tab')).find(el => el.textContent.includes('Mail'));
       if (mailTab) mailTab.click();
       const firstRow = document.querySelector('.message-row');
       if (firstRow) firstRow.click();
-    `);
+    `,
+    );
     await sleep(800);
     await takeScreenshot(ws, "01-mail-inbox.png");
 
     // 2. Calendar Month View
     console.log("Capturing 02-calendar-month.png...");
-    await evalInPage(ws, `
+    await evalInPage(
+      ws,
+      `
       const calTab = Array.from(document.querySelectorAll('.sidebar__section-tab')).find(el => el.textContent.includes('Calendar'));
       if (calTab) calTab.click();
       const viewBtns = document.querySelectorAll('.view-segment-btn');
       if (viewBtns[0]) viewBtns[0].click();
-    `);
+    `,
+    );
     await sleep(800);
     await takeScreenshot(ws, "02-calendar-month.png");
 
     // 3. Calendar Week View
     console.log("Capturing 03-calendar-week.png...");
-    await evalInPage(ws, `
+    await evalInPage(
+      ws,
+      `
       const viewBtns = document.querySelectorAll('.view-segment-btn');
       if (viewBtns[1]) viewBtns[1].click();
-    `);
+    `,
+    );
     await sleep(800);
     await takeScreenshot(ws, "03-calendar-week.png");
 
     // 4. Calendar 3-Day View
     console.log("Capturing 04-calendar-3day.png...");
-    await evalInPage(ws, `
+    await evalInPage(
+      ws,
+      `
       const viewBtns = document.querySelectorAll('.view-segment-btn');
       if (viewBtns[2]) viewBtns[2].click();
-    `);
+    `,
+    );
     await sleep(800);
     await takeScreenshot(ws, "04-calendar-3day.png");
 
     // 5. Calendar Day View
     console.log("Capturing 05-calendar-day.png...");
-    await evalInPage(ws, `
+    await evalInPage(
+      ws,
+      `
       const viewBtns = document.querySelectorAll('.view-segment-btn');
       if (viewBtns[3]) viewBtns[3].click();
-    `);
+    `,
+    );
     await sleep(800);
     await takeScreenshot(ws, "05-calendar-day.png");
 
     // 6. Calendar Agenda View
     console.log("Capturing 06-calendar-agenda.png...");
-    await evalInPage(ws, `
+    await evalInPage(
+      ws,
+      `
       const viewBtns = document.querySelectorAll('.view-segment-btn');
       if (viewBtns[4]) viewBtns[4].click();
-    `);
+    `,
+    );
     await sleep(800);
     await takeScreenshot(ws, "06-calendar-agenda.png");
 
     // 7. Calendar Event Editor Modal
     console.log("Capturing 07-calendar-event-modal.png...");
-    await evalInPage(ws, `
+    await evalInPage(
+      ws,
+      `
       const viewBtns = document.querySelectorAll('.view-segment-btn');
       if (viewBtns[0]) viewBtns[0].click();
       const newEvtBtn = document.querySelector('.quill-cal-btn--primary');
       if (newEvtBtn) newEvtBtn.click();
-    `);
+    `,
+    );
     await sleep(800);
     await takeScreenshot(ws, "07-calendar-event-modal.png");
 
     // Close modal
-    await evalInPage(ws, `
+    await evalInPage(
+      ws,
+      `
       const closeBtn = document.querySelector('.modal-close, button[aria-label="Close"], .modal-overlay button');
       if (closeBtn) closeBtn.click();
       else window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-    `);
+    `,
+    );
     await sleep(500);
 
     // 8. Settings - Calendar Tab
     console.log("Capturing 08-settings-calendar.png...");
-    await evalInPage(ws, `
+    await evalInPage(
+      ws,
+      `
       window.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: true }));
-    `);
+    `,
+    );
     await sleep(600);
-    await evalInPage(ws, `
+    await evalInPage(
+      ws,
+      `
       const navItems = Array.from(document.querySelectorAll('.settings-nav button, .settings-tab, button'));
       const calNav = navItems.find(el => el.textContent && el.textContent.trim() === 'Calendar');
       if (calNav) calNav.click();
-    `);
+    `,
+    );
     await sleep(600);
     await takeScreenshot(ws, "08-settings-calendar.png");
 
     // 9. Settings - Accounts Tab
     console.log("Capturing 09-settings-accounts.png...");
-    await evalInPage(ws, `
+    await evalInPage(
+      ws,
+      `
       const navItems = Array.from(document.querySelectorAll('.settings-nav button, .settings-tab, button'));
       const accNav = navItems.find(el => el.textContent && el.textContent.trim() === 'Accounts');
       if (accNav) accNav.click();
-    `);
+    `,
+    );
     await sleep(600);
     await takeScreenshot(ws, "09-settings-accounts.png");
 
     // 10. Banded Theme (Mail)
     console.log("Capturing 10-mail-banded-theme.png...");
-    await evalInPage(ws, `
+    await evalInPage(
+      ws,
+      `
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
       const mailTab = Array.from(document.querySelectorAll('.sidebar__section-tab')).find(el => el.textContent.includes('Mail'));
       if (mailTab) mailTab.click();
       document.querySelector('.app')?.setAttribute('data-theme', 'banded');
       document.body.setAttribute('data-theme', 'banded');
-    `);
+    `,
+    );
     await sleep(600);
     await takeScreenshot(ws, "10-mail-banded-theme.png");
 

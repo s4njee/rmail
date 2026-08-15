@@ -1,0 +1,62 @@
+/* P1.1 snooze picker — tokens only. */
+
+.snooze {
+  position: relative;
+  display: inline-flex;
+}
+
+.snooze__menu {
+  position: absolute;
+  top: calc(100% + var(--space-4px));
+  left: 0;
+  z-index: 40;
+  min-width: var(--size-240px);
+  background: var(--color-reading);
+  border: var(--pane-border);
+  border-radius: var(--radius-control);
+  box-shadow: var(--modal-shadow);
+  padding: var(--space-4px);
+  display: flex;
+  flex-direction: column;
+}
+
+.snooze__item {
+  text-align: left;
+  background: none;
+  border: none;
+  padding: var(--space-8px) var(--space-10px);
+  font-size: var(--fs-13px);
+  color: var(--color-text-body);
+  cursor: pointer;
+  border-radius: var(--radius-2px);
+}
+
+.snooze__item:hover {
+  background: var(--color-fill-hover);
+}
+
+.snooze__custom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8px);
+  padding: var(--space-8px) var(--space-10px);
+  border-top: var(--pane-border);
+  margin-top: var(--space-4px);
+  padding-top: var(--space-10px);
+}
+
+.snooze__custom input {
+  border: var(--search-border);
+  background: var(--color-reading);
+  border-radius: var(--radius-control);
+  padding: var(--size-7px) var(--space-10px);
+  font-size: var(--fs-12px);
+  color: var(--color-text-primary);
+  width: 100%;
+}
+
+.snooze__note {
+  margin: var(--space-4px) var(--space-10px) var(--space-8px);
+  font-size: var(--fs-11px);
+  color: var(--color-text-faint);
+}

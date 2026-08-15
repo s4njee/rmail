@@ -4,4 +4,23 @@
  * Calendar event. Recurrence is expanded in Rust (Epic 14) — the frontend
  * only ever sees resolved instances.
  */
-export type CalendarEvent = { id: number, account_id: number, title: string, start_ms: number, end_ms: number, all_day: boolean, location: string | null, notes: string | null, };
+export type CalendarEvent = { id: number, account_id: number, title: string, start_ms: number, end_ms: number, all_day: boolean, location: string | null, notes: string | null, alarm_minutes_before: number | null, timezone: string | null, travel_time_minutes: number | null, 
+/**
+ * Source calendar key (e.g. a Google calendar id) — `None` for events
+ * with no external source. Lets the UI show each synced calendar as its
+ * own row instead of flattening them into the account (Roadmap 4.4).
+ */
+calendar_source: string | null, 
+/**
+ * Display name of the source calendar, denormalized during sync.
+ */
+calendar_name: string | null, 
+/**
+ * Color of the source calendar, denormalized during sync.
+ */
+calendar_color: string | null, 
+/**
+ * Per-event color override (P1.4) — falls back to the calendar color when
+ * rendering. NULL = use the calendar color.
+ */
+color: string | null, };

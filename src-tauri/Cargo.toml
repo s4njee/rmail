@@ -19,11 +19,18 @@ tauri-build = { version = "2", features = [] }
 # only in debug builds and are compiled out of release (Epic 1.2 / 16.3).
 # `protocol-asset` enables the asset protocol used to serve attachments and
 # images (Epic 3.3) — required because assetProtocol.enable is set in the config.
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 quill-store = { path = "../crates/quill-store" }
 quill-mail = { path = "../crates/quill-mail" }
+quill-cal = { path = "../crates/quill-cal" }
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+uuid = { version = "1", features = ["v4"] }
 tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-log = "2"
+log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

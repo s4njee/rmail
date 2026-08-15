@@ -7,55 +7,57 @@
 
 :root {
   /* Neutrals */
-  --al-desk: #E4E4E4;
-  --al-chrome: #FAFAFA;
-  --al-sidebar: #F4F4F4;
-  --al-surface: #FFFFFF;
-  --al-surface-2: #FBFBFB;
-  --al-surface-3: #FCFCFC;
-  --al-segment-track: #EDEDED;
-  --al-segment-track-titlebar: #EBEBEB;
-  --al-border: #E0E0E0;
-  --al-border-soft: #E5E5E5;
-  --al-grid: #EBEBEB;
-  --al-grid-hour: #F2F2F2;
-  --al-ink: #1A1A1A;
+  --al-desk: #e4e4e4;
+  --al-chrome: #fafafa;
+  --al-sidebar: #f4f4f4;
+  --al-surface: #ffffff;
+  --al-surface-2: #fbfbfb;
+  --al-surface-3: #fcfcfc;
+  --al-segment-track: #ededed;
+  --al-segment-track-titlebar: #ebebeb;
+  --al-border: #e0e0e0;
+  --al-border-soft: #e5e5e5;
+  --al-grid: #ebebeb;
+  --al-grid-hour: #f2f2f2;
+  --al-ink: #1a1a1a;
   --al-ink-event: #232323;
   --al-ink-2: #424242;
   --al-ink-3: #575757;
   --al-ink-4: #666666;
   --al-ink-5: #777777;
   --al-ink-6: #888888;
-  --al-ink-7: #A0A0A0;
-  --al-ink-8: #B3B3B3;
-  --al-ink-9: #BFBFBF;
-  --al-dashed: #CACACA;
-  --al-track-off: #D9D9D9;
+  --al-ink-7: #a0a0a0;
+  --al-ink-8: #b3b3b3;
+  --al-ink-9: #bfbfbf;
+  --al-dashed: #cacaca;
+  --al-track-off: #d9d9d9;
 
   /* Accent */
-  --al-accent: #1F6FEB;
+  --al-accent: #1f6feb;
   --al-accent-hover: #144a9e;
-  --al-accent-tint: #E4EBF8;
-  --al-today-wash: #FBFCFE;
-  --al-today-wash-2: #FDFDFE;
+  --al-accent-tint: #e4ebf8;
+  --al-today-wash: #fbfcfe;
+  --al-today-wash-2: #fdfdfe;
 
   /* Calendar Colors */
-  --al-cal-classes: #C2410C;
-  --al-cal-classes-tint: rgba(194, 65, 12, 0.10);
-  --al-cal-personal: #1F6FEB;
-  --al-cal-personal-tint: rgba(31, 111, 235, 0.10);
-  --al-cal-work: #0F766E;
-  --al-cal-work-tint: rgba(15, 118, 110, 0.10);
-  --al-cal-birthdays: #7C5CBF;
-  --al-cal-birthdays-tint: rgba(124, 92, 191, 0.10);
-  --al-cal-home: #A16207;
-  --al-cal-home-tint: rgba(161, 98, 7, 0.10);
+  --al-cal-classes: #c2410c;
+  --al-cal-classes-tint: rgba(194, 65, 12, 0.1);
+  --al-cal-personal: #1f6feb;
+  --al-cal-personal-tint: rgba(31, 111, 235, 0.1);
+  --al-cal-work: #0f766e;
+  --al-cal-work-tint: rgba(15, 118, 110, 0.1);
+  --al-cal-birthdays: #7c5cbf;
+  --al-cal-birthdays-tint: rgba(124, 92, 191, 0.1);
+  --al-cal-home: #a16207;
+  --al-cal-home-tint: rgba(161, 98, 7, 0.1);
   --al-cal-holidays: #888888;
-  --al-cal-holidays-tint: rgba(136, 136, 136, 0.10);
+  --al-cal-holidays-tint: rgba(136, 136, 136, 0.1);
 
   /* Fonts */
-  --al-font-ui: 'Bricolage Grotesque', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --al-font-mono: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --al-font-ui:
+    "Bricolage Grotesque", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif;
+  --al-font-mono: "DM Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
   /* Radii */
   --al-radius-bar: 2px;
@@ -74,7 +76,7 @@
   /* Shadows */
   --al-shadow-window: 0 24px 60px -18px rgba(0, 0, 0, 0.34), 0 0 0 1px rgba(0, 0, 0, 0.08);
   --al-shadow-modal: 0 40px 80px -20px rgba(0, 0, 0, 0.5);
-  --al-shadow-segment-active: 0 1px 2px rgba(0, 0, 0, 0.10);
+  --al-shadow-segment-active: 0 1px 2px rgba(0, 0, 0, 0.1);
   --al-shadow-event-week: 0 1px 2px rgba(0, 0, 0, 0.05);
   --al-shadow-event-day: 0 1px 3px rgba(0, 0, 0, 0.06);
 

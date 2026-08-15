@@ -59,3 +59,34 @@
   font-size: var(--fs-12px);
   color: var(--color-text-faint);
 }
+
+/* P1.4 per-event color override */
+.event-detail__color-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10px);
+  margin: var(--space-10px) 0;
+}
+
+.event-detail__color-label {
+  font-size: var(--fs-11px);
+  color: var(--color-text-muted);
+}
+
+.event-detail__color-swatches {
+  display: flex;
+  gap: var(--space-8px);
+}
+
+.event-detail__swatch {
+  width: var(--size-22px);
+  height: var(--size-22px);
+  border-radius: 50%;
+  border: var(--pane-border);
+  cursor: pointer;
+  padding: 0;
+}
+
+.event-detail__swatch.active {
+  border: var(--size-2px) solid var(--accent);
+}

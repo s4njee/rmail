@@ -3,6 +3,9 @@ import {
   focusSearch,
   messageListHasFocus,
   selectRelative,
+  triage,
+  triageIds,
+  useDetail,
   useSelectedId,
 } from "./mail";
 import {
@@ -69,22 +72,26 @@ export function initKeymap(): () => void {
         else if (effectiveMode() === "focused") exitFocused();
         break;
       case "j":
-        selectRelative(1);
+        selectRelative(1, event.shiftKey);
         break;
       case "k":
-        selectRelative(-1);
+        selectRelative(-1, event.shiftKey);
         break;
       // ↑/↓ only move the selection when the message list itself is focused
-      // (the listbox pattern); elsewhere they scroll as usual.
+      // (the listbox pattern); elsewhere they scroll as usual. Shift extends
+      // the multi-select range (P1.1).
       case "ArrowDown":
-        if (messageListHasFocus()) selectRelative(1);
+        if (messageListHasFocus()) selectRelative(1, event.shiftKey);
         break;
       case "ArrowUp":
-        if (messageListHasFocus()) selectRelative(-1);
+        if (messageListHasFocus()) selectRelative(-1, event.shiftKey);
         break;
       case "/":
         event.preventDefault();
         focusSearch();
+        break;
+      case "c":
+        requestCompose("new");
         break;
       case "r":
         requestCompose("reply");
@@ -95,6 +102,34 @@ export function initKeymap(): () => void {
       case "f":
         requestCompose("forward");
         break;
+      // Triage (P1.1): apply to the selection (focused or multi).
+      case "s": {
+        const d = useDetail()();
+        const ids = triageIds();
+        if (ids.length > 0) {
+          void triage(ids, d && d.row.flagged ? "unstar" : "star");
+        }
+        break;
+      }
+      case "e": {
+        if (triageIds().length > 0) void triage(triageIds(), "archive");
+        break;
+      }
+      case "#": {
+        if (triageIds().length > 0) void triage(triageIds(), "delete");
+        break;
+      }
+      case "!": {
+        const ids = triageIds();
+        if (ids.length > 0) {
+          const d = useDetail()();
+          void triage(
+            ids,
+            d && d.row.folder !== "Junk" ? "markJunk" : "markNotJunk",
+          );
+        }
+        break;
+      }
     }
   };
 

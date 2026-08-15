@@ -1,18 +1,11 @@
-import { createSignal, onMount, render } from 'solid-js';
-import {
-  Calendar,
-  MonthView,
-  OccurrenceItem,
-  Titlebar,
-  ViewMode,
-  WeekView,
-} from '@rcalendar/ui';
-import '@rcalendar/ui/tokens.css';
-import { InMemoryCalendarDataSource } from './inMemoryAdapter';
+import { createSignal, onMount, render } from "solid-js";
+import { Calendar, MonthView, OccurrenceItem, Titlebar, ViewMode, WeekView } from "@rcalendar/ui";
+import "@rcalendar/ui/tokens.css";
+import { InMemoryCalendarDataSource } from "./inMemoryAdapter";
 
 const App = () => {
   const dataSource = new InMemoryCalendarDataSource();
-  const [view, setView] = createSignal<ViewMode>('Month');
+  const [view, setView] = createSignal<ViewMode>("Month");
   const [date, setDate] = createSignal(new Date(2026, 7, 13));
   const [calendars, setCalendars] = createSignal<Calendar[]>([]);
   const [occurrences, setOccurrences] = createSignal<OccurrenceItem[]>([]);
@@ -20,20 +13,20 @@ const App = () => {
   onMount(async () => {
     const cals = await dataSource.listCalendars();
     setCalendars(cals);
-    const occs = await dataSource.listOccurrences('2026-08-01', '2026-08-31');
+    const occs = await dataSource.listOccurrences("2026-08-01", "2026-08-31");
     setOccurrences(occs);
   });
 
   return (
-    <div style={{ height: '100vh', width: '100vw', display: 'flex', 'flex-direction': 'column' }}>
+    <div style={{ height: "100vh", width: "100vw", display: "flex", "flex-direction": "column" }}>
       <Titlebar
         activeView={view()}
         onViewChange={setView}
-        onNewEvent={() => alert('New Event clicked')}
-        onSearchClick={() => alert('Search clicked')}
+        onNewEvent={() => alert("New Event clicked")}
+        onSearchClick={() => alert("Search clicked")}
       />
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {view() === 'Month' ? (
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        {view() === "Month" ? (
           <MonthView
             focusedDate={date()}
             selectedDate={date()}
@@ -57,4 +50,4 @@ const App = () => {
   );
 };
 
-render(() => <App />, document.getElementById('root')!);
+render(() => <App />, document.getElementById("root")!);

@@ -46,6 +46,32 @@ fn msg(
     to: Vec<Recipient>,
     attachments: Vec<Attachment>,
 ) -> Message {
+    msg_full(
+        id, account_id, folder, from, subject, snippet, day_offset, hour, minute,
+        unread, flagged, false, false, body, body_html, to, attachments,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn msg_full(
+    id: MessageId,
+    account_id: AccountId,
+    folder: &str,
+    from: (&str, &str),
+    subject: &str,
+    snippet: &str,
+    day_offset: i32,
+    hour: u32,
+    minute: u32,
+    unread: bool,
+    flagged: bool,
+    answered: bool,
+    forwarded: bool,
+    body: Vec<&str>,
+    body_html: Option<&str>,
+    to: Vec<Recipient>,
+    attachments: Vec<Attachment>,
+) -> Message {
     Message {
         id,
         account_id,
@@ -61,7 +87,11 @@ fn msg(
         received_at_ms: ts(day_offset, hour, minute),
         unread,
         flagged,
+        answered,
+        forwarded,
         attachments,
+        list_unsubscribe: None,
+        list_unsubscribe_post: None,
     }
 }
 
@@ -80,6 +110,7 @@ pub(crate) fn demo_accounts() -> Vec<Account> {
             port: 993,
             tls: true,
             folder_count: 3, // only this account shows its count, per the mock
+            last_error: None,
         },
         Account {
             id: 2,
@@ -93,6 +124,7 @@ pub(crate) fn demo_accounts() -> Vec<Account> {
             port: 993,
             tls: true,
             folder_count: 0,
+            last_error: None,
         },
         Account {
             id: 3,
@@ -106,6 +138,7 @@ pub(crate) fn demo_accounts() -> Vec<Account> {
             port: 1143,
             tls: true,
             folder_count: 0,
+            last_error: Some("Authentication failed: invalid login or token".into()),
         },
     ]
 }
@@ -157,11 +190,11 @@ pub(crate) fn demo_messages() -> Vec<Message> {
             vec![lease],
         ),
         // § 2
-        msg(
+        msg_full(
             2, 1, "Inbox", ("David Okoye", "david.okoye@okoyeassociates.com"),
             "Re: escalation clause in 4.2",
             "I think we can live with 3% if they drop the",
-            0, 10, 52, true, true,
+            0, 10, 52, true, true, true, false,
             vec!["I think we can live with 3% if they drop the hard cap in 9.", "Let's confirm with Rosa before Friday."],
             None,
             vec![recipient("me", "work@quill.app")],
@@ -212,12 +245,12 @@ pub(crate) fn demo_messages() -> Vec<Message> {
             vec![],
         ),
         // § 7
-        msg(
+        msg_full(
             7, 1, "Inbox", ("Tomás Ferreira", "tomas.ferreira@northpoint.dev"),
             "Re: Thursday walkthrough",
             "11am works. I'll bring the survey and the older",
-            -2, 11, 20, false, false,
-            vec!["11am works. I'll bring the survey and the older floor plans."],
+            -2, 11, 20, false, false, true, true,
+            vec!["11am works. I'll bring the survey and the older drawings."],
             None,
             vec![recipient("me", "work@quill.app")],
             vec![],
@@ -234,16 +267,21 @@ pub(crate) fn demo_messages() -> Vec<Message> {
             vec![],
         ),
         // § 9
-        msg(
-            9, 3, "Inbox", ("Proton", "noreply@protonmail.com"),
-            "Bridge update available",
-            "Version 3.14 improves sync on slow connections",
-            -3, 9, 30, false, false,
-            vec!["Version 3.14 improves sync on slow connections."],
-            None,
-            vec![recipient("me", "meridian.board@proton.me")],
-            vec![],
-        ),
+        {
+            let mut m = msg(
+                9, 3, "Inbox", ("Proton", "noreply@protonmail.com"),
+                "Bridge update available",
+                "Version 3.14 improves sync on slow connections",
+                -3, 9, 30, false, false,
+                vec!["Version 3.14 improves sync on slow connections."],
+                None,
+                vec![recipient("me", "meridian.board@proton.me")],
+                vec![],
+            );
+            m.list_unsubscribe = Some("<https://proton.me/unsubscribe?id=bridge-updates>, <mailto:unsub@proton.me?subject=unsubscribe>".into());
+            m.list_unsubscribe_post = Some("List-Unsubscribe=One-Click".into());
+            m
+        },
         // Filler — older Inbox messages so the Inbox badge (12) matches the
         // mock. Below the visible fold at 800px.
         msg(
@@ -313,6 +351,13 @@ pub(crate) fn demo_events() -> Vec<CalendarEvent> {
             all_day: false,
             location: Some("Site — Meridian Plaza".into()),
             notes: None,
+            alarm_minutes_before: Some(15),
+            timezone: Some("America/New_York".into()),
+            travel_time_minutes: Some(30),
+            calendar_source: None,
+            calendar_name: None,
+            calendar_color: None,
+            color: None,
         },
         CalendarEvent {
             id: 2,
@@ -323,6 +368,13 @@ pub(crate) fn demo_events() -> Vec<CalendarEvent> {
             all_day: false,
             location: None,
             notes: None,
+            alarm_minutes_before: Some(10),
+            timezone: Some("America/New_York".into()),
+            travel_time_minutes: None,
+            calendar_source: None,
+            calendar_name: None,
+            calendar_color: None,
+            color: None,
         },
         CalendarEvent {
             id: 3,
@@ -333,6 +385,13 @@ pub(crate) fn demo_events() -> Vec<CalendarEvent> {
             all_day: false,
             location: None,
             notes: None,
+            alarm_minutes_before: Some(30),
+            timezone: Some("America/New_York".into()),
+            travel_time_minutes: None,
+            calendar_source: None,
+            calendar_name: None,
+            calendar_color: None,
+            color: None,
         },
         CalendarEvent {
             id: 4,
@@ -343,6 +402,42 @@ pub(crate) fn demo_events() -> Vec<CalendarEvent> {
             all_day: false,
             location: None,
             notes: None,
+            alarm_minutes_before: None,
+            timezone: Some("America/New_York".into()),
+            travel_time_minutes: Some(15),
+            calendar_source: None,
+            calendar_name: None,
+            calendar_color: None,
+            color: None,
+        },
+    ]
+}
+
+pub fn demo_tasks() -> Vec<CalendarTask> {
+    vec![
+        CalendarTask {
+            id: 1,
+            account_id: 1,
+            title: "Review Q3 financial statement".into(),
+            due_at_ms: Some(ts(0, 17, 0)),
+            completed_at_ms: None,
+            priority: Some(1),
+        },
+        CalendarTask {
+            id: 2,
+            account_id: 1,
+            title: "Send lease amendment to Tomás".into(),
+            due_at_ms: Some(ts(1, 12, 0)),
+            completed_at_ms: None,
+            priority: Some(2),
+        },
+        CalendarTask {
+            id: 3,
+            account_id: 2,
+            title: "Order archival photo frames".into(),
+            due_at_ms: Some(ts(2, 18, 0)),
+            completed_at_ms: Some(ts(0, 11, 0)),
+            priority: Some(3),
         },
     ]
 }

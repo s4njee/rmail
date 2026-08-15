@@ -7,6 +7,8 @@
 //! writes to it and the UI never awaits the network.
 
 mod commands;
+mod diagnostics;
+mod oauth_config;
 mod settings;
 mod sync;
 
@@ -20,6 +22,11 @@ fn ioerr(e: String) -> std::io::Error {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Crash capture (E2.3): installed before the builder runs so a panic during
+    // startup is still recorded. The hook is panic-hook-safe (no logging, no
+    // network) — under release `panic = "abort"` the process still dies after.
+    diagnostics::install_panic_hook();
+
     tauri::Builder::default()
         // External links (http/https/mailto) open in the OS browser, never in
         // the app webview. The `opener` permission is granted in
@@ -27,6 +34,34 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         // Persist each window's size and position across restarts (Epic 1.2).
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Auto-update (E2.2): checks the configured endpoint for a signed update
+        // manifest. Requires `plugins.updater` (endpoints + pubkey) in tauri.conf.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Unified logging (E2.3): one collector for Rust `log` records and JS
+        // records (via `@tauri-apps/plugin-log`), written to rotating local
+        // files in the app log dir. The builder level is left at Trace so the
+        // persisted `log_level` setting is the single control (applied in
+        // diagnostics::init via log::set_max_level).
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Trace)
+                // The dispatch-level filter makes `log::set_max_level` the single
+                // gate for BOTH Rust records and JS records: the JS side calls
+                // `log::logger().log()` directly, bypassing the `log!` macro's own
+                // level check, so without this the plugin's Trace level would let
+                // every JS record through regardless of the Settings log level.
+                .filter(|metadata| metadata.level() <= log::max_level())
+                .max_file_size(1_000_000)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("quill.log".into()),
+                    }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+                ])
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             commands::list_folders,
             commands::list_accounts,
@@ -36,25 +71,109 @@ pub fn run() {
             commands::attachment_path,
             commands::mark_read,
             commands::star,
+            commands::mark_answered,
+            commands::mark_forwarded,
             commands::archive,
             commands::delete,
+            commands::bulk_action,
+            commands::restore_message,
+            commands::set_snoozed,
+            commands::schedule_send,
+            commands::list_scheduled,
+            commands::cancel_scheduled,
+            commands::suggest_recipients,
+            commands::recent_recipients,
+            commands::hide_recipient,
+            commands::list_contact_groups,
+            commands::create_contact_group,
+            commands::delete_contact_group,
+            commands::add_contact_to_group,
+            commands::remove_contact_from_group,
+            commands::contact_group_members,
+            commands::list_saved_searches,
+            commands::save_search,
+            commands::delete_saved_search,
             commands::send,
             commands::list_events,
+            commands::list_calendars,
+            commands::remove_calendar_source,
+            commands::restore_calendar_source,
+            commands::list_removed_calendar_sources,
             commands::create_event,
             commands::update_event,
             commands::delete_event,
+            commands::restore_event,
+            commands::duplicate_event,
             commands::add_account,
+            commands::update_account,
             commands::remove_account,
-            commands::test_connection,
+            commands::list_provider_presets,
+            commands::discover_settings,
+            commands::test_connection_settings,
+            commands::discover_mail_folders,
+            commands::set_synced_folders,
+            commands::list_synced_folders,
+            commands::account_removal_info,
             commands::save_draft,
+            commands::search,
+            commands::rebuild_search_index,
+            commands::rebuild_search_index_progress,
+            commands::cancel_search_rebuild,
+            commands::search_index_status,
+            commands::sync_calendar,
+            commands::sync_now,
+            commands::sync_account_now,
+            commands::discover_caldav,
+            commands::get_oauth_init,
+            commands::exchange_oauth_code,
+            commands::wait_oauth_code,
+            commands::reauthorize_account,
+            commands::get_thread_messages,
+            commands::apply_thread_action,
+            commands::save_attachment,
+            commands::save_all_attachments,
+            commands::set_dock_badge,
+            commands::show_notification,
+            commands::rsvp_invite,
+            commands::list_subscriptions,
+            commands::add_subscription,
+            commands::delete_subscription,
+            commands::sync_subscription,
+            commands::sync_all_subscriptions,
+            commands::apply_rules_to_folder,
+            commands::preview_rules,
+            commands::revert_rules,
+            commands::parse_sieve_script,
+            commands::export_sieve_script,
+            commands::mark_junk,
+            commands::unsubscribe,
+            commands::list_tasks,
+            commands::create_task,
+            commands::update_task,
+            commands::toggle_task,
+            commands::delete_task,
+            commands::query_free_busy,
             settings::get_settings,
             settings::set_settings,
+            diagnostics::report_js_error,
+            diagnostics::set_log_level,
+            diagnostics::open_logs_folder,
+            diagnostics::open_crash_reports_folder,
+            diagnostics::send_test_report,
+            diagnostics::flush_pending_reports,
+            diagnostics::get_diagnostics_info,
         ])
         .setup(|app| {
-            // Demo mode (Epic 3.4): explicit `--demo`, or debug builds by
-            // default so Epics 4–8 can be built and design-reviewed against
-            // the mock content before sync exists.
-            let demo = std::env::args().any(|a| a == "--demo") || cfg!(debug_assertions);
+            // Diagnostics (E2.3): stash the panic-hook state, apply the
+            // persisted log level, and spawn the upload/ping task. Early so a
+            // panic anywhere during setup is still captured.
+            diagnostics::init(app.handle());
+
+            // Demo mode (Epic 3.4): only when explicitly requested with
+            // `--demo`. Real development runs use the persistent store so
+            // accounts, mail, and settings survive reloads — the old
+            // debug-build-default wiped them every `tauri dev`.
+            let demo = std::env::args().any(|a| a == "--demo");
             let attachments = app.path().app_data_dir()?.join("attachments");
 
             // The store (Epic 12.1): an in-memory SQLite seeded with the demo
@@ -70,6 +189,27 @@ pub fn run() {
                 store.seed_demo(&attachments).map_err(ioerr)?;
             }
             app.manage(store);
+
+            // Snippets: rows synced before the sync fetched full bodies carry
+            // raw MIME/HTML fragments. Repair them from any stored body before
+            // the UI first renders, so list previews read as text from the
+            // start (idempotent — only rows whose snippet differs are touched).
+            let repaired = app
+                .state::<SqliteStore>()
+                .repair_snippets_from_bodies()
+                .unwrap_or(0);
+            if repaired > 0 {
+                log::info!("repaired {repaired} message snippets from stored bodies");
+            }
+            // Subjects: rows synced before the sync decoded RFC 2047 show
+            // encoded-words (e.g. "=?UTF-8?Q?…?="). Decode them in place.
+            let decoded = app
+                .state::<SqliteStore>()
+                .repair_encoded_subjects()
+                .unwrap_or(0);
+            if decoded > 0 {
+                log::info!("decoded {decoded} encoded-word subjects");
+            }
 
             // Sync loops (Epic 12.2) — the demo's placeholder accounts have no
             // real credentials, so they're skipped; real accounts sync on
@@ -122,21 +262,38 @@ pub fn run() {
             // flash of the wrong theme (Epic 2.3). Window parameters that used
             // to live in the config are spelled out so the two stay in one
             // place.
-            tauri::WebviewWindowBuilder::new(
+            #[cfg(not(target_os = "macos"))]
+            let mut builder = {
+                let mut b = tauri::WebviewWindowBuilder::new(
+                    app,
+                    "main",
+                    tauri::WebviewUrl::App("index.html".into()),
+                );
+                if let Some(icon) = app.default_window_icon() {
+                    b = b.icon(icon.clone())?;
+                }
+                b
+            };
+
+            #[cfg(target_os = "macos")]
+            let builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
-            )
-            .title("Quill")
-            .inner_size(1280.0, 800.0)
-            .min_inner_size(640.0, 480.0)
-            .center()
-            .resizable(true)
-            .decorations(true)
-            .initialization_script(settings::theme_init_script(app.handle()))
-            .build()?;
+            );
+
+            builder
+                .title("Quill")
+                .inner_size(1280.0, 800.0)
+                .min_inner_size(640.0, 480.0)
+                .center()
+                .resizable(true)
+                .decorations(true)
+                .initialization_script(settings::theme_init_script(app.handle()))
+                .build()?;
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+

@@ -1,0 +1,49 @@
+/* P1.3 search-operator help popover — tokens only. */
+
+.search-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.search-help__toggle {
+  background: none;
+  border: none;
+  color: var(--color-text-faint);
+  font-size: var(--fs-13px);
+  cursor: pointer;
+  padding: var(--space-2px) var(--space-8px);
+}
+
+.search-help__toggle:hover {
+  color: var(--color-text-muted);
+}
+
+.search-help__pop {
+  position: absolute;
+  top: calc(100% + var(--space-4px));
+  right: 0;
+  z-index: 40;
+  min-width: var(--size-240px);
+  background: var(--color-reading);
+  border: var(--search-border);
+  border-radius: var(--radius-control);
+  box-shadow: var(--modal-shadow);
+  padding: var(--space-8px) var(--space-10px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8px);
+}
+
+.search-help__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8px);
+  font-size: var(--fs-12px);
+  color: var(--color-text-body);
+}
+
+.search-help__row code {
+  color: var(--accent);
+  white-space: nowrap;
+}

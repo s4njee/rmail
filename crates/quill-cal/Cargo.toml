@@ -7,7 +7,13 @@ description = "CalDAV / iCalendar for Quill (no Tauri dependency)"
 
 [dependencies]
 calendar-core = { path = "../../rcalendar/crates/calendar-core" }
+quill-store = { path = "../quill-store" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
 uuid = { version = "1", features = ["v4", "serde"] }
+base64 = "0.22"
+quick-xml = "0.37"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "macros"] }

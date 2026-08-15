@@ -12,4 +12,4 @@ folder: string, sender_name: string, sender_address: string, subject: string, sn
 /**
  * Unix millis. `number` in TS (JSON number, not bigint).
  */
-received_at_ms: number, unread: boolean, flagged: boolean, has_attachments: boolean, };
+received_at_ms: number, unread: boolean, flagged: boolean, answered: boolean, forwarded: boolean, has_attachments: boolean, thread_id: string | null, thread_count: number, };

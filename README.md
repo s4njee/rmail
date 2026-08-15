@@ -9,9 +9,11 @@
 ### ✉️ Mail Client
 
 #### 1. Three-Pane Inbox (Hairline Theme)
+
 ![Inbox View](docs/screenshots/01-mail-inbox.png)
 
 #### 2. Three-Pane Inbox (Banded Theme)
+
 ![Banded Theme](docs/screenshots/10-mail-banded-theme.png)
 
 ---
@@ -19,21 +21,27 @@
 ### 📅 Calendar Views (Powered by rcalendar)
 
 #### Month View
+
 ![Calendar Month View](docs/screenshots/02-calendar-month.png)
 
 #### Week View (Time Grid & Drag/Resize)
+
 ![Calendar Week View](docs/screenshots/03-calendar-week.png)
 
 #### 3-Day View
+
 ![Calendar 3-Day View](docs/screenshots/04-calendar-3day.png)
 
 #### Day View & Timeline
+
 ![Calendar Day View](docs/screenshots/05-calendar-day.png)
 
 #### Agenda View
+
 ![Calendar Agenda View](docs/screenshots/06-calendar-agenda.png)
 
 #### Event Editor Modal
+
 ![Event Editor](docs/screenshots/07-calendar-event-modal.png)
 
 ---
@@ -41,9 +49,11 @@
 ### ⚙️ Settings & Preferences
 
 #### Calendar Visibility & Preferences
+
 ![Settings Calendar](docs/screenshots/08-settings-calendar.png)
 
 #### Accounts Management
+
 ![Settings Accounts](docs/screenshots/09-settings-accounts.png)
 
 ---
@@ -114,6 +124,13 @@ pnpm tauri dev
 # 3. Or run the web preview standalone (with rich mock fallback)
 pnpm dev
 ```
+
+**Dev credential store:** `tauri dev` (debug builds) store account passwords and
+OAuth tokens in a plaintext file at `~/Library/Application Support/quill/dev-credentials.json`
+instead of the OS keychain, so macOS doesn't re-prompt for keychain access on every
+rebuild. Existing keychain credentials migrate into that file on first read. Set
+`QUILL_USE_KEYCHAIN=1` to force the real keychain in dev, or `QUILL_CREDENTIALS_FILE=/path`
+to relocate the dev file.
 
 ### Running Tests & Quality Checks
 

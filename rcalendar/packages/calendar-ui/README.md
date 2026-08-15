@@ -24,57 +24,103 @@ pnpm add @rcalendar/ui solid-js
 To embed `@rcalendar/ui` in your application, supply an implementation of `CalendarDataSource`:
 
 ```typescript
-import { CalendarDataSource, Calendar, Event, OccurrenceItem, Task } from '@rcalendar/ui';
+import { CalendarDataSource, Calendar, Event, OccurrenceItem, Task } from "@rcalendar/ui";
 
 export class CustomCalendarDataSource implements CalendarDataSource {
   async listAccounts() {
-    return [{ account: { id: 'acc-1', displayName: 'Default', kind: 'local', status: 'active', detail: 'Local', createdAt: '', updatedAt: '' }, calendars: [] }];
+    return [
+      {
+        account: {
+          id: "acc-1",
+          displayName: "Default",
+          kind: "local",
+          status: "active",
+          detail: "Local",
+          createdAt: "",
+          updatedAt: "",
+        },
+        calendars: [],
+      },
+    ];
   }
 
   async listCalendars(): Promise<Calendar[]> {
     return [
-      { id: 'cal-1', accountId: 'acc-1', name: 'Work', color: '#0F766E', enabled: true, eventCount: 1, createdAt: '', updatedAt: '' },
+      {
+        id: "cal-1",
+        accountId: "acc-1",
+        name: "Work",
+        color: "#0F766E",
+        enabled: true,
+        eventCount: 1,
+        createdAt: "",
+        updatedAt: "",
+      },
     ];
   }
 
-  async listOccurrences(from: string, to: string, calendarIds?: string[]): Promise<OccurrenceItem[]> {
+  async listOccurrences(
+    from: string,
+    to: string,
+    calendarIds?: string[],
+  ): Promise<OccurrenceItem[]> {
     return [
       {
         occurrence: {
-          id: 'occ-1',
-          eventId: 'evt-1',
-          calendarId: 'cal-1',
-          startsAt: '2026-08-13T10:00:00Z',
-          endsAt: '2026-08-13T11:00:00Z',
+          id: "occ-1",
+          eventId: "evt-1",
+          calendarId: "cal-1",
+          startsAt: "2026-08-13T10:00:00Z",
+          endsAt: "2026-08-13T11:00:00Z",
           allDay: false,
         },
         event: {
-          id: 'evt-1',
-          calendarId: 'cal-1',
-          uid: 'evt-1@local',
-          title: 'Design Review',
-          startsAt: '2026-08-13T10:00:00Z',
-          endsAt: '2026-08-13T11:00:00Z',
+          id: "evt-1",
+          calendarId: "cal-1",
+          uid: "evt-1@local",
+          title: "Design Review",
+          startsAt: "2026-08-13T10:00:00Z",
+          endsAt: "2026-08-13T11:00:00Z",
           allDay: false,
           exdates: [],
-          createdAt: '',
-          updatedAt: '',
+          createdAt: "",
+          updatedAt: "",
         },
       },
     ];
   }
 
-  async getEvent(id: string) { return null; }
-  async saveEvent(draft: any) { return []; }
-  async deleteEvent(id: string) { return []; }
+  async getEvent(id: string) {
+    return null;
+  }
+  async saveEvent(draft: any) {
+    return [];
+  }
+  async deleteEvent(id: string) {
+    return [];
+  }
   async setCalendarEnabled(id: string, enabled: boolean) {}
-  async listTasks() { return []; }
-  async toggleTask(id: string) { throw new Error('Not implemented'); }
-  async search(query: string) { return { events: [], tasks: [] }; }
-  async exportIcs() { return 'BEGIN:VCALENDAR...'; }
-  async importIcs(calId: string, ics: string) { return []; }
-  async addAccount(spec: any) { throw new Error('Not implemented'); }
-  async syncAccount(id: string) { return { accountId: id, syncedAt: new Date().toISOString(), success: true, message: 'OK' }; }
+  async listTasks() {
+    return [];
+  }
+  async toggleTask(id: string) {
+    throw new Error("Not implemented");
+  }
+  async search(query: string) {
+    return { events: [], tasks: [] };
+  }
+  async exportIcs() {
+    return "BEGIN:VCALENDAR...";
+  }
+  async importIcs(calId: string, ics: string) {
+    return [];
+  }
+  async addAccount(spec: any) {
+    throw new Error("Not implemented");
+  }
+  async syncAccount(id: string) {
+    return { accountId: id, syncedAt: new Date().toISOString(), success: true, message: "OK" };
+  }
   async setSyncInterval(mins: number) {}
 }
 ```
@@ -82,9 +128,9 @@ export class CustomCalendarDataSource implements CalendarDataSource {
 ## Embedding Views
 
 ```tsx
-import { createSignal, onMount } from 'solid-js';
-import { MonthView, WeekView, Titlebar } from '@rcalendar/ui';
-import '@rcalendar/ui/tokens.css';
+import { createSignal, onMount } from "solid-js";
+import { MonthView, WeekView, Titlebar } from "@rcalendar/ui";
+import "@rcalendar/ui/tokens.css";
 
 export const App = () => {
   const dataSource = new CustomCalendarDataSource();
@@ -95,12 +141,12 @@ export const App = () => {
   onMount(async () => {
     const cals = await dataSource.listCalendars();
     setCalendars(cals);
-    const items = await dataSource.listOccurrences('2026-08-01', '2026-08-31');
+    const items = await dataSource.listOccurrences("2026-08-01", "2026-08-31");
     setOccurrences(items);
   });
 
   return (
-    <div style={{ height: '100vh', display: 'flex', 'flex-direction': 'column' }}>
+    <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>
       <MonthView
         focusedDate={date()}
         selectedDate={date()}

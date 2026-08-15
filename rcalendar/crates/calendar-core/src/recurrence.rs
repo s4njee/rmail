@@ -809,6 +809,64 @@ mod tests {
     }
 
     #[test]
+    fn edit_occurrence_across_dst_boundary() {
+        // Series at 10:00 Europe/London across March 2026 spring forward.
+        let mut series = event(
+            "2026-03-23T10:00:00",
+            "2026-03-23T11:00:00",
+            Some("FREQ=WEEKLY;BYDAY=MO"),
+        );
+        series.tz = Some("Europe/London".into());
+
+        // Edit future occurrences starting from March 30 (post-DST transition)
+        let changes = OccurrenceChanges {
+            starts_at: dt("2026-03-30T10:30:00"), // 11:30 BST = 10:30Z
+            ends_at: dt("2026-03-30T11:30:00"),
+            all_day: false,
+            title: Some("New time after DST".into()),
+            location: None,
+            notes: None,
+        };
+
+        let result = edit_occurrence(
+            &series,
+            EditScope::Future,
+            NaiveDate::from_ymd_opt(2026, 3, 30).unwrap(),
+            &changes,
+        )
+        .unwrap();
+
+        assert_eq!(result.len(), 2);
+        // Original series capped at March 30
+        assert!(result[0].rrule.as_ref().unwrap().contains("UNTIL="));
+        // New series starts on March 30 with tz preserved
+        assert_eq!(result[1].tz.as_deref(), Some("Europe/London"));
+        assert_eq!(result[1].title, "New time after DST");
+    }
+
+    #[test]
+    fn all_day_event_never_shifts_across_dst() {
+        // Daily all-day event from March 7 to March 10
+        let mut e = event(
+            "2026-03-07T00:00:00",
+            "2026-03-08T00:00:00",
+            Some("FREQ=DAILY;COUNT=4"),
+        );
+        e.all_day = true;
+        let range = TimeRange::new(dt("2026-03-06T00:00:00"), dt("2026-03-12T00:00:00")).unwrap();
+        let occs = expand(&e, &range).unwrap();
+        assert_eq!(
+            starts(&occs),
+            [
+                "2026-03-07T00:00:00Z",
+                "2026-03-08T00:00:00Z",
+                "2026-03-09T00:00:00Z",
+                "2026-03-10T00:00:00Z",
+            ]
+        );
+    }
+
+    #[test]
     fn override_replaces_series_instance() {
         // Series excludes Aug 12; a standalone override event sits at the same
         // slot. Combined expansion must contain exactly one occurrence there.

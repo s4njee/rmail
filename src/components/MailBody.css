@@ -10,6 +10,32 @@
   border: none;
 }
 
+/* Remote-content blocking privacy banner (Roadmap 3.7) */
+.mail-body__privacy-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8px);
+  padding: var(--space-8px) var(--space-12px);
+  background: var(--color-chrome);
+  border: var(--search-border);
+  border-radius: var(--radius-control);
+  font-family: var(--font-sans);
+  font-size: var(--fs-12px);
+  color: var(--color-text-muted);
+}
+
+.mail-body__privacy-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8px);
+}
+
+.mail-body__privacy-sep {
+  color: var(--color-text-muted);
+}
+
 /* Per-message "Load images" (Epic 7.3) — a text affordance, not a button
    treatment, since it is mail-facing chrome. */
 .mail-body__load-images {
@@ -22,4 +48,13 @@
   font-weight: 500;
   color: var(--accent);
   cursor: pointer;
+  text-decoration: underline;
+}
+
+.mail-body__load-images:hover {
+  filter: brightness(0.9);
+}
+
+.mail-body__trust-sender {
+  font-weight: 600;
 }

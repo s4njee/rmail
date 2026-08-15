@@ -1,4 +1,13 @@
-import { Component, createEffect, createSignal, onCleanup, onMount, Switch, Match, Show } from 'solid-js';
+import {
+  Component,
+  createEffect,
+  createSignal,
+  onCleanup,
+  onMount,
+  Switch,
+  Match,
+  Show,
+} from "solid-js";
 import {
   Account,
   addDays,
@@ -23,14 +32,14 @@ import {
   Titlebar,
   ViewMode,
   WeekView,
-} from '@rcalendar/ui';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { TauriCalendarDataSource } from './services/tauriAdapter';
+} from "@rcalendar/ui";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { TauriCalendarDataSource } from "./services/tauriAdapter";
 
 export const App: Component = () => {
   const dataSource = new TauriCalendarDataSource();
 
-  const [view, setView] = createSignal<ViewMode>('Month');
+  const [view, setView] = createSignal<ViewMode>("Month");
   const [focusedDate, setFocusedDate] = createSignal(new Date());
   const [selectedDate, setSelectedDate] = createSignal(new Date());
 
@@ -64,7 +73,7 @@ export const App: Component = () => {
       const t = await dataSource.listTasks();
       setTasks(t);
     } catch (err) {
-      console.error('Failed to load initial data:', err);
+      console.error("Failed to load initial data:", err);
     }
   };
 
@@ -84,7 +93,7 @@ export const App: Component = () => {
       const items = await dataSource.listOccurrences(fromIso, toIso, enabledIds);
       setOccurrences(items);
     } catch (err) {
-      console.error('Failed to fetch occurrences:', err);
+      console.error("Failed to fetch occurrences:", err);
     }
   };
 
@@ -106,44 +115,44 @@ export const App: Component = () => {
       const target = e.target as HTMLElement;
       if (
         target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.tagName === 'SELECT' ||
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
           target.isContentEditable)
       ) {
         return;
       }
 
       // ⌘K: Quick search
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setIsSearchOpen(true);
         return;
       }
 
       // ⌘,: Settings
-      if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
         e.preventDefault();
         setIsSettingsOpen((prev) => !prev);
         return;
       }
 
       // ?: Help shortcuts cheat sheet
-      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+      if (e.key === "?" || (e.shiftKey && e.key === "/")) {
         e.preventDefault();
         setIsHelpOpen(true);
         return;
       }
 
       // 'c' or 'n': New event
-      if (e.key === 'c' || e.key === 'n') {
+      if (e.key === "c" || e.key === "n") {
         e.preventDefault();
         handleNewEvent();
         return;
       }
 
       // 't': Jump to Today
-      if (e.key === 't') {
+      if (e.key === "t") {
         e.preventDefault();
         const now = new Date();
         setSelectedDate(now);
@@ -152,46 +161,46 @@ export const App: Component = () => {
       }
 
       // 'j' or ArrowLeft: Previous period
-      if (e.key === 'j' || e.key === 'ArrowLeft') {
+      if (e.key === "j" || e.key === "ArrowLeft") {
         e.preventDefault();
         handleNavPrev();
         return;
       }
 
       // 'k' or ArrowRight: Next period
-      if (e.key === 'k' || e.key === 'ArrowRight') {
+      if (e.key === "k" || e.key === "ArrowRight") {
         e.preventDefault();
         handleNavNext();
         return;
       }
 
       // '1' - '5': Switch views
-      if (e.key === '1') {
-        setView('Month');
-      } else if (e.key === '2') {
-        setView('Week');
-      } else if (e.key === '3') {
-        setView('3-day');
-      } else if (e.key === '4') {
-        setView('Day');
-      } else if (e.key === '5') {
-        setView('Agenda');
+      if (e.key === "1") {
+        setView("Month");
+      } else if (e.key === "2") {
+        setView("Week");
+      } else if (e.key === "3") {
+        setView("3-day");
+      } else if (e.key === "4") {
+        setView("Day");
+      } else if (e.key === "5") {
+        setView("Agenda");
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    onCleanup(() => window.removeEventListener('keydown', handleKeyDown));
+    window.addEventListener("keydown", handleKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", handleKeyDown));
   });
 
   const handleNavPrev = () => {
     const v = view();
-    if (v === 'Month') {
+    if (v === "Month") {
       setFocusedDate(addMonths(focusedDate(), -1));
-    } else if (v === 'Week') {
+    } else if (v === "Week") {
       setFocusedDate(addDays(focusedDate(), -7));
-    } else if (v === '3-day') {
+    } else if (v === "3-day") {
       setFocusedDate(addDays(focusedDate(), -3));
-    } else if (v === 'Day') {
+    } else if (v === "Day") {
       const prev = addDays(selectedDate(), -1);
       setSelectedDate(prev);
       setFocusedDate(prev);
@@ -200,13 +209,13 @@ export const App: Component = () => {
 
   const handleNavNext = () => {
     const v = view();
-    if (v === 'Month') {
+    if (v === "Month") {
       setFocusedDate(addMonths(focusedDate(), 1));
-    } else if (v === 'Week') {
+    } else if (v === "Week") {
       setFocusedDate(addDays(focusedDate(), 7));
-    } else if (v === '3-day') {
+    } else if (v === "3-day") {
       setFocusedDate(addDays(focusedDate(), 3));
-    } else if (v === 'Day') {
+    } else if (v === "Day") {
       const next = addDays(selectedDate(), 1);
       setSelectedDate(next);
       setFocusedDate(next);
@@ -216,13 +225,11 @@ export const App: Component = () => {
   const handleToggleCalendar = async (id: string, enabled: boolean) => {
     try {
       await dataSource.setCalendarEnabled(id, enabled);
-      setCalendars((prev) =>
-        prev.map((c) => (c.id === id ? { ...c, enabled } : c)),
-      );
+      setCalendars((prev) => prev.map((c) => (c.id === id ? { ...c, enabled } : c)));
       await loadAccountsAndCalendars();
       await loadOccurrences();
     } catch (err) {
-      console.error('Failed to toggle calendar:', err);
+      console.error("Failed to toggle calendar:", err);
     }
   };
 
@@ -231,7 +238,7 @@ export const App: Component = () => {
       const updated = await dataSource.toggleTask(id);
       setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
     } catch (err) {
-      console.error('Failed to toggle task:', err);
+      console.error("Failed to toggle task:", err);
     }
   };
 
@@ -271,7 +278,7 @@ export const App: Component = () => {
       await loadOccurrences();
       await loadAccountsAndCalendars();
     } catch (err) {
-      console.error('Failed to save event:', err);
+      console.error("Failed to save event:", err);
     }
   };
 
@@ -281,7 +288,7 @@ export const App: Component = () => {
       await loadOccurrences();
       await loadAccountsAndCalendars();
     } catch (err) {
-      console.error('Failed to delete event:', err);
+      console.error("Failed to delete event:", err);
     }
   };
 
@@ -299,10 +306,10 @@ export const App: Component = () => {
         tz: occ.event.tz,
         rrule: occ.event.rrule,
       };
-      await dataSource.saveEvent(draft, occ.event.id, 'all');
+      await dataSource.saveEvent(draft, occ.event.id, "all");
       await loadOccurrences();
     } catch (err) {
-      console.error('Failed to move event:', err);
+      console.error("Failed to move event:", err);
     }
   };
 
@@ -319,10 +326,10 @@ export const App: Component = () => {
         tz: occ.event.tz,
         rrule: occ.event.rrule,
       };
-      await dataSource.saveEvent(draft, occ.event.id, 'all');
+      await dataSource.saveEvent(draft, occ.event.id, "all");
       await loadOccurrences();
     } catch (err) {
-      console.error('Failed to resize event:', err);
+      console.error("Failed to resize event:", err);
     }
   };
 
@@ -339,7 +346,7 @@ export const App: Component = () => {
     try {
       await getCurrentWindow().minimize();
     } catch (e) {
-      console.warn('Window control not available:', e);
+      console.warn("Window control not available:", e);
     }
   };
 
@@ -352,7 +359,7 @@ export const App: Component = () => {
         await win.maximize();
       }
     } catch (e) {
-      console.warn('Window control not available:', e);
+      console.warn("Window control not available:", e);
     }
   };
 
@@ -360,19 +367,19 @@ export const App: Component = () => {
     try {
       await getCurrentWindow().close();
     } catch (e) {
-      console.warn('Window control not available:', e);
+      console.warn("Window control not available:", e);
     }
   };
 
   return (
     <div
       style={{
-        display: 'flex',
-        'flex-direction': 'column',
-        height: '100vh',
-        width: '100vw',
-        background: 'var(--al-chrome, #FAFAFA)',
-        overflow: 'hidden',
+        display: "flex",
+        "flex-direction": "column",
+        height: "100vh",
+        width: "100vw",
+        background: "var(--al-chrome, #FAFAFA)",
+        overflow: "hidden",
       }}
     >
       {/* Titlebar */}
@@ -406,7 +413,7 @@ export const App: Component = () => {
           />
         }
       >
-        <div style={{ display: 'flex', flex: 1, 'min-height': 0, overflow: 'hidden' }}>
+        <div style={{ display: "flex", flex: 1, "min-height": 0, overflow: "hidden" }}>
           <Sidebar
             focusedDate={focusedDate()}
             selectedDate={selectedDate()}
@@ -423,9 +430,11 @@ export const App: Component = () => {
             onSettingsClick={() => setIsSettingsOpen(true)}
           />
 
-          <main style={{ flex: 1, display: 'flex', 'min-width': 0, height: '100%', overflow: 'hidden' }}>
+          <main
+            style={{ flex: 1, display: "flex", "min-width": 0, height: "100%", overflow: "hidden" }}
+          >
             <Switch>
-              <Match when={view() === 'Month'}>
+              <Match when={view() === "Month"}>
                 <MonthView
                   focusedDate={focusedDate()}
                   selectedDate={selectedDate()}
@@ -440,7 +449,7 @@ export const App: Component = () => {
                 />
               </Match>
 
-              <Match when={view() === 'Week'}>
+              <Match when={view() === "Week"}>
                 <WeekView
                   focusedDate={focusedDate()}
                   selectedDate={selectedDate()}
@@ -456,7 +465,7 @@ export const App: Component = () => {
                 />
               </Match>
 
-              <Match when={view() === '3-day'}>
+              <Match when={view() === "3-day"}>
                 <ThreeDayView
                   focusedDate={focusedDate()}
                   selectedDate={selectedDate()}
@@ -472,7 +481,7 @@ export const App: Component = () => {
                 />
               </Match>
 
-              <Match when={view() === 'Day'}>
+              <Match when={view() === "Day"}>
                 <DayView
                   focusedDate={focusedDate()}
                   selectedDate={selectedDate()}
@@ -497,7 +506,7 @@ export const App: Component = () => {
                 />
               </Match>
 
-              <Match when={view() === 'Agenda'}>
+              <Match when={view() === "Agenda"}>
                 <AgendaView
                   focusedDate={focusedDate()}
                   selectedDate={selectedDate()}
@@ -541,10 +550,7 @@ export const App: Component = () => {
       />
 
       {/* Shortcuts Help Modal */}
-      <ShortcutsHelpModal
-        isOpen={isHelpOpen()}
-        onClose={() => setIsHelpOpen(false)}
-      />
+      <ShortcutsHelpModal isOpen={isHelpOpen()} onClose={() => setIsHelpOpen(false)} />
 
       {/* iCalendar Import / Export Modal */}
       <IcsImportExportModal

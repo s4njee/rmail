@@ -26,11 +26,16 @@ pub(crate) struct Message {
     pub received_at_ms: i64,
     pub unread: bool,
     pub flagged: bool,
+    pub answered: bool,
+    pub forwarded: bool,
     pub attachments: Vec<Attachment>,
+    pub list_unsubscribe: Option<String>,
+    pub list_unsubscribe_post: Option<String>,
 }
 
 impl Message {
     pub fn row(&self) -> MessageRow {
+        let thread_id = crate::threading::compute_thread_id(None, None, &self.subject);
         MessageRow {
             id: self.id,
             account_id: self.account_id,
@@ -42,19 +47,32 @@ impl Message {
             received_at_ms: self.received_at_ms,
             unread: self.unread,
             flagged: self.flagged,
+            answered: self.answered,
+            forwarded: self.forwarded,
             has_attachments: !self.attachments.is_empty(),
+            thread_id: Some(thread_id),
+            thread_count: 1,
         }
     }
 
     pub fn detail(&self) -> MessageDetail {
+        let thread_id = crate::threading::compute_thread_id(None, None, &self.subject);
         MessageDetail {
             row: self.row(),
             to: self.to.clone(),
             cc: self.cc.clone(),
+            bcc: Vec::new(),
             body: self.body.clone(),
             body_html: self.body_html.clone(),
             remote_image_count: 0, // set by the command after sanitizing
             attachments: self.attachments.clone(),
+            message_id_header: None,
+            in_reply_to: None,
+            references: None,
+            thread_id: Some(thread_id),
+            calendar_invite: None,
+            list_unsubscribe: self.list_unsubscribe.clone(),
+            list_unsubscribe_post: self.list_unsubscribe_post.clone(),
         }
     }
 }
@@ -89,12 +107,14 @@ impl MemoryStore {
     /// by the folder a message lives in.
     pub fn folders(&self) -> Vec<Folder> {
         let data = self.inner.lock().unwrap();
-        const KINDS: [(FolderKind, &str); 5] = [
+        const KINDS: [(FolderKind, &str); 7] = [
             (FolderKind::Inbox, "Inbox"),
             (FolderKind::Starred, "Starred"),
             (FolderKind::Drafts, "Drafts"),
             (FolderKind::Sent, "Sent"),
             (FolderKind::Archive, "Archive"),
+            (FolderKind::Junk, "Junk"),
+            (FolderKind::Trash, "Trash"),
         ];
         KINDS
             .into_iter()
@@ -202,6 +222,53 @@ impl MemoryStore {
         }
     }
 
+    pub fn get_thread_messages(
+        &self,
+        _account_id: AccountId,
+        thread_id: &str,
+    ) -> Vec<MessageDetail> {
+        let data = self.inner.lock().unwrap();
+        data.messages
+            .iter()
+            .filter(|m| {
+                let tid = crate::threading::compute_thread_id(None, None, &m.subject);
+                tid == thread_id
+            })
+            .map(|m| m.detail())
+            .collect()
+    }
+
+    pub fn apply_thread_action(
+        &self,
+        account_id: AccountId,
+        thread_id: &str,
+        action: ActionType,
+    ) -> Result<(), String> {
+        let mut data = self.inner.lock().unwrap();
+        for m in data.messages.iter_mut() {
+            if m.account_id == account_id {
+                let tid = crate::threading::compute_thread_id(None, None, &m.subject);
+                if tid == thread_id {
+                    match action {
+                        ActionType::MarkRead => m.unread = false,
+                        ActionType::MarkUnread => m.unread = true,
+                        ActionType::Star => m.flagged = true,
+                        ActionType::Unstar => m.flagged = false,
+                        ActionType::Archive => m.folder = "Archive".to_string(),
+                        ActionType::Delete => m.folder = "Trash".to_string(),
+                        ActionType::MarkAnswered => m.answered = true,
+                        ActionType::MarkForwarded => m.forwarded = true,
+                        ActionType::MarkJunk => m.folder = "Junk".to_string(),
+                        ActionType::MarkNotJunk => m.folder = "Inbox".to_string(),
+                        ActionType::Move => {}
+                        ActionType::Send => {}
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The local file for an attachment, if it exists. The file itself is
     /// served over the asset protocol (Epic 3.3), never through IPC.
     pub fn attachment(&self, id: AttachmentId) -> Option<Attachment> {
@@ -295,6 +362,7 @@ impl MemoryStore {
             port: info.port,
             tls: info.tls,
             folder_count: 0,
+            last_error: None,
         };
         data.accounts.push(account.clone());
         account
@@ -343,6 +411,7 @@ mod tests {
             account_id: None,
             offset: 0,
             limit,
+            threaded: false,
         })
     }
 
@@ -497,7 +566,11 @@ mod tests {
                 received_at_ms: 1_700_000_000_000 - i as i64,
                 unread: i % 2 == 0,
                 flagged: false,
+                answered: false,
+                forwarded: false,
                 has_attachments: false,
+                thread_id: Some("th_123".into()),
+                thread_count: 1,
             })
             .collect();
         let page = MessagePage {

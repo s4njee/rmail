@@ -1,0 +1,160 @@
+.invite-card {
+  display: flex;
+  gap: var(--space-16px);
+  padding: var(--space-16px);
+  margin-bottom: var(--space-16px);
+  background: var(--search-bg);
+  border: var(--search-border);
+  border-radius: var(--radius-attachment);
+  align-items: flex-start;
+}
+
+.invite-card--accepted {
+  border-color: var(--color-online);
+}
+
+.invite-card--cancelled {
+  border-color: var(--color-offline);
+  opacity: 0.85;
+}
+
+.invite-card__date-block {
+  flex: none;
+  width: calc(var(--space-24px) * 2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-reading);
+  border: var(--search-border);
+  border-radius: var(--radius-field);
+  padding: var(--space-8px) var(--space-4px);
+  text-align: center;
+}
+
+.invite-card__month {
+  font-size: var(--fs-10px);
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.invite-card__day {
+  font-size: var(--fs-20px);
+  font-weight: 700;
+  color: var(--color-sender);
+  line-height: 1.1;
+  margin: var(--space-2px) 0;
+}
+
+.invite-card__weekday {
+  font-size: var(--fs-10px);
+  color: var(--color-text-muted);
+}
+
+.invite-card__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8px);
+}
+
+.invite-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8px);
+}
+
+.invite-card__method-badge {
+  font-size: var(--fs-11px);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.invite-card__status-pill {
+  font-size: var(--fs-11px);
+  font-weight: 600;
+  padding: var(--space-2px) var(--space-8px);
+  border-radius: var(--radius-24px);
+  background: var(--color-reading);
+  border: var(--search-border);
+  color: var(--color-text-muted);
+}
+
+.invite-card__status-pill--accepted {
+  color: var(--color-online);
+  border-color: var(--color-online);
+}
+
+.invite-card__status-pill--declined {
+  color: var(--color-offline);
+  border-color: var(--color-offline);
+}
+
+.invite-card__status-pill--tentative {
+  color: var(--color-sender);
+  border-color: var(--color-sender);
+}
+
+.invite-card__title {
+  font-size: var(--fs-15px);
+  font-weight: 600;
+  color: var(--color-sender);
+  margin: 0;
+  line-height: 1.3;
+}
+
+.invite-card__meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4px);
+  font-size: var(--fs-12px);
+}
+
+.invite-card__meta-item {
+  display: flex;
+  gap: var(--space-8px);
+}
+
+.invite-card__meta-label {
+  color: var(--color-text-muted);
+  flex: none;
+}
+
+.invite-card__meta-value {
+  color: var(--color-text-body);
+}
+
+.invite-card__actions {
+  display: flex;
+  gap: var(--space-8px);
+  margin-top: var(--space-4px);
+}
+
+.invite-btn {
+  font-size: var(--fs-12px);
+}
+
+.invite-btn--active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.invite-card__cancelled-banner {
+  font-size: var(--fs-12px);
+  color: var(--color-offline);
+  font-weight: 500;
+  margin-top: var(--space-4px);
+}
+
+.invite-card__counter-banner {
+  font-size: var(--fs-12px);
+  color: var(--color-text-muted);
+  font-style: italic;
+  margin-top: var(--space-4px);
+}

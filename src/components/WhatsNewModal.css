@@ -1,0 +1,20 @@
+.whats-new__list {
+  margin: 0;
+  padding: 0 var(--space-20px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10px);
+  font-size: var(--fs-14px);
+  line-height: 1.5;
+  color: var(--color-text-body);
+}
+
+.whats-new__item::marker {
+  color: var(--accent);
+}
+
+.whats-new__footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-20px);
+}

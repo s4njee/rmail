@@ -1,13 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest";
 import {
   computeDragToCreateRange,
   computeMoveDeltaMinutes,
   computeMovedRange,
   computeResizedEnd,
   snapToInterval,
-} from './dragEngine';
+} from "./dragEngine";
 
-describe('dragEngine', () => {
+describe("dragEngine", () => {
   const config = {
     rowPitch: 60, // 1px = 1 min
     snapMinutes: 15,
@@ -15,20 +15,20 @@ describe('dragEngine', () => {
     startHour: 7,
   };
 
-  it('snaps minutes to intervals', () => {
+  it("snaps minutes to intervals", () => {
     expect(snapToInterval(14, 15)).toBe(15);
     expect(snapToInterval(7, 15)).toBe(0);
     expect(snapToInterval(8, 15)).toBe(15);
     expect(snapToInterval(44, 15)).toBe(45);
   });
 
-  it('computes move delta in minutes', () => {
+  it("computes move delta in minutes", () => {
     expect(computeMoveDeltaMinutes(30, config)).toBe(30);
     expect(computeMoveDeltaMinutes(14, config)).toBe(15);
     expect(computeMoveDeltaMinutes(-28, config)).toBe(-30);
   });
 
-  it('computes moved range while preserving duration', () => {
+  it("computes moved range while preserving duration", () => {
     const start = new Date(2026, 7, 13, 10, 0, 0);
     const end = new Date(2026, 7, 13, 11, 30, 0); // 90 min duration
 
@@ -39,7 +39,7 @@ describe('dragEngine', () => {
     expect(moved.newEnd.getMinutes()).toBe(0);
   });
 
-  it('computes resized end time and enforces minimum duration', () => {
+  it("computes resized end time and enforces minimum duration", () => {
     const start = new Date(2026, 7, 13, 10, 0, 0);
     const end = new Date(2026, 7, 13, 11, 0, 0); // 60 min
 
@@ -53,7 +53,7 @@ describe('dragEngine', () => {
     expect(clamped.getMinutes()).toBe(15);
   });
 
-  it('computes drag-to-create range', () => {
+  it("computes drag-to-create range", () => {
     const day = new Date(2026, 7, 13);
     // start at 60px (= 08:00), end at 150px (= 09:30)
     const range = computeDragToCreateRange(day, 60, 150, config);

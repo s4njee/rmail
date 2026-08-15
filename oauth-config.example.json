@@ -1,0 +1,12 @@
+{
+  "providers": {
+    "google": {
+      "client_id": "your-client-id.apps.googleusercontent.com",
+      "client_secret": "GOCSPX-your-client-secret"
+    },
+    "microsoft": {
+      "client_id": "",
+      "client_secret": ""
+    }
+  }
+}

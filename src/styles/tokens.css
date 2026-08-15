@@ -10,7 +10,7 @@
  *                        scales, the mono stack. A third theme inherits all of
  *                        these for free.
  *   - [data-theme=…]     theme-varying tokens: colors, fills, chrome metrics,
- *                        structural switches (--rail-w, --titlebar-border),
+ *                        structural switches (--rail-w, --pane-border),
  *                        semantic radii, the sans face. Every token a
  *                        component references must be defined here for BOTH
  *                        themes (checked by scripts/check-token-usage.mjs), so
@@ -76,14 +76,19 @@
   --space-42px: 42px;
 
   /* Element sizes (dots, avatars, thumbnails) */
+  --size-2px: 2px; /* reading-loading spinner ring (7.2) */
+  --size-4px: 4px; /* reading-loading bar height */
   --size-5px: 5px;
   --size-6px: 6px;
   --size-7px: 7px;
   --size-8px: 8px;
   --size-9px: 9px;
+  --size-22px: 22px; /* reading-loading spinner diameter */
   --size-30px: 30px;
   --size-34px: 34px;
   --size-38px: 38px;
+  --size-240px: 240px; /* reading-loading bar width */
+  --size-420px: 420px; /* reading-loading subject max width */
 
   /* Radius scale — the theme blocks map these onto semantic radii */
   --radius-2px: 2px;
@@ -133,15 +138,11 @@
   --lh-body: 1.65;
 
   /* Chrome metrics */
-  --titlebar-h: 40px;
-  --titlebar-pad-x: var(--space-14px);
-  --titlebar-app-offset: var(--space-12px);
   --sidebar-w: 220px;
   --list-w: 372px;
 
   /* Structural switches (Epic 2.2) */
   --rail-w: 3px; /* selection rail width — zero in Banded */
-  --titlebar-border: 1px solid var(--color-border-pane);
   --pane-border: 1px solid var(--color-border-pane); /* message-list rule */
   --sidebar-border-right: var(--pane-border); /* none in Banded */
   --divider-w: 5px; /* pane resize hit area (≥4px, Epic 4.2) */
@@ -184,9 +185,7 @@
   --color-fill-avatar: transparent; /* no avatar in Hairline */
 
   /* Sidebar (Epic 5) — values from the mock's component specs */
-  --sidebar-pad-top: var(--space-20px);
-  --sidebar-wordmark-fs: var(--fs-22px);
-  --sidebar-wordmark-pad: 0 var(--space-18px) var(--space-18px);
+  --sidebar-pad-top: var(--space-10px);
   --sidebar-label-fs: var(--fs-10px);
   --sidebar-label-pad: 0 var(--space-18px) var(--space-8px);
   --sidebar-accounts-label-pad: var(--space-22px) var(--space-18px)
@@ -306,15 +305,11 @@
   --lh-body: 1.7;
 
   /* Chrome metrics */
-  --titlebar-h: 44px;
-  --titlebar-pad-x: var(--space-16px);
-  --titlebar-app-offset: var(--space-14px);
   --sidebar-w: 232px;
   --list-w: 384px;
 
   /* Structural switches */
   --rail-w: 0px; /* no rail in Banded */
-  --titlebar-border: none;
   --pane-border: 1px solid var(--color-border-pane);
   --sidebar-border-right: none; /* no rule on the sidebar in Banded */
   --divider-w: 5px;
@@ -356,9 +351,7 @@
   --color-fill-avatar: #dfe5f7;
 
   /* Sidebar (Epic 5) — values from the mock's component specs */
-  --sidebar-pad-top: var(--space-24px);
-  --sidebar-wordmark-fs: var(--fs-24px);
-  --sidebar-wordmark-pad: 0 var(--space-20px) var(--space-20px);
+  --sidebar-pad-top: var(--space-12px);
   --sidebar-label-fs: var(--fs-11px);
   --sidebar-label-pad: 0 var(--space-20px) var(--space-10px);
   --sidebar-accounts-label-pad: var(--space-24px) var(--space-20px)

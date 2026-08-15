@@ -78,7 +78,6 @@ export default {
     "--lh-body": "1.65",
 
     // Chrome metrics
-    "--titlebar-h": "40px",
     "--sidebar-w": "220px",
     "--list-w": "372px",
 
@@ -113,7 +112,6 @@ export default {
     "--lh-body": "1.7",
 
     // Chrome metrics
-    "--titlebar-h": "44px",
     "--sidebar-w": "232px",
     "--list-w": "384px",
 

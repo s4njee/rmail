@@ -50,6 +50,34 @@ export function openSettings(): void {
 
 export function closeSettings(): void {
   setSettingsOpen(false);
+  // ⌘, always reopens at General — a section chosen by a nudge/banner must not
+  // stick for the next manual open.
+  setSettingsSection("general");
+}
+
+/** Sections of the Settings view. Kept in sync with Settings.tsx. */
+export type SettingsSectionId =
+  | "general"
+  | "notifications"
+  | "accounts"
+  | "signatures"
+  | "rules"
+  | "appearance"
+  | "calendar"
+  | "contacts"
+  | "diagnostics";
+
+const [settingsSection, setSettingsSection] =
+  createSignal<SettingsSectionId>("general");
+
+export function useSettingsSection(): () => SettingsSectionId {
+  return settingsSection;
+}
+
+/** Open Settings straight at a section (e.g. the diagnostics nudge banner). */
+export function openSettingsAt(section: SettingsSectionId): void {
+  setSettingsSection(section);
+  openSettings();
 }
 
 // Section: Mail or Calendar (Epic 14.6) — a sidebar-level switch.

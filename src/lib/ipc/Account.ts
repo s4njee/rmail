@@ -41,4 +41,8 @@ tls: boolean,
  * Number of folders the account has configured (0 = not shown in the
  * Settings detail line).
  */
-folder_count: number, };
+folder_count: number, 
+/**
+ * Last sync or connection error message, if any.
+ */
+last_error: string | null, };

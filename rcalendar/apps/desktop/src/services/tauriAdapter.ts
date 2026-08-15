@@ -5,7 +5,7 @@
  * never imports `@tauri-apps/api` (plan.md §8).
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from "@tauri-apps/api/core";
 import {
   Account,
   AccountKind,
@@ -17,15 +17,15 @@ import {
   OccurrenceItem,
   SearchResults,
   Task,
-} from '@rcalendar/ui';
+} from "@rcalendar/ui";
 
 interface RustAccount {
   id: string;
-  kind: 'local' | 'google' | 'caldav';
+  kind: "local" | "google" | "caldav";
   display_name: string;
   detail: string;
   last_synced_at?: string | null;
-  status: 'idle' | 'syncing' | 'error';
+  status: "idle" | "syncing" | "error";
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
@@ -141,7 +141,8 @@ function mapTask(r: RustTask): Task {
 
 export class TauriCalendarDataSource implements CalendarDataSource {
   async listAccounts(): Promise<{ account: Account; calendars: Calendar[] }[]> {
-    const raw = await invoke<{ account: RustAccount; calendars: RustCalendar[] }[]>('list_accounts');
+    const raw =
+      await invoke<{ account: RustAccount; calendars: RustCalendar[] }[]>("list_accounts");
     return raw.map((item) => ({
       account: mapAccount(item.account),
       calendars: item.calendars.map(mapCalendar),
@@ -154,11 +155,15 @@ export class TauriCalendarDataSource implements CalendarDataSource {
   }
 
   async setCalendarEnabled(calendarId: string, enabled: boolean): Promise<void> {
-    await invoke('set_calendar_enabled', { calendarId, enabled });
+    await invoke("set_calendar_enabled", { calendarId, enabled });
   }
 
-  async listOccurrences(from: string, to: string, calendarIds?: string[]): Promise<OccurrenceItem[]> {
-    const raw = await invoke<RustOccurrenceItem[]>('list_occurrences', {
+  async listOccurrences(
+    from: string,
+    to: string,
+    calendarIds?: string[],
+  ): Promise<OccurrenceItem[]> {
+    const raw = await invoke<RustOccurrenceItem[]>("list_occurrences", {
       from,
       to,
       calendarIds: calendarIds || null,
@@ -175,7 +180,7 @@ export class TauriCalendarDataSource implements CalendarDataSource {
   }
 
   async getEvent(id: string): Promise<Event | null> {
-    const raw = await invoke<RustEvent | null>('get_event', { id });
+    const raw = await invoke<RustEvent | null>("get_event", { id });
     return raw ? mapEvent(raw) : null;
   }
 
@@ -196,7 +201,7 @@ export class TauriCalendarDataSource implements CalendarDataSource {
       tz: draft.tz || null,
       rrule: draft.rrule || null,
     };
-    const raw = await invoke<RustEvent[]>('save_event', {
+    const raw = await invoke<RustEvent[]>("save_event", {
       draft: rustDraft,
       id: id || null,
       scope: scope || null,
@@ -206,7 +211,7 @@ export class TauriCalendarDataSource implements CalendarDataSource {
   }
 
   async deleteEvent(id: string, scope?: EditScope, targetDate?: string): Promise<Event[]> {
-    const raw = await invoke<RustEvent[]>('delete_event', {
+    const raw = await invoke<RustEvent[]>("delete_event", {
       id,
       scope: scope || null,
       targetDate: targetDate || null,
@@ -215,7 +220,7 @@ export class TauriCalendarDataSource implements CalendarDataSource {
   }
 
   async listTasks(from?: string, to?: string): Promise<Task[]> {
-    const raw = await invoke<RustTask[]>('list_tasks', {
+    const raw = await invoke<RustTask[]>("list_tasks", {
       from: from || null,
       to: to || null,
     });
@@ -223,12 +228,16 @@ export class TauriCalendarDataSource implements CalendarDataSource {
   }
 
   async toggleTask(id: string): Promise<Task> {
-    const raw = await invoke<RustTask>('toggle_task', { id });
+    const raw = await invoke<RustTask>("toggle_task", { id });
     return mapTask(raw);
   }
 
   async search(query: string): Promise<SearchResults> {
-    const raw = await invoke<{ events: RustEvent[]; tasks: RustTask[]; matched_date?: string | null }>('search', {
+    const raw = await invoke<{
+      events: RustEvent[];
+      tasks: RustTask[];
+      matched_date?: string | null;
+    }>("search", {
       query,
     });
     return {
@@ -239,13 +248,13 @@ export class TauriCalendarDataSource implements CalendarDataSource {
   }
 
   async exportIcs(calendarId?: string): Promise<string> {
-    return invoke<string>('export_ics', {
+    return invoke<string>("export_ics", {
       calendarId: calendarId || null,
     });
   }
 
   async importIcs(calendarId: string, icsContent: string): Promise<Event[]> {
-    const raw = await invoke<RustEvent[]>('import_ics', {
+    const raw = await invoke<RustEvent[]>("import_ics", {
       calendarId,
       icsContent,
     });
@@ -257,7 +266,7 @@ export class TauriCalendarDataSource implements CalendarDataSource {
     displayName: string;
     detail: string;
   }): Promise<{ account: Account; calendars: Calendar[] }> {
-    const raw = await invoke<{ account: RustAccount; calendars: RustCalendar[] }>('add_account', {
+    const raw = await invoke<{ account: RustAccount; calendars: RustCalendar[] }>("add_account", {
       spec: {
         kind: spec.kind,
         display_name: spec.displayName,
@@ -275,7 +284,7 @@ export class TauriCalendarDataSource implements CalendarDataSource {
     token: string,
   ): Promise<{ account: Account; calendars: Calendar[] }> {
     const raw = await invoke<{ account: RustAccount; calendars: RustCalendar[] }>(
-      'connect_google_account',
+      "connect_google_account",
       {
         email,
         token,
@@ -298,7 +307,7 @@ export class TauriCalendarDataSource implements CalendarDataSource {
       synced_at: string;
       success: boolean;
       message: string;
-    }>('sync_account', {
+    }>("sync_account", {
       accountId,
     });
     return {
@@ -310,10 +319,8 @@ export class TauriCalendarDataSource implements CalendarDataSource {
   }
 
   async setSyncInterval(minutes: number): Promise<void> {
-    await invoke<void>('set_sync_interval', {
+    await invoke<void>("set_sync_interval", {
       minutes,
     });
   }
 }
-
-

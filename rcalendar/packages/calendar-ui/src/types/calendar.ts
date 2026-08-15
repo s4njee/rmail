@@ -7,11 +7,11 @@
  * desktop app wires it to Tauri commands (M3), another web app to its own API.
  */
 
-export type ViewMode = 'Month' | 'Week' | '3-day' | 'Day' | 'Agenda';
+export type ViewMode = "Month" | "Week" | "3-day" | "Day" | "Agenda" | "Year";
 
-export type AccountKind = 'local' | 'google' | 'caldav';
-export type AccountStatus = 'idle' | 'syncing' | 'error';
-export type EditScope = 'this' | 'future' | 'all';
+export type AccountKind = "local" | "google" | "caldav";
+export type AccountStatus = "idle" | "syncing" | "error";
+export type EditScope = "this" | "future" | "all";
 
 /** An Account owning calendars. */
 export interface Account {
@@ -34,6 +34,8 @@ export interface Calendar {
   color: string;
   enabled: boolean;
   eventCount: number;
+  /** Read-only calendars (subscriptions, shared) can't be edited (P1.4). */
+  readOnly?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -47,11 +49,14 @@ export interface Event {
   location?: string | null;
   notes?: string | null;
   startsAt: string; // ISO 8601 UTC
-  endsAt: string;   // ISO 8601 UTC
+  endsAt: string; // ISO 8601 UTC
   allDay: boolean;
   tz?: string | null;
   rrule?: string | null;
   exdates?: string[];
+  travelTimeMinutes?: number | null;
+  /** Per-event color override — falls back to the calendar color (P1.4). */
+  color?: string | null;
   etag?: string | null;
   createdAt?: string;
   updatedAt?: string;
@@ -103,6 +108,9 @@ export interface EventDraft {
   allDay: boolean;
   tz?: string | null;
   rrule?: string | null;
+  travelTimeMinutes?: number | null;
+  /** Per-event color override (P1.4). */
+  color?: string | null;
 }
 
 /** Search results payload. */
@@ -136,11 +144,17 @@ export interface CalendarDataSource {
   search(query: string): Promise<SearchResults>;
   exportIcs(calendarId?: string): Promise<string>;
   importIcs(calendarId: string, icsContent: string): Promise<Event[]>;
-  addAccount(spec: { kind: AccountKind; displayName: string; detail: string }): Promise<{ account: Account; calendars: Calendar[] }>;
-  connectGoogleAccount(email: string, token: string): Promise<{ account: Account; calendars: Calendar[] }>;
-  syncAccount(accountId: string): Promise<{ accountId: string; syncedAt: string; success: boolean; message: string }>;
+  addAccount(spec: {
+    kind: AccountKind;
+    displayName: string;
+    detail: string;
+  }): Promise<{ account: Account; calendars: Calendar[] }>;
+  connectGoogleAccount(
+    email: string,
+    token: string,
+  ): Promise<{ account: Account; calendars: Calendar[] }>;
+  syncAccount(
+    accountId: string,
+  ): Promise<{ accountId: string; syncedAt: string; success: boolean; message: string }>;
   setSyncInterval(minutes: number): Promise<void>;
 }
-
-
-

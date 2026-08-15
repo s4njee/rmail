@@ -25,7 +25,7 @@ fn settings_path(app: &AppHandle) -> Result<PathBuf, tauri::Error> {
 
 /// Missing or corrupt settings fall back silently to [`AppSettings::default`]
 /// (Hairline).
-fn load(app: &AppHandle) -> AppSettings {
+pub(crate) fn load(app: &AppHandle) -> AppSettings {
     let Ok(path) = settings_path(app) else {
         return AppSettings::default();
     };
@@ -35,7 +35,7 @@ fn load(app: &AppHandle) -> AppSettings {
     serde_json::from_str(&contents).unwrap_or_default()
 }
 
-fn save(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
+pub(crate) fn save(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
     let path = settings_path(app).map_err(|e| e.to_string())?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -60,6 +60,11 @@ pub fn set_settings(app: AppHandle, mut settings: AppSettings) -> Result<(), Str
     settings.list_width = settings
         .list_width
         .map(|w| w.clamp(LIST_WIDTH_MIN, LIST_WIDTH_MAX));
+    // An unknown log level from a hand-edited settings.json must not silently
+    // become the default on write — normalize to "info" instead.
+    if !crate::diagnostics::is_valid_log_level(&settings.log_level) {
+        settings.log_level = "info".to_string();
+    }
     save(&app, &settings)
 }
 

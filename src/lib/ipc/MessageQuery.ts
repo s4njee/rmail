@@ -4,4 +4,4 @@
  * List query. Filtering is by folder and/or account; the unified Inbox is a
  * query with `folder` unset.
  */
-export type MessageQuery = { folder: string | null, account_id: number | null, offset: number, limit: number, };
+export type MessageQuery = { folder: string | null, account_id: number | null, offset: number, limit: number, threaded: boolean, };

@@ -8,6 +8,8 @@ type MailBodyProps = {
   allowImages: boolean;
   /** Add the sender to the trusted-image set and re-render with images on. */
   onLoadImages: () => void;
+  /** Always trust images from this sender (Roadmap 3.7). */
+  onAlwaysTrustSender?: () => void;
   /** The iframe surfaced a link; the parent shows the destination and opens it. */
   onOpenLink: (url: string) => void;
 };
@@ -117,6 +119,32 @@ export function MailBody(props: MailBodyProps) {
 
   return (
     <div class="mail-body">
+      <Show when={props.detail.remote_image_count > 0 && !props.allowImages}>
+        <div class="mail-body__privacy-banner">
+          <span class="mail-body__privacy-text">
+            Remote images are blocked to protect your privacy.
+          </span>
+          <div class="mail-body__privacy-actions">
+            <button
+              type="button"
+              class="mail-body__load-images"
+              onClick={() => props.onLoadImages()}
+            >
+              Load images once
+            </button>
+            <Show when={props.onAlwaysTrustSender}>
+              <span class="mail-body__privacy-sep">·</span>
+              <button
+                type="button"
+                class="mail-body__load-images mail-body__trust-sender"
+                onClick={() => props.onAlwaysTrustSender?.()}
+              >
+                Always trust {props.detail.row.sender_address}
+              </button>
+            </Show>
+          </div>
+        </div>
+      </Show>
       <iframe
         ref={setFrameEl}
         class="mail-body__frame"
@@ -125,15 +153,6 @@ export function MailBody(props: MailBodyProps) {
         srcdoc={buildSrcdoc(props.detail.body_html ?? "", props.allowImages)}
         style={{ height: `${frameHeight()}px` }}
       />
-      <Show when={props.detail.remote_image_count > 0 && !props.allowImages}>
-        <button
-          type="button"
-          class="mail-body__load-images"
-          onClick={() => props.onLoadImages()}
-        >
-          Load images
-        </button>
-      </Show>
     </div>
   );
 }

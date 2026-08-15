@@ -1,8 +1,15 @@
 import { createSignal, For, Show } from "solid-js";
+import { setCalendarSyncing } from "../../lib/calendar";
+import { openContextMenu } from "../../lib/context-menu";
 import { formatBytes } from "../../lib/format";
 import type { Account } from "../../lib/ipc/Account";
-import { refreshMail, useAccounts } from "../../lib/mail";
-import { removeAccount } from "../../lib/tauri";
+import type { AccountRemovalInfo } from "../../lib/ipc/AccountRemovalInfo";
+import { openAccountEdit, refreshMail, useAccounts } from "../../lib/mail";
+import {
+  accountRemovalInfo,
+  removeAccount,
+  syncCalendar,
+} from "../../lib/tauri";
 import { useTheme } from "../../lib/theme";
 import { Modal } from "../Modal";
 import { AddAccountForm } from "./AddAccountForm";
@@ -16,6 +23,21 @@ export function AccountsSection() {
   const theme = useTheme();
   const [adding, setAdding] = createSignal(false);
   const [removing, setRemoving] = createSignal<Account | null>(null);
+  const [removalInfo, setRemovalInfo] = createSignal<AccountRemovalInfo | null>(
+    null,
+  );
+  const [removalConfirmText, setRemovalConfirmText] = createSignal("");
+  const [syncingId, setSyncingId] = createSignal<number | null>(null);
+  const [syncMsg, setSyncMsg] = createSignal<string | null>(null);
+
+  const startRemove = (account: Account) => {
+    setRemoving(account);
+    setRemovalConfirmText("");
+    setRemovalInfo(null);
+    void accountRemovalInfo(account.id)
+      .then(setRemovalInfo)
+      .catch(() => {});
+  };
 
   const confirmRemove = async () => {
     const account = removing();
@@ -24,10 +46,47 @@ export function AccountsSection() {
       await refreshMail();
     }
     setRemoving(null);
+    setRemovalInfo(null);
+  };
+
+  const handleSyncCalendar = async (accountId: number) => {
+    setSyncingId(accountId);
+    setSyncMsg(null);
+    setCalendarSyncing(true);
+    try {
+      const cols = await syncCalendar(accountId);
+      setSyncMsg(`Synced ${cols.length} calendar(s)`);
+    } catch (e) {
+      setSyncMsg(`Calendar sync failed: ${e}`);
+    } finally {
+      setSyncingId(null);
+      setCalendarSyncing(false);
+    }
+  };
+
+  // Right-click on an account row: Edit (opens the shared dialog) or Delete
+  // (reuses the existing inline confirm).
+  const openAccountMenu = (account: Account, event: MouseEvent) => {
+    event.preventDefault();
+    openContextMenu(
+      [
+        { label: "Edit account…", onSelect: () => openAccountEdit(account) },
+        {
+          label: "Delete account…",
+          danger: true,
+          onSelect: () => startRemove(account),
+        },
+      ],
+      event.clientX,
+      event.clientY,
+    );
   };
 
   return (
     <div class="settings-accounts">
+      <Show when={syncMsg()}>
+        <div class="settings-sync-msg">{syncMsg()}</div>
+      </Show>
       <For each={accounts()}>
         {(account) => {
           const detail =
@@ -35,7 +94,11 @@ export function AccountsSection() {
               ? `${account.protocol} · ${account.sync_mode} · ${account.folder_count} folders`
               : `${account.protocol} · ${account.sync_mode}`;
           return (
-            <div class="settings-row" role="listitem">
+            <div
+              class="settings-row"
+              role="listitem"
+              onContextMenu={(e) => openAccountMenu(account, e)}
+            >
               <span
                 class="settings-row__dot"
                 style={{ background: account.color }}
@@ -46,7 +109,10 @@ export function AccountsSection() {
                 <span class="settings-row__detail">
                   {detail}
                   <Show when={!account.connected}>
-                    <span class="settings-row__auth"> · auth failed</span>
+                    <span class="settings-row__auth">
+                      {" "}
+                      · {account.last_error || "not connected"}
+                    </span>
                   </Show>
                 </span>
               </span>
@@ -58,8 +124,23 @@ export function AccountsSection() {
               </span>
               <button
                 type="button"
+                class="settings-row__action"
+                onClick={() => void handleSyncCalendar(account.id)}
+                disabled={syncingId() === account.id}
+              >
+                {syncingId() === account.id ? "Syncing…" : "Sync Cal"}
+              </button>
+              <button
+                type="button"
+                class="settings-row__action"
+                onClick={() => openAccountEdit(account)}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
                 class="settings-row__remove"
-                onClick={() => setRemoving(account)}
+                onClick={() => startRemove(account)}
               >
                 Remove
               </button>
@@ -68,32 +149,71 @@ export function AccountsSection() {
         }}
       </For>
 
-      {/* Remove confirm — names exactly what will be deleted (10.4). */}
+      {/* Remove confirm (P0.2) — names exactly what is deleted, that the
+          server is untouched, and requires typing the address when unsent
+          work would be discarded. */}
       <Show when={removing()}>
-        <div
-          class="account-confirm"
-          role="alertdialog"
-          aria-label="Remove account"
-        >
-          <span class="account-confirm__text">
-            Delete local mail and calendar data for {removing()?.address}? This
-            cannot be undone.
-          </span>
-          <button
-            type="button"
-            class="btn btn--secondary"
-            onClick={() => setRemoving(null)}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            class="btn btn--primary"
-            onClick={() => void confirmRemove()}
-          >
-            Delete
-          </button>
-        </div>
+        {(account) => {
+          const info = removalInfo();
+          const hasWork =
+            (info?.queuedActions ?? 0) > 0 || (info?.drafts ?? 0) > 0;
+          return (
+            <div
+              class="account-confirm"
+              role="alertdialog"
+              aria-label="Remove account"
+            >
+              <span class="account-confirm__title">
+                Remove {account().address}?
+              </span>
+              <span class="account-confirm__text">
+                This deletes only Quill's local copy on this device — your mail
+                and calendar stay on the server untouched. Removed: the local
+                cache ({formatBytes(info?.localBytes ?? 0)}), cached
+                attachments, and the saved password
+                {account().protocol.includes("OAuth")
+                  ? " and sign-in session"
+                  : ""}{" "}
+                for this account.
+              </span>
+              <Show when={hasWork}>
+                <span class="account-confirm__text account-confirm__text--warn">
+                  You have {(info?.queuedActions ?? 0) + (info?.drafts ?? 0)}{" "}
+                  unsent or queued item(s) that will be discarded. Type the
+                  address to confirm.
+                </span>
+                <input
+                  type="text"
+                  class="account-confirm__input"
+                  value={removalConfirmText()}
+                  onInput={(e) => setRemovalConfirmText(e.currentTarget.value)}
+                  placeholder={account().address}
+                  autocomplete="off"
+                  spellcheck={false}
+                />
+              </Show>
+              <div class="account-confirm__actions">
+                <button
+                  type="button"
+                  class="btn btn--secondary"
+                  onClick={() => setRemoving(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  class="btn btn--primary"
+                  onClick={() => void confirmRemove()}
+                  disabled={
+                    hasWork && removalConfirmText().trim() !== account().address
+                  }
+                >
+                  Delete local copy
+                </button>
+              </div>
+            </div>
+          );
+        }}
       </Show>
 
       <div class="settings-footer">

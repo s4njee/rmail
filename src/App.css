@@ -35,3 +35,55 @@
 .workspace--calendar .divider {
   display: none;
 }
+
+/* "Restart to apply" banner after an update is downloaded (E2.2). */
+.update-ready {
+  position: fixed;
+  bottom: var(--space-24px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-sender);
+  color: var(--color-on-accent);
+  padding: var(--space-10px) var(--space-16px);
+  border-radius: var(--radius-control);
+  font-size: var(--fs-13px);
+  font-family: var(--font-sans);
+  z-index: 1000;
+  box-shadow: 0 var(--space-4px) var(--space-20px) rgba(0, 0, 0, 0.15);
+  animation: quill-fade-in var(--transition-fast) ease;
+}
+
+/* One-time diagnostics & privacy nudge (Roadmap E2.3) */
+.diagnostics-nudge {
+  position: fixed;
+  bottom: var(--space-24px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12px);
+  background: var(--color-chrome);
+  color: var(--color-text-primary);
+  padding: var(--space-10px) var(--space-16px);
+  border: var(--search-border);
+  border-radius: var(--radius-control);
+  font-size: var(--fs-13px);
+  font-family: var(--font-sans);
+  z-index: 1000;
+  box-shadow: 0 var(--space-4px) var(--space-20px) rgba(0, 0, 0, 0.15);
+  animation: quill-fade-in var(--transition-fast) ease;
+}
+
+.diagnostics-nudge__text {
+  max-width: 48ch;
+}
+
+.diagnostics-nudge__dismiss {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: var(--fs-15px);
+  line-height: 1;
+  cursor: pointer;
+  padding: var(--space-4px);
+}

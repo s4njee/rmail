@@ -5,13 +5,13 @@
  * without any DOM dependencies (S3.2).
  */
 
-import { OccurrenceItem } from '../types/calendar';
+import { OccurrenceItem } from "../types/calendar";
 
 export interface GridConfig {
-  startHour: number;   // e.g. 7 (07:00)
-  endHour: number;     // e.g. 21 (21:00)
-  rowPitch: number;    // e.g. 45px for Week, 47px for 3-day, 49px for Day
-  minHeight?: number;  // e.g. 20px
+  startHour: number; // e.g. 7 (07:00)
+  endHour: number; // e.g. 21 (21:00)
+  rowPitch: number; // e.g. 45px for Week, 47px for 3-day, 49px for Day
+  minHeight?: number; // e.g. 20px
 }
 
 export interface PositionedEvent {
@@ -50,11 +50,19 @@ export function computeNowLinePosition(now: Date, config: GridConfig): number | 
 export function positionEventsForDay(
   items: OccurrenceItem[],
   dayDate: Date,
-  config: GridConfig
+  config: GridConfig,
 ): PositionedEvent[] {
   // Filter only timed events matching dayDate
   const dayStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 0, 0, 0);
-  const dayEnd = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 23, 59, 59, 999);
+  const dayEnd = new Date(
+    dayDate.getFullYear(),
+    dayDate.getMonth(),
+    dayDate.getDate(),
+    23,
+    59,
+    59,
+    999,
+  );
 
   const timed = items.filter((item) => {
     if (item.occurrence.allDay || item.event.allDay) return false;
@@ -144,4 +152,66 @@ export function positionEventsForDay(
       durationHours: e.durationHours,
     };
   });
+}
+
+/** Event ids whose [start, end) overlaps another timed event on the same day
+ * (P1.4 conflict detection). */
+export function findConflictingEventIds(
+  items: OccurrenceItem[],
+  dayDate: Date,
+): Set<string> {
+  const dayStart = new Date(
+    dayDate.getFullYear(),
+    dayDate.getMonth(),
+    dayDate.getDate(),
+    0,
+    0,
+    0,
+  ).getTime();
+  const dayEnd = new Date(
+    dayDate.getFullYear(),
+    dayDate.getMonth(),
+    dayDate.getDate(),
+    23,
+    59,
+    59,
+    999,
+  ).getTime();
+
+  const timed = items
+    .filter((item) => {
+      if (item.occurrence.allDay || item.event.allDay) return false;
+      const start = new Date(item.occurrence.startsAt).getTime();
+      const end = new Date(item.occurrence.endsAt).getTime();
+      return start <= dayEnd && end >= dayStart;
+    })
+    .map((item) => ({
+      id: item.event.id,
+      start: new Date(item.occurrence.startsAt).getTime(),
+      end: new Date(item.occurrence.endsAt).getTime(),
+    }));
+
+  const conflicts = new Set<string>();
+  for (let i = 0; i < timed.length; i++) {
+    for (let j = i + 1; j < timed.length; j++) {
+      const a = timed[i];
+      const b = timed[j];
+      if (a.start < b.end && b.start < a.end) {
+        conflicts.add(a.id);
+        conflicts.add(b.id);
+      }
+    }
+  }
+  return conflicts;
+}
+
+/** True when `date` falls inside the working-hours window (hours are 0-23).
+ * No window → always within (no shading). */
+export function isWithinWorkingHours(
+  date: Date,
+  workingHours?: { start: number; end: number },
+): boolean {
+  if (!workingHours) return true;
+  const h = date.getHours() + date.getMinutes() / 60;
+  return h >= workingHours.start && h < workingHours.end;
 }

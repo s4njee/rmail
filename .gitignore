@@ -8,3 +8,6 @@ target
 scratch
 .vite
 .pnpm-store
+
+# Local OAuth test credentials (see oauth-config.example.json)
+oauth-config.json

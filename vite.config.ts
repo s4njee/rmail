@@ -12,7 +12,10 @@ export default defineConfig(async () => ({
   plugins: [solid()],
   resolve: {
     alias: {
-      "@rcalendar/ui/tokens.css": path.resolve(calendarUiDir, "src/tokens/tokens.css"),
+      "@rcalendar/ui/tokens.css": path.resolve(
+        calendarUiDir,
+        "src/tokens/tokens.css",
+      ),
       "@rcalendar/ui": path.resolve(calendarUiDir, "src/index.ts"),
     },
   },
@@ -23,14 +26,14 @@ export default defineConfig(async () => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
-    port: 1420,
+    port: 1422,
     strictPort: true,
     host: host || false,
     hmr: host
       ? {
           protocol: "ws",
           host,
-          port: 1421,
+          port: 1423,
         }
       : undefined,
     watch: {

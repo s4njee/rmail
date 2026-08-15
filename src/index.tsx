@@ -1,9 +1,14 @@
 /* @refresh reload */
 import { render } from "solid-js/web";
 import App from "./App";
+import { initTelemetry } from "./lib/telemetry";
 import "./styles/fonts.css";
 import "./styles/tokens.css";
 import "./styles/global.css";
+
+// JS error capture + console→log bridge (Roadmap E2.3): must be installed
+// before the app renders so errors during first paint are recorded.
+initTelemetry();
 
 // The app is not a document: suppress the webview's right-click browser
 // context menu (Epic 1.4). Editable elements keep theirs, so Cut/Copy/Paste

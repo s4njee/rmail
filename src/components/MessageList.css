@@ -36,12 +36,96 @@
   color: var(--list-accounts-color);
 }
 
+.list-scope {
+  font-size: var(--fs-12px);
+  color: var(--color-text-muted);
+}
+
+.list-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.list-search__clear {
+  position: absolute;
+  right: var(--space-8px);
+  background: transparent;
+  border: none;
+  font-size: var(--fs-14px);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.list-search__clear:hover {
+  color: var(--color-text-body);
+}
+
+/* P1.3 saved-search inline form */
+.list-search-save-btn {
+  flex: none;
+  margin-left: var(--space-8px);
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: var(--fs-11px);
+  cursor: pointer;
+  padding: var(--space-2px) var(--space-4px);
+}
+
+.list-search-save-btn:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.list-search-save {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4px);
+  margin-left: var(--space-8px);
+  flex: none;
+  max-width: 100%;
+}
+
+.list-search-save input {
+  width: var(--size-240px);
+  max-width: 100%;
+  border: var(--search-border);
+  background: var(--color-reading);
+  border-radius: var(--radius-control);
+  padding: var(--size-5px) var(--space-8px);
+  font-size: var(--fs-12px);
+  color: var(--color-text-primary);
+}
+
+.list-search-save__btn {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: var(--fs-11px);
+  cursor: pointer;
+  padding: var(--space-2px) var(--space-2px);
+}
+
+.list-search-save__btn:hover:not(:disabled) {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.list-search-save__btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .list-search {
   width: 100%;
   background: var(--search-bg);
   border: var(--search-border);
   border-radius: var(--radius-field);
   padding: var(--search-pad);
+  padding-right: var(--space-24px);
   font-family: var(--font-sans);
   font-size: var(--fs-13px);
   color: var(--color-text-body-soft);
@@ -62,7 +146,91 @@
 
 .message-list__scroll:focus-visible {
   outline: var(--space-2px) solid var(--color-selection);
-  outline-offset: -2px;
+  outline-offset: calc(-1 * var(--space-2px));
+}
+
+.search-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2px);
+  padding: var(--space-4px) 0;
+}
+
+.search-match {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2px);
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-bottom: var(--list-row-border);
+  padding: var(--space-8px) var(--space-10px);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  border-radius: var(--radius-field);
+}
+
+.search-match:hover {
+  background: var(--color-fill-hover);
+}
+
+.search-match.is-selected {
+  background: var(--color-fill-selected);
+}
+
+.search-match__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8px);
+}
+
+.search-match__title {
+  font-size: var(--fs-13px);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.search-match__kind {
+  font-size: var(--fs-10px);
+  text-transform: uppercase;
+  padding: var(--space-2px) var(--space-4px);
+  border-radius: var(--radius-2px);
+  background: var(--color-chrome);
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.search-match__time {
+  font-size: var(--fs-11px);
+  color: var(--color-text-faint);
+}
+
+.search-match__subtitle {
+  font-size: var(--fs-12px);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-match__snippet {
+  font-size: var(--fs-12px);
+  color: var(--color-text-body-soft);
+  line-height: var(--lh-body);
+}
+
+.search-match__snippet mark {
+  background: var(--color-chrome);
+  color: var(--color-selection);
+  font-weight: 600;
+  border-radius: var(--radius-2px);
+  padding: 0 var(--space-2px);
 }
 
 .list-empty {

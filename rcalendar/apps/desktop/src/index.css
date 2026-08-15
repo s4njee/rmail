@@ -2,7 +2,7 @@
  * Global CSS styles and Almanac design token setup.
  */
 
-@import '../../../packages/calendar-ui/src/tokens/tokens.css';
+@import "../../../packages/calendar-ui/src/tokens/tokens.css";
 
 * {
   box-sizing: border-box;
@@ -19,13 +19,16 @@ body,
 }
 
 body {
-  font-family: var(--al-font-ui, 'Bricolage Grotesque', system-ui, -apple-system, sans-serif);
-  background: var(--al-chrome, #FAFAFA);
-  color: var(--al-ink, #1A1A1A);
+  font-family: var(--al-font-ui, "Bricolage Grotesque", system-ui, -apple-system, sans-serif);
+  background: var(--al-chrome, #fafafa);
+  color: var(--al-ink, #1a1a1a);
   -webkit-font-smoothing: antialiased;
 }
 
-button, input, select, textarea {
+button,
+input,
+select,
+textarea {
   font-family: inherit;
   color: inherit;
 }

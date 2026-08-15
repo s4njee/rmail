@@ -1,6 +1,7 @@
 # Handoff: Almanac — desktop calendar (Rust / Tauri)
 
 ## Overview
+
 Almanac is a full-featured desktop calendar for personal and school life: five calendar
 views, multiple calendars with colors, recurring events, reminders, tasks, and CalDAV /
 Google sync. This bundle documents seven screens covering the whole surface of the app.
@@ -9,6 +10,7 @@ Target shell: **Tauri 2.x** with a Rust backend and a local SQLite store. The wi
 **frameless** — the app draws its own titlebar, including window controls.
 
 ## About the Design Files
+
 The files in this bundle are **design references created in HTML**. They are prototypes
 that show intended look, layout and content — **not production code to copy directly**.
 
@@ -21,68 +23,73 @@ The HTML uses a streaming component format with inline styles only. Read it as a
 specification of geometry and color, not as an architecture to mirror.
 
 ## Fidelity
+
 **High-fidelity.** Colors, typography, spacing and copy are final. Recreate the UI closely
 using the codebase's own libraries. Interaction states beyond the ones listed below
 (drag-to-create, keyboard navigation, virtualized scrolling) are **not** designed and are
 left to implementation judgement.
 
 All screens are drawn at a fixed **1440 × 900** window. Responsive rules are not designed;
-see *Responsive behavior* for the intended stretch/collapse order.
+see _Responsive behavior_ for the intended stretch/collapse order.
 
 ---
 
 ## Design Tokens
 
 ### Neutrals (grey, no warm tint)
-| Token | Hex | Use |
-| --- | --- | --- |
-| `desk` | #E4E4E4 | Canvas behind the window (presentation only) |
-| `chrome` | #FAFAFA | Titlebar background, window base |
-| `sidebar` | #F4F4F4 | Left sidebar, settings nav |
-| `surface` | #FFFFFF | Main content panes, cards, popovers |
-| `surface-2` | #FBFBFB | Right rail, card headers, footer bars |
-| `surface-3` | #FCFCFC | Month weekday header strip, all-day band |
-| `segment-track` | #EDEDED / #E4E4E4 | Segmented-control track (settings / titlebar) |
-| `border` | #E0E0E0 | Input borders, sidebar divider, button outlines |
-| `border-soft` | #E5E5E5 | Header rules, card outlines |
-| `grid` | #EBEBEB | Calendar cell borders, column separators |
-| `grid-hour` | #F2F2F2 | Hour lines inside time grids |
-| `ink` | #1A1A1A | Primary text |
-| `ink-event` | #232323 / #262626 | Event block titles / month chip titles |
-| `ink-2` | #424242 | Mini-month date numbers |
-| `ink-3` | #575757 | Body copy in modal |
-| `ink-4` | #666666 | Secondary body copy, place names |
-| `ink-5` | #777777 | Inactive segment labels, arrows |
-| `ink-6` | #888888 | Meta text, window controls |
-| `ink-7` | #A0A0A0 | Section labels, muted mono |
-| `ink-8` | #B3B3B3 | Hour labels |
-| `ink-9` | #BFBFBF | Disabled / out-of-month dates |
-| `dashed` | #CACACA | Dashed "add" affordances |
-| `track-off` | #D9D9D9 | Toggle track, off |
+
+| Token           | Hex               | Use                                             |
+| --------------- | ----------------- | ----------------------------------------------- |
+| `desk`          | #E4E4E4           | Canvas behind the window (presentation only)    |
+| `chrome`        | #FAFAFA           | Titlebar background, window base                |
+| `sidebar`       | #F4F4F4           | Left sidebar, settings nav                      |
+| `surface`       | #FFFFFF           | Main content panes, cards, popovers             |
+| `surface-2`     | #FBFBFB           | Right rail, card headers, footer bars           |
+| `surface-3`     | #FCFCFC           | Month weekday header strip, all-day band        |
+| `segment-track` | #EDEDED / #E4E4E4 | Segmented-control track (settings / titlebar)   |
+| `border`        | #E0E0E0           | Input borders, sidebar divider, button outlines |
+| `border-soft`   | #E5E5E5           | Header rules, card outlines                     |
+| `grid`          | #EBEBEB           | Calendar cell borders, column separators        |
+| `grid-hour`     | #F2F2F2           | Hour lines inside time grids                    |
+| `ink`           | #1A1A1A           | Primary text                                    |
+| `ink-event`     | #232323 / #262626 | Event block titles / month chip titles          |
+| `ink-2`         | #424242           | Mini-month date numbers                         |
+| `ink-3`         | #575757           | Body copy in modal                              |
+| `ink-4`         | #666666           | Secondary body copy, place names                |
+| `ink-5`         | #777777           | Inactive segment labels, arrows                 |
+| `ink-6`         | #888888           | Meta text, window controls                      |
+| `ink-7`         | #A0A0A0           | Section labels, muted mono                      |
+| `ink-8`         | #B3B3B3           | Hour labels                                     |
+| `ink-9`         | #BFBFBF           | Disabled / out-of-month dates                   |
+| `dashed`        | #CACACA           | Dashed "add" affordances                        |
+| `track-off`     | #D9D9D9           | Toggle track, off                               |
 
 ### Accent
-| Token | Hex | Use |
-| --- | --- | --- |
-| `accent` | #1F6FEB | Today, selection, primary button, now-line, active repeat days |
-| `accent-tint` | #E4EBF8 | Reminder chips, selected mini-month day |
-| `today-wash` | #FBFCFE | Today's month cell / week column header |
-| `today-wash-2` | #FDFDFE | Today's week column body |
+
+| Token          | Hex     | Use                                                            |
+| -------------- | ------- | -------------------------------------------------------------- |
+| `accent`       | #1F6FEB | Today, selection, primary button, now-line, active repeat days |
+| `accent-tint`  | #E4EBF8 | Reminder chips, selected mini-month day                        |
+| `today-wash`   | #FBFCFE | Today's month cell / week column header                        |
+| `today-wash-2` | #FDFDFE | Today's week column body                                       |
 
 ### Calendar colors
+
 Each calendar has a solid color, a 10% tint for event fills, and a name.
 
-| Calendar | Color | Tint |
-| --- | --- | --- |
-| Classes | #C2410C | rgba(194,65,12,0.10) |
-| Personal | #1F6FEB | rgba(31,111,235,0.10) |
-| Work shifts | #0F766E | rgba(15,118,110,0.10) |
-| Birthdays | #7C5CBF | rgba(124,92,191,0.10) |
-| Home | #A16207 | rgba(161,98,7,0.10) |
-| US Holidays (off) | #888888 | — |
+| Calendar          | Color   | Tint                  |
+| ----------------- | ------- | --------------------- |
+| Classes           | #C2410C | rgba(194,65,12,0.10)  |
+| Personal          | #1F6FEB | rgba(31,111,235,0.10) |
+| Work shifts       | #0F766E | rgba(15,118,110,0.10) |
+| Birthdays         | #7C5CBF | rgba(124,92,191,0.10) |
+| Home              | #A16207 | rgba(161,98,7,0.10)   |
+| US Holidays (off) | #888888 | —                     |
 
 A disabled calendar renders its swatch as #BFBFBF and its label as #A0A0A0.
 
 ### Typography
+
 Two families, both Google Fonts:
 
 ```
@@ -90,52 +97,56 @@ Bricolage Grotesque — opsz 12..96, wght 300..700   (all UI text, display numer
 DM Mono            — wght 300;400;500              (times, dates, counts, labels, shortcuts)
 ```
 
-| Role | Family | Size | Weight | Tracking |
-| --- | --- | --- | --- | --- |
-| Month title ("August") | Bricolage | 42px | 500 | -0.03em |
-| Week / view title | Bricolage | 34px | 500 | -0.03em |
-| Settings pane title | Bricolage | 32px | 500 | -0.03em |
-| Day-view numeral ("13") | Bricolage | 76px | 400 | -0.045em |
-| Agenda date numeral | Bricolage | 46px | 400 | -0.045em, line-height 0.82 |
-| Modal title | Bricolage | 26px | 500 | -0.025em |
-| Day-view weekday | Bricolage | 22px | 500 | -0.02em |
-| Week column date | Bricolage | 19px | 500 | -0.02em |
-| 3-day column date | Bricolage | 24px | 500 | -0.02em |
-| Account name | Bricolage | 14.5px | 500 | -0.01em |
-| Agenda row title | Bricolage | 14px | 400 | — |
-| Body / list item | Bricolage | 12.5–13px | 400–500 | — |
-| Event block title (week) | Bricolage | 11.5px | 500 | line-height 1.25 |
-| Event block title (3-day) | Bricolage | 13px | 500 | — |
-| Event block title (day) | Bricolage | 15px | 500 | -0.01em |
-| Month chip title | Bricolage | 11px | 400 | — |
-| Year suffix ("2026") | DM Mono | 20px / 17px / 15px | 400 | — |
-| Time on event block | DM Mono | 9.5px (week) / 10px (3-day) / 11px (day) | 400 | — |
-| Hour gutter | DM Mono | 10px / 10.5px / 11px | 400 | — |
-| Section label (CALENDARS, TASKS…) | DM Mono | 9.5px | 400 | 0.12em, uppercase |
-| Field label (WHEN, REPEATS…) | DM Mono | 10px | 400 | 0.08em, uppercase |
-| Weekday header (SUN…) | DM Mono | 9.5px | 400 | 0.12em |
-| Calendar-name tag in agenda | DM Mono | 9.5px | 400 | 0.06em, uppercase |
+| Role                              | Family    | Size                                     | Weight  | Tracking                   |
+| --------------------------------- | --------- | ---------------------------------------- | ------- | -------------------------- |
+| Month title ("August")            | Bricolage | 42px                                     | 500     | -0.03em                    |
+| Week / view title                 | Bricolage | 34px                                     | 500     | -0.03em                    |
+| Settings pane title               | Bricolage | 32px                                     | 500     | -0.03em                    |
+| Day-view numeral ("13")           | Bricolage | 76px                                     | 400     | -0.045em                   |
+| Agenda date numeral               | Bricolage | 46px                                     | 400     | -0.045em, line-height 0.82 |
+| Modal title                       | Bricolage | 26px                                     | 500     | -0.025em                   |
+| Day-view weekday                  | Bricolage | 22px                                     | 500     | -0.02em                    |
+| Week column date                  | Bricolage | 19px                                     | 500     | -0.02em                    |
+| 3-day column date                 | Bricolage | 24px                                     | 500     | -0.02em                    |
+| Account name                      | Bricolage | 14.5px                                   | 500     | -0.01em                    |
+| Agenda row title                  | Bricolage | 14px                                     | 400     | —                          |
+| Body / list item                  | Bricolage | 12.5–13px                                | 400–500 | —                          |
+| Event block title (week)          | Bricolage | 11.5px                                   | 500     | line-height 1.25           |
+| Event block title (3-day)         | Bricolage | 13px                                     | 500     | —                          |
+| Event block title (day)           | Bricolage | 15px                                     | 500     | -0.01em                    |
+| Month chip title                  | Bricolage | 11px                                     | 400     | —                          |
+| Year suffix ("2026")              | DM Mono   | 20px / 17px / 15px                       | 400     | —                          |
+| Time on event block               | DM Mono   | 9.5px (week) / 10px (3-day) / 11px (day) | 400     | —                          |
+| Hour gutter                       | DM Mono   | 10px / 10.5px / 11px                     | 400     | —                          |
+| Section label (CALENDARS, TASKS…) | DM Mono   | 9.5px                                    | 400     | 0.12em, uppercase          |
+| Field label (WHEN, REPEATS…)      | DM Mono   | 10px                                     | 400     | 0.08em, uppercase          |
+| Weekday header (SUN…)             | DM Mono   | 9.5px                                    | 400     | 0.12em                     |
+| Calendar-name tag in agenda       | DM Mono   | 9.5px                                    | 400     | 0.06em, uppercase          |
 
 ### Radius
+
 2px (bar caps) · 3px (small swatch) · 3.5px (mini-month swatch) · 5px (month chip) ·
 6px (week event, mini-month cell, date pill, segment item) · 7px (nav row, agenda row,
 repeat-day) · 8px (button, input, pill) · 9px (day event, segment track, account avatar) ·
 10–15px (toggle / chip, fully round) · 11px (account card) · 12px (window) · 14px (modal)
 
 ### Shadow
-| Name | Value |
-| --- | --- |
-| window | `0 24px 60px -18px rgba(0,0,0,0.34), 0 0 0 1px rgba(0,0,0,0.08)` |
-| modal | `0 40px 80px -20px rgba(0,0,0,0.5)` |
-| segment active | `0 1px 2px rgba(0,0,0,0.10)` |
-| event block (week/3-day) | `0 1px 2px rgba(0,0,0,0.05)` |
-| event block (day) | `0 1px 3px rgba(0,0,0,0.06)` |
+
+| Name                     | Value                                                            |
+| ------------------------ | ---------------------------------------------------------------- |
+| window                   | `0 24px 60px -18px rgba(0,0,0,0.34), 0 0 0 1px rgba(0,0,0,0.08)` |
+| modal                    | `0 40px 80px -20px rgba(0,0,0,0.5)`                              |
+| segment active           | `0 1px 2px rgba(0,0,0,0.10)`                                     |
+| event block (week/3-day) | `0 1px 2px rgba(0,0,0,0.05)`                                     |
+| event block (day)        | `0 1px 3px rgba(0,0,0,0.06)`                                     |
 
 ### Spacing
+
 4px base. Common: 2, 3, 5, 7, 9, 10, 12, 14, 16, 18, 20, 26, 34, 40px.
 Pane padding: sidebar 18px, main header 26px, agenda 34px, settings 40px.
 
 ### Modal scrim
+
 `rgba(0,0,0,0.34)`, covering everything **below the titlebar** (inset 52px 0 0 0) so the
 window chrome stays live.
 
@@ -144,6 +155,7 @@ window chrome stays live.
 ## Shared Chrome
 
 ### Titlebar — 52px, full width
+
 Background #FAFAFA, 1px bottom border #E0E0E0. Whole bar is the OS drag region except the
 interactive controls. Left→right, 14px gaps, 0 14px padding:
 
@@ -165,6 +177,7 @@ Active view per screen: Month → Month, Week → Week, 3-day → 3-day, Day →
 Agenda → Agenda, Event editor → Week, Settings → Month.
 
 ### Sidebar — 264px, full height
+
 #F4F4F4, 1px right border #E0E0E0. Column of four blocks separated by 1px #E0E0E0 rules
 inset 18px:
 
@@ -185,8 +198,8 @@ inset 18px:
    - open: ring #B3B3B3, title #1A1A1A, meta #A0A0A0
    - overdue: ring #C2410C, meta #C2410C
    - done: ring and fill #BFBFBF, title #A0A0A0 with line-through
-   Rows: "Lab report — draft 2 / Due today · 17:00" (overdue) · "Read Ch. 4–6, Stats /
-   Tomorrow" · "Renew bus pass / Sat 15 Aug" · "Email advisor / Done 11:20" (done).
+     Rows: "Lab report — draft 2 / Due today · 17:00" (overdue) · "Read Ch. 4–6, Stats /
+     Tomorrow" · "Renew bus pass / Sat 15 Aug" · "Email advisor / Done 11:20" (done).
 4. **Sync footer** (13px 18px, 1px top border) — 7px #0F766E dot, "3 accounts synced"
    11.5px/500 over "last 2 min ago" DM Mono 9.5px #A0A0A0, and a vertical 3-dot menu
    (3 × 3px #A0A0A0 dots, 2.5px gaps) on the right.
@@ -196,6 +209,7 @@ inset 18px:
 ## Screens
 
 ### 01 — Month
+
 **Purpose:** default view; scan the month, spot overflow days, jump to a date.
 
 **Layout:** titlebar 52 → row [sidebar 264 | main 1176]. Main is a column:
@@ -228,6 +242,7 @@ birthday · 17 Move-in day · 18 Orientation · 19 Textbook pickup · 20 Intro B
 29 Beach day · 31 Rent due.
 
 ### 02 — Week
+
 **Purpose:** the working view — see the shape of the week and the current moment.
 
 **Layout:** header 78 → column header 52 → all-day band 40 → time grid (fills).
@@ -252,6 +267,7 @@ birthday · 17 Move-in day · 18 Orientation · 19 Textbook pickup · 20 Intro B
   with an 8px #1F6FEB dot at `left:-4px`.
 
 **Content (start, hours, title, calendar, place):**
+
 - Sun 9 — 9:30 1h Long run (Personal, Burke-Gilman) · 15:00 1.5h Meal prep (Home, Kitchen)
 - Mon 10 — 8:00 1h Gym — legs (Personal, IMA) · 10:00 1.5h Stats 101 (Classes, Kane 210) ·
   13:00 0.5h Registration opens (Classes, Online) · 16:30 4h Work shift (Work, Campus store)
@@ -269,6 +285,7 @@ birthday · 17 Move-in day · 18 Orientation · 19 Textbook pickup · 20 Intro B
 - Sat 15 — 7:30 7h Hiking trip — Cascade Pass (Personal, Trailhead 7:30)
 
 ### 03 — 3-day
+
 **Purpose:** the near horizon at a density where detail fits on the block.
 
 Same structure as Week with three columns (Thu 13 – Sat 15). Header title
@@ -285,6 +302,7 @@ Same structure as Week with three columns (Thu 13 – Sat 15). Header title
   on #FFFFFF, 1px 4px, radius 3px, pinned 6px from the right, -8px vertical.
 
 ### 04 — Day
+
 **Purpose:** one day in full, with everything due, reminded or repeating beside it.
 
 **Layout:** titlebar → [sidebar 264 | day pane (flex) | right rail 300].
@@ -312,6 +330,7 @@ Same structure as Week with three columns (Thu 13 – Sat 15). Header title
     #CACACA, radius 8px, 12px #777777.
 
 ### 05 — Agenda
+
 **Purpose:** a continuous list forward from today; dates set as graphics down the left.
 
 **Layout:** header 78 (padding 0 34px) → list (padding 0 34px).
@@ -334,6 +353,7 @@ Hiking trip — Cascade Pass) · Mon 17 (Move-in day all day, Alder Hall / Key p
 Housing office) · Tue 18 (Orientation, Meany Hall / Work shift).
 
 ### 06 — Event editor
+
 **Purpose:** create or edit an event, including recurrence and reminders, in one sheet.
 
 Rendered as a modal over a dimmed Week view. Scrim `rgba(0,0,0,0.34)` inset 52px from the
@@ -364,6 +384,7 @@ modal shadow.
   34px, 0 17px, radius 8px, 13px/500, with "⌘↵" DM Mono 10.5px at 75% opacity).
 
 ### 07 — Settings / Accounts
+
 **Purpose:** connect CalDAV, Google and local stores; toggle individual calendars.
 
 **Layout:** titlebar → [settings nav 236 | pane (flex)]. The main sidebar is replaced.
@@ -400,7 +421,9 @@ modal shadow.
 ---
 
 ## Interactions & Behavior
+
 Designed and specified above:
+
 - View switcher, date stepper (‹ / Today / ›), and the sidebar's mini-month arrows change
   the visible range. The mini-month selection follows the focused date.
 - Calendar rows in the sidebar and pills in Settings toggle visibility; a disabled calendar
@@ -412,6 +435,7 @@ Designed and specified above:
 - "Sync now" per account; the global cadence control sets the background interval.
 
 Not designed — implement to taste, matching the visual language:
+
 - Hover and focus states. Suggestion: event blocks lift to the day-event shadow; rows and
   buttons darken one neutral step; focus rings use #1F6FEB at 2px.
 - Drag to create, drag to move, edge-resize on the time grids.
@@ -423,13 +447,16 @@ Not designed — implement to taste, matching the visual language:
 - Animations. Keep them short — 120–180ms ease-out for view changes and sheet entry.
 
 ## Responsive behavior
+
 Designed at 1440 × 900 only. Intended order as the window narrows: the day-view right rail
 collapses first (below ~1200px), then the sidebar becomes a toggled overlay (below
 ~1000px), then the view switcher collapses to a dropdown. Time-grid columns and month cells
 stretch to fill; the hour pitch stays fixed.
 
 ## State Management
+
 Frontend state:
+
 - `view` — month | week | threeDay | day | agenda
 - `focusedDate` — the anchor date; derives every visible range
 - `selectedDate` — mini-month highlight
@@ -445,6 +472,7 @@ on either side. Recurrence expansion belongs in Rust, not the frontend. Reminder
 the backend so they work when the window is closed.
 
 ## Suggested Rust / Tauri surface
+
 Not part of the visual design — a starting point that matches what the screens need.
 
 ```rust
@@ -481,6 +509,7 @@ Frameless window: set `decorations: false` in `tauri.conf.json`, mark the titleb
 drag region, and wire the three window controls to minimize / toggle-maximize / close.
 
 ## Assets
+
 None. No images, no icon font, no SVG artwork. Every glyph in the design is either text
 (‹ › → ▾ × + ⌘K ⌘↵) or a plain div — bars, squares, circles, dashed outlines. Substitute
 the codebase's own icon set where an icon is clearer than the primitive.
@@ -490,11 +519,12 @@ Fonts load from Google Fonts:
 For a packaged desktop app, self-host both families instead of fetching at runtime.
 
 ## Files
-| File | Contents |
-| --- | --- |
+
+| File                       | Contents                                                                                                                                          |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Almanac Calendar.dc.html` | All seven screens, stacked top to bottom. Layout in the template; sample data and computed geometry in the logic class at the bottom of the file. |
-| `Titlebar.dc.html` | The 52px frameless titlebar. Takes an `active` view name. |
-| `Sidebar.dc.html` | The 264px sidebar. Takes a `sel` date string for the mini-month. |
+| `Titlebar.dc.html`         | The 52px frameless titlebar. Takes an `active` view name.                                                                                         |
+| `Sidebar.dc.html`          | The 264px sidebar. Takes a `sel` date string for the mini-month.                                                                                  |
 
 Sample data lives in the logic class of `Almanac Calendar.dc.html`: `CAL` (calendar
 colors), `MONTH` (month chips), `WEEK` (week and 3-day events), `ALLDAY`, `AG`

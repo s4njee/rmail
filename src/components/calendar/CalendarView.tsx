@@ -24,51 +24,85 @@ import {
   ThreeDayView,
   ViewMode,
   WeekView,
+  YearView,
 } from "@rcalendar/ui";
 import "@rcalendar/ui/tokens.css";
 import {
+  calendarList,
+  clearNewEventRequest,
+  loadCalendarSources,
+  loadCalendarTasks,
+  loadEvents,
   selectEvent,
+  setCalendarFocusedDate,
+  setCalendarSelectedDate,
+  toggleCalendarTask,
+  useCalendarFocusedDate,
+  useCalendarSelectedDate,
+  useCalendarTasks,
   useEvents,
+  useNewEventRequest,
   useSelectedEvent,
+  recordCalendarUndo,
 } from "../../lib/calendar";
-import { useAccounts } from "../../lib/mail";
+import { useSettings } from "../../lib/settings";
 import { useTheme } from "../../lib/theme";
-import { QuillCalendarDataSource, quillEventToDomain } from "../../lib/calendarAdapter";
+import {
+  eventCalendarId,
+  isCalendarHidden,
+  parseCalendarId,
+  QuillCalendarDataSource,
+  quillEventToDomain,
+} from "../../lib/calendarAdapter";
 import "./CalendarView.css";
 
 export function CalendarView() {
   const theme = useTheme();
-  const accounts = useAccounts();
+  const settings = useSettings();
   const rawEvents = useEvents();
   const selectedEvent = useSelectedEvent();
 
   const dataSource = new QuillCalendarDataSource();
 
   const [view, setView] = createSignal<ViewMode>("Month");
-  const [focusedDate, setFocusedDate] = createSignal(new Date());
-  const [selectedDate, setSelectedDate] = createSignal(new Date());
+  // Navigation and tasks are shared with the embedded calendar sidebar
+  // (lib/calendar) so a click in one updates the other.
+  const focusedDate = useCalendarFocusedDate();
+  const selectedDate = useCalendarSelectedDate();
+  const setFocusedDate = setCalendarFocusedDate;
+  const setSelectedDate = setCalendarSelectedDate;
   const [occurrences, setOccurrences] = createSignal<OccurrenceItem[]>([]);
+  const tasks = useCalendarTasks();
+  const newEventRequest = useNewEventRequest();
 
   // Modals state
   const [isEditorOpen, setIsEditorOpen] = createSignal(false);
   const [editingEvent, setEditingEvent] = createSignal<Event | null>(null);
-  const [editorInitialDate, setEditorInitialDate] = createSignal<Date>(new Date());
+  const [editorInitialDate, setEditorInitialDate] = createSignal<Date>(
+    new Date(),
+  );
   const [isSearchOpen, setIsSearchOpen] = createSignal(false);
   const [isIcsOpen, setIsIcsOpen] = createSignal(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = createSignal(false);
 
-  // Sync occurrences whenever rawEvents change
+  // Sync occurrences whenever rawEvents change. Hidden calendars (from the
+  // sidebar's show/hide toggles) are filtered out here — keyed by the event's
+  // own calendar (source-aware), matching what the data source's
+  // listOccurrences already does for the reload path.
   createEffect(() => {
-    const accs = accounts();
     const evts = rawEvents();
-    const items = evts.map((e) => {
-      const calId = `cal-${e.account_id || accs[0]?.id || 1}`;
-      return quillEventToDomain(e, calId);
-    });
+    const items = evts
+      .filter((e) => !isCalendarHidden(eventCalendarId(e)))
+      .map((e) => quillEventToDomain(e, eventCalendarId(e)));
     setOccurrences(items);
   });
 
+  const loadAllTasks = loadCalendarTasks;
+  const handleToggleTask = toggleCalendarTask;
+
+  let reloadSeq = 0;
   const reloadData = async () => {
+    const seq = ++reloadSeq;
     const f = focusedDate();
     const fromDate = new Date(f.getFullYear(), f.getMonth() - 1, 1);
     const toDate = new Date(f.getFullYear(), f.getMonth() + 2, 0, 23, 59, 59);
@@ -76,12 +110,21 @@ export function CalendarView() {
       fromDate.toISOString(),
       toDate.toISOString(),
     );
+    // Discard stale resolves: rapid Next/Prev clicks must not let an older
+    // response overwrite the newer month's events.
+    if (seq !== reloadSeq) return;
     setOccurrences(occs);
+    // Keep the app-level event list in sync with the visible range so the
+    // click / drag / resize handlers resolve the real event (with its
+    // reminder) instead of reconstructing one with alarm = null.
+    await loadEvents(fromDate.getTime(), toDate.getTime());
+    await loadAllTasks();
+    await loadCalendarSources();
   };
 
   onMount(() => {
-    void reloadData();
-
+    void loadAllTasks();
+    void loadCalendarSources();
     // Calendar-level keyboard shortcuts
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't trigger if user is in an input or textarea
@@ -95,7 +138,12 @@ export function CalendarView() {
         return;
       }
 
-      if (isEditorOpen() || isSearchOpen() || isIcsOpen() || isShortcutsOpen()) {
+      if (
+        isEditorOpen() ||
+        isSearchOpen() ||
+        isIcsOpen() ||
+        isShortcutsOpen()
+      ) {
         return;
       }
 
@@ -105,13 +153,20 @@ export function CalendarView() {
         setView("Month");
       } else if (e.key === "w" || e.key === "W") {
         setView("Week");
+      } else if (e.key === "y" || e.key === "Y") {
+        setView("Year");
       } else if (e.key === "3") {
         setView("3-day");
       } else if (e.key === "d" || e.key === "D") {
         setView("Day");
       } else if (e.key === "a" || e.key === "A") {
         setView("Agenda");
-      } else if (e.key === "c" || e.key === "C" || e.key === "n" || e.key === "N") {
+      } else if (
+        e.key === "c" ||
+        e.key === "C" ||
+        e.key === "n" ||
+        e.key === "N"
+      ) {
         handleOpenNewEvent();
       } else if (e.key === "/" || (e.key === "f" && (e.metaKey || e.ctrlKey))) {
         e.preventDefault();
@@ -130,27 +185,25 @@ export function CalendarView() {
     void reloadData();
   });
 
-  const calendars = () =>
-    accounts().map((acc) => ({
-      id: `cal-${acc.id}`,
-      accountId: String(acc.id),
-      name: acc.address,
-      color: acc.color || "#3b5bdb",
-      enabled: true,
-      eventCount: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }));
+  const calendars = calendarList;
 
   const handlePrev = () => {
-    if (view() === "Month") setFocusedDate(addMonths(focusedDate(), -1));
+    if (view() === "Year") {
+      const d = new Date(focusedDate());
+      d.setFullYear(d.getFullYear() - 1);
+      setFocusedDate(d);
+    } else if (view() === "Month") setFocusedDate(addMonths(focusedDate(), -1));
     else if (view() === "Week") setFocusedDate(addDays(focusedDate(), -7));
     else if (view() === "3-day") setFocusedDate(addDays(focusedDate(), -3));
     else setFocusedDate(addDays(focusedDate(), -1));
   };
 
   const handleNext = () => {
-    if (view() === "Month") setFocusedDate(addMonths(focusedDate(), 1));
+    if (view() === "Year") {
+      const d = new Date(focusedDate());
+      d.setFullYear(d.getFullYear() + 1);
+      setFocusedDate(d);
+    } else if (view() === "Month") setFocusedDate(addMonths(focusedDate(), 1));
     else if (view() === "Week") setFocusedDate(addDays(focusedDate(), 7));
     else if (view() === "3-day") setFocusedDate(addDays(focusedDate(), 3));
     else setFocusedDate(addDays(focusedDate(), 1));
@@ -164,6 +217,9 @@ export function CalendarView() {
 
   const formatTitle = () => {
     const d = focusedDate();
+    if (view() === "Year") {
+      return `${d.getFullYear()}`;
+    }
     return d.toLocaleString("default", { month: "long", year: "numeric" });
   };
 
@@ -173,20 +229,37 @@ export function CalendarView() {
     setIsEditorOpen(true);
   };
 
+  // Open the editor when the embedded calendar sidebar requests a new event.
+  createEffect(() => {
+    const req = newEventRequest();
+    if (req) {
+      handleOpenNewEvent(req);
+      clearNewEventRequest();
+    }
+  });
+
   const handleEventClick = (occ: OccurrenceItem) => {
     const found = rawEvents().find((e) => String(e.id) === occ.event.id);
     if (found) {
       selectEvent(found);
     } else {
+      const { accountId, source } = parseCalendarId(occ.event.calendarId);
       selectEvent({
         id: Number(occ.event.id) || 0,
-        account_id: Number(occ.event.calendarId.replace("cal-", "")) || 1,
+        account_id: accountId,
         title: occ.event.title,
         start_ms: new Date(occ.occurrence.startsAt).getTime(),
         end_ms: new Date(occ.occurrence.endsAt).getTime(),
         all_day: occ.occurrence.allDay,
         location: occ.event.location || null,
         notes: occ.event.notes || null,
+        alarm_minutes_before: null,
+        timezone: occ.event.tz || null,
+        travel_time_minutes: occ.event.travelTimeMinutes || null,
+        calendar_source: source ?? null,
+        calendar_name: null,
+        calendar_color: null,
+        color: occ.event.color || null,
       });
     }
   };
@@ -206,12 +279,23 @@ export function CalendarView() {
     scope?: EditScope,
     targetDate?: string,
   ) => {
-    await dataSource.saveEvent(draft, id, scope, targetDate);
+    const created = await dataSource.saveEvent(draft, id, scope, targetDate);
+    // P1.4: a create can be undone (deleting the new event).
+    if (!id && created[0]) {
+      recordCalendarUndo({
+        label: `Created "${created[0].title}"`,
+        createdEventId: Number(created[0].id),
+      });
+    }
     await reloadData();
   };
 
   const handleDeleteModal = async (id: string) => {
+    const before = rawEvents().find((e) => String(e.id) === id) ?? null;
     await dataSource.deleteEvent(id);
+    if (before) {
+      recordCalendarUndo({ label: `Deleted "${before.title}"`, event: before });
+    }
     if (selectedEvent()?.id === Number(id)) {
       selectEvent(null);
     }
@@ -225,6 +309,7 @@ export function CalendarView() {
   ) => {
     const found = rawEvents().find((e) => String(e.id) === occ.event.id);
     if (!found) return;
+    recordCalendarUndo({ label: `Moved "${found.title}"`, event: found });
     await dataSource.saveEvent(
       {
         calendarId: occ.event.calendarId,
@@ -234,6 +319,7 @@ export function CalendarView() {
         allDay: occ.occurrence.allDay,
         location: found.location || undefined,
         notes: found.notes || undefined,
+        travelTimeMinutes: found.travel_time_minutes || undefined,
       },
       String(found.id),
     );
@@ -243,6 +329,7 @@ export function CalendarView() {
   const handleEventResize = async (occ: OccurrenceItem, newEndsAt: Date) => {
     const found = rawEvents().find((e) => String(e.id) === occ.event.id);
     if (!found) return;
+    recordCalendarUndo({ label: `Resized "${found.title}"`, event: found });
     await dataSource.saveEvent(
       {
         calendarId: occ.event.calendarId,
@@ -252,6 +339,7 @@ export function CalendarView() {
         allDay: occ.occurrence.allDay,
         location: found.location || undefined,
         notes: found.notes || undefined,
+        travelTimeMinutes: found.travel_time_minutes || undefined,
       },
       String(found.id),
     );
@@ -295,14 +383,29 @@ export function CalendarView() {
           >
             + Event
           </button>
-          <button type="button" class="quill-cal-btn" onClick={handleToday} title="Jump to today (T)">
+          <button
+            type="button"
+            class="quill-cal-btn"
+            onClick={handleToday}
+            title="Jump to today (T)"
+          >
             Today
           </button>
           <div class="nav-arrows">
-            <button type="button" class="quill-cal-icon-btn" onClick={handlePrev} title="Previous">
+            <button
+              type="button"
+              class="quill-cal-icon-btn"
+              onClick={handlePrev}
+              title="Previous"
+            >
               ‹
             </button>
-            <button type="button" class="quill-cal-icon-btn" onClick={handleNext} title="Next">
+            <button
+              type="button"
+              class="quill-cal-icon-btn"
+              onClick={handleNext}
+              title="Next"
+            >
               ›
             </button>
           </div>
@@ -336,7 +439,18 @@ export function CalendarView() {
           </button>
 
           <div class="view-segmented">
-            <For each={["Month", "Week", "3-day", "Day", "Agenda"] as ViewMode[]}>
+            <For
+              each={
+                [
+                  "Month",
+                  "Week",
+                  "3-day",
+                  "Day",
+                  "Agenda",
+                  "Year",
+                ] as ViewMode[]
+              }
+            >
               {(v) => (
                 <button
                   type="button"
@@ -354,6 +468,18 @@ export function CalendarView() {
       {/* Almanac Native SolidJS Calendar Views */}
       <div class="calendar-views-container">
         <Switch>
+          <Match when={view() === "Year"}>
+            <YearView
+              focusedDate={focusedDate()}
+              selectedDate={selectedDate()}
+              onSelectDate={setSelectedDate}
+              onFocusedDateChange={setFocusedDate}
+              occurrences={occurrences()}
+              calendars={calendars()}
+              onNavigateView={setView}
+            />
+          </Match>
+
           <Match when={view() === "Month"}>
             <MonthView
               focusedDate={focusedDate()}
@@ -379,6 +505,9 @@ export function CalendarView() {
               onSlotClick={handleSlotClick}
               onEventMove={handleEventMove}
               onEventResize={handleEventResize}
+              primaryTz={settings()?.primaryTimezone}
+              secondaryTz={settings()?.secondaryTimezone}
+              showSecondaryTz={settings()?.showSecondaryTimezone}
             />
           </Match>
 
@@ -394,6 +523,9 @@ export function CalendarView() {
               onSlotClick={handleSlotClick}
               onEventMove={handleEventMove}
               onEventResize={handleEventResize}
+              primaryTz={settings()?.primaryTimezone}
+              secondaryTz={settings()?.secondaryTimezone}
+              showSecondaryTz={settings()?.showSecondaryTimezone}
             />
           </Match>
 
@@ -405,11 +537,15 @@ export function CalendarView() {
               onFocusedDateChange={setFocusedDate}
               occurrences={occurrences()}
               calendars={calendars()}
-              tasks={[]}
+              tasks={tasks()}
+              onToggleTask={handleToggleTask}
               onEventClick={handleEventClick}
               onSlotClick={handleSlotClick}
               onEventMove={handleEventMove}
               onEventResize={handleEventResize}
+              primaryTz={settings()?.primaryTimezone}
+              secondaryTz={settings()?.secondaryTimezone}
+              showSecondaryTz={settings()?.showSecondaryTimezone}
             />
           </Match>
 
@@ -421,7 +557,8 @@ export function CalendarView() {
               onFocusedDateChange={setFocusedDate}
               occurrences={occurrences()}
               calendars={calendars()}
-              tasks={[]}
+              tasks={tasks()}
+              onToggleTask={handleToggleTask}
               onEventClick={handleEventClick}
             />
           </Match>

@@ -1,0 +1,28 @@
+{
+  "$comment": "WIP — Flathub submission manifest (E2.1). This is a starting skeleton; the module must build `quill` from source inside the SDK (cargo + pnpm + WebKitGTK) rather than extract an AppImage. Verify with flatpak-builder before submitting.",
+  "id": "app.quill.Quill",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "48",
+  "sdk": "org.gnome.Sdk",
+  "command": "quill",
+  "finish-args": [
+    "--share=network",
+    "--socket=wayland",
+    "--socket=x11",
+    "--device=dri",
+    "--filesystem=home",
+    "--talk-name=org.freedesktop.Notifications"
+  ],
+  "modules": [
+    {
+      "name": "quill",
+      "buildsystem": "simple",
+      "build-commands": [
+        "install -Dm755 quill /app/bin/quill",
+        "install -Dm644 app.quill.Quill.desktop /app/share/applications/app.quill.Quill.desktop",
+        "install -Dm644 app.quill.Quill.png /app/share/icons/hicolor/128x128/apps/app.quill.Quill.png"
+      ],
+      "sources": []
+    }
+  ]
+}

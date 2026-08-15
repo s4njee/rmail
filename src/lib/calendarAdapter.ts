@@ -10,13 +10,14 @@ import type {
   SearchResults,
   Task,
 } from "@rcalendar/ui";
+import { createSignal, untrack } from "solid-js";
 import type { CalendarEvent } from "./ipc/CalendarEvent";
-import { createEvent, deleteEvent, listEvents, updateEvent } from "./tauri";
+import { createEvent, deleteEvent, listCalendars, listEvents, updateEvent } from "./tauri";
 import { useAccounts } from "./mail";
 
 const DISABLED_CALS_KEY = "quill_disabled_calendars";
 
-function getDisabledCalendarIds(): Set<string> {
+function loadDisabledCalendarIds(): Set<string> {
   try {
     const raw = localStorage.getItem(DISABLED_CALS_KEY);
     if (!raw) return new Set();
@@ -26,18 +27,128 @@ function getDisabledCalendarIds(): Set<string> {
   }
 }
 
+// Reactive, so the calendar sidebar's show/hide toggles update the views
+// immediately (calendars() + the occurrence filter both track this). The set
+// is persisted to localStorage so the choice survives restarts.
+const [disabledCalendarIds, setDisabledCalendarIdsSignal] =
+  createSignal<Set<string>>(loadDisabledCalendarIds());
+
+/** Reactive set of currently-hidden calendar ids. */
+export function getDisabledCalendarIds(): Set<string> {
+  return disabledCalendarIds();
+}
+
+/** Show/hide a calendar by id; updates the reactive set immediately. */
+export function setCalendarEnabled(calendarId: string, enabled: boolean): void {
+  setDisabledCalendarId(calendarId, !enabled);
+}
+
 function setDisabledCalendarId(id: string, disabled: boolean) {
+  // Snapshot read on a write path — no reason to track.
+  const next = new Set(untrack(disabledCalendarIds));
+  if (disabled) {
+    next.add(id);
+  } else {
+    next.delete(id);
+  }
+  setDisabledCalendarIdsSignal(next);
   try {
-    const set = getDisabledCalendarIds();
-    if (disabled) {
-      set.add(id);
-    } else {
-      set.delete(id);
-    }
-    localStorage.setItem(DISABLED_CALS_KEY, JSON.stringify(Array.from(set)));
+    localStorage.setItem(DISABLED_CALS_KEY, JSON.stringify(Array.from(next)));
   } catch {
     // Ignore localStorage errors
   }
+}
+
+const HIDDEN_SIDEBAR_KEY = "quill_hidden_from_sidebar";
+
+function loadHiddenFromSidebar(): Set<string> {
+  try {
+    const raw = localStorage.getItem(HIDDEN_SIDEBAR_KEY);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw));
+  } catch {
+    return new Set();
+  }
+}
+
+// Calendars the user removed from the *sidebar* only — their data stays synced
+// and they remain manageable in Settings (unlike a full removal). Also
+// persisted, and reactive like the disabled set.
+const [hiddenFromSidebar, setHiddenFromSidebarSignal] =
+  createSignal<Set<string>>(loadHiddenFromSidebar());
+
+/** Reactive set of calendar ids hidden from the sidebar (still in Settings). */
+export function getHiddenFromSidebarIds(): Set<string> {
+  return hiddenFromSidebar();
+}
+
+/** Remove a calendar from the sidebar (or bring it back). */
+export function setHiddenFromSidebar(calendarId: string, hidden: boolean): void {
+  const next = new Set(untrack(hiddenFromSidebar));
+  if (hidden) {
+    next.add(calendarId);
+  } else {
+    next.delete(calendarId);
+  }
+  setHiddenFromSidebarSignal(next);
+  try {
+    localStorage.setItem(HIDDEN_SIDEBAR_KEY, JSON.stringify(Array.from(next)));
+  } catch {
+    // Ignore localStorage errors
+  }
+}
+
+/** True when a calendar's events should be hidden from the views: disabled via
+ * the show/hide toggle OR removed from the sidebar. */
+export function isCalendarHidden(calendarId: string): boolean {
+  return (
+    getDisabledCalendarIds().has(calendarId) ||
+    getHiddenFromSidebarIds().has(calendarId)
+  );
+}
+
+/** Calendar id for an account (and optional source calendar, e.g. a Google
+ * calendar id). Source calendars get their own id so they render and toggle
+ * independently: `cal-1` (account) vs `cal-1:personal@google.com` (source). */
+export function calendarIdFor(
+  accountId: number,
+  source?: string | null,
+): string {
+  return source ? `cal-${accountId}:${source}` : `cal-${accountId}`;
+}
+
+/** The calendar id an event belongs to — its source calendar if it has one. */
+export function eventCalendarId(event: CalendarEvent): string {
+  return calendarIdFor(event.account_id, event.calendar_source);
+}
+
+/** Split a calendar id back into its account id and optional source. */
+export function parseCalendarId(
+  calId: string,
+): { accountId: number; source?: string } {
+  const rest = calId.replace(/^cal-/, "");
+  const idx = rest.indexOf(":");
+  if (idx === -1) return { accountId: Number(rest) || 1 };
+  return {
+    accountId: Number(rest.slice(0, idx)) || 1,
+    source: rest.slice(idx + 1),
+  };
+}
+
+/** Name/color for a source calendar, resolved from the store's source list. */
+async function sourceMeta(
+  accountId: number,
+  source: string | null,
+): Promise<{ name: string | null; color: string | null }> {
+  if (!source) return { name: null, color: null };
+  const sources = await listCalendars();
+  const match = sources.find(
+    (s) => s.accountId === accountId && s.source === source,
+  );
+  return {
+    name: match?.name ?? source.split("@")[0] ?? source,
+    color: match?.color ?? "#3b5bdb",
+  };
 }
 
 export function quillEventToDomain(
@@ -58,6 +169,9 @@ export function quillEventToDomain(
     startsAt,
     endsAt,
     allDay: event.all_day,
+    tz: event.timezone || null,
+    travelTimeMinutes: event.travel_time_minutes || null,
+    color: event.color || null,
     exdates: [],
     createdAt: startsAt,
     updatedAt: startsAt,
@@ -109,60 +223,54 @@ function parseIcsDate(raw: string): number {
     const s = Number(clean.slice(13, 15));
     return Date.UTC(y, m, d, h, min, s);
   }
-  const parsed = Date.parse(raw);
-  return Number.isNaN(parsed) ? Date.now() : parsed;
+  return Date.now();
 }
 
 export class QuillCalendarDataSource implements CalendarDataSource {
   async listAccounts(): Promise<{ account: Account; calendars: Calendar[] }[]> {
-    const rawAccounts = useAccounts()();
-    const disabled = getDisabledCalendarIds();
+    const accounts = useAccounts()();
+    const disabled = untrack(getDisabledCalendarIds);
 
-    return rawAccounts.map((acc) => {
-      const calId = `cal-${acc.id}`;
-      const calendar: Calendar = {
-        id: calId,
-        accountId: String(acc.id),
-        name: acc.address,
-        color: acc.color || "#3b5bdb",
-        enabled: !disabled.has(calId),
-        eventCount: 0,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+    return accounts.map((acc) => {
+      const calId = calendarIdFor(acc.id);
+      return {
+        account: {
+          id: String(acc.id),
+          kind:
+            acc.protocol.toLowerCase() === "google"
+              ? "google"
+              : acc.protocol.toLowerCase() === "caldav"
+                ? "caldav"
+                : "local",
+          displayName: acc.address,
+          detail: `${acc.protocol} · ${acc.server || "localhost"}`,
+          status: acc.connected ? "idle" : "error",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        calendars: [
+          {
+            id: calId,
+            accountId: String(acc.id),
+            name: acc.address.split("@")[0] || "Personal",
+            color: acc.color,
+            enabled: !disabled.has(calId),
+            eventCount: 0,
+          },
+        ],
       };
-      const account: Account = {
-        id: String(acc.id),
-        displayName: acc.address,
-        kind: "local",
-        status: "idle",
-        detail: acc.address,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      return { account, calendars: [calendar] };
     });
   }
 
   async listCalendars(): Promise<Calendar[]> {
-    const rawAccounts = useAccounts()();
-    const disabled = getDisabledCalendarIds();
-
-    return rawAccounts.map((acc) => {
-      const calId = `cal-${acc.id}`;
-      return {
-        id: calId,
-        accountId: String(acc.id),
-        name: acc.address,
-        color: acc.color || "#3b5bdb",
-        enabled: !disabled.has(calId),
-        eventCount: 0,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-    });
+    const accountList = await this.listAccounts();
+    return accountList.flatMap((a) => a.calendars);
   }
 
-  async setCalendarEnabled(calendarId: string, enabled: boolean): Promise<void> {
+  async setCalendarEnabled(
+    calendarId: string,
+    enabled: boolean,
+  ): Promise<void> {
     setDisabledCalendarId(calendarId, !enabled);
   }
 
@@ -174,17 +282,27 @@ export class QuillCalendarDataSource implements CalendarDataSource {
     const startMs = new Date(from).getTime();
     const endMs = new Date(to).getTime();
     const rawEvents = await listEvents(startMs, endMs);
-    const accounts = useAccounts()();
-    const disabled = getDisabledCalendarIds();
+    // Snapshot the hidden sets — async reads shouldn't create subscriptions.
+    const disabled = untrack(getDisabledCalendarIds);
+    const hiddenSidebar = untrack(getHiddenFromSidebarIds);
 
     const results: OccurrenceItem[] = [];
     for (const e of rawEvents) {
-      const calId = `cal-${e.account_id || accounts[0]?.id || 1}`;
-      if (disabled.has(calId)) continue;
-      if (calendarIds && calendarIds.length > 0 && !calendarIds.includes(calId)) continue;
+      const calId = eventCalendarId(e);
+      if (disabled.has(calId) || hiddenSidebar.has(calId)) continue;
+      if (calendarIds && calendarIds.length > 0 && !calendarIds.includes(calId))
+        continue;
       results.push(quillEventToDomain(e, calId));
     }
     return results;
+  }
+
+  /** The stored reminder for an event, or null if it has none (or can't be
+   * found in the ±90-day window). */
+  private async alarmMinutesFor(id: number): Promise<number | null> {
+    const now = Date.now();
+    const events = await listEvents(now - 90 * 86400000, now + 90 * 86400000);
+    return events.find((e) => e.id === id)?.alarm_minutes_before ?? null;
   }
 
   async getEvent(id: string): Promise<Event | null> {
@@ -193,7 +311,7 @@ export class QuillCalendarDataSource implements CalendarDataSource {
     const events = await listEvents(now - 90 * 86400000, now + 90 * 86400000);
     const found = events.find((e) => e.id === numId);
     if (!found) return null;
-    return quillEventToDomain(found, `cal-${found.account_id}`).event;
+    return quillEventToDomain(found, eventCalendarId(found)).event;
   }
 
   async saveEvent(
@@ -204,33 +322,37 @@ export class QuillCalendarDataSource implements CalendarDataSource {
   ): Promise<Event[]> {
     const startMs = new Date(draft.startsAt).getTime();
     const endMs = new Date(draft.endsAt).getTime();
-    const accountId = Number(draft.calendarId.replace("cal-", "")) || 1;
+    const { accountId, source } = parseCalendarId(draft.calendarId);
+
+    // Tag the event with its source calendar (if any) and keep that calendar's
+    // name/color so the sidebar row survives edits — and new events created in
+    // a synced calendar land in the right row.
+    const { name: calName, color: calColor } = await sourceMeta(accountId, source ?? null);
+
+    const base: Omit<CalendarEvent, "alarm_minutes_before"> = {
+      id: id ? Number(id) : 0,
+      account_id: accountId,
+      title: draft.title,
+      start_ms: startMs,
+      end_ms: endMs,
+      all_day: draft.allDay,
+      location: draft.location || null,
+      notes: draft.notes || null,
+      timezone: draft.tz || null,
+      travel_time_minutes: draft.travelTimeMinutes || null,
+      calendar_source: source || null,
+      calendar_name: calName,
+      calendar_color: calColor,
+      color: draft.color || null,
+    };
 
     if (id) {
-      const numId = Number(id);
-      const updated: CalendarEvent = {
-        id: numId,
-        account_id: accountId,
-        title: draft.title,
-        start_ms: startMs,
-        end_ms: endMs,
-        all_day: draft.allDay,
-        location: draft.location || null,
-        notes: draft.notes || null,
-      };
+      const existingAlarm = await this.alarmMinutesFor(Number(id));
+      const updated: CalendarEvent = { ...base, alarm_minutes_before: existingAlarm };
       await updateEvent(updated);
       return [quillEventToDomain(updated, draft.calendarId).event];
     } else {
-      const newEvt: CalendarEvent = {
-        id: 0,
-        account_id: accountId,
-        title: draft.title,
-        start_ms: startMs,
-        end_ms: endMs,
-        all_day: draft.allDay,
-        location: draft.location || null,
-        notes: draft.notes || null,
-      };
+      const newEvt: CalendarEvent = { ...base, alarm_minutes_before: null };
       const created = await createEvent(newEvt);
       return [quillEventToDomain(created, draft.calendarId).event];
     }
@@ -251,7 +373,10 @@ export class QuillCalendarDataSource implements CalendarDataSource {
 
   async search(query: string): Promise<SearchResults> {
     const now = Date.now();
-    const rawEvents = await listEvents(now - 180 * 86400000, now + 180 * 86400000);
+    const rawEvents = await listEvents(
+      now - 180 * 86400000,
+      now + 180 * 86400000,
+    );
     const q = query.toLowerCase().trim();
     if (!q) return { events: [], tasks: [] };
 
@@ -262,16 +387,23 @@ export class QuillCalendarDataSource implements CalendarDataSource {
           (e.location && e.location.toLowerCase().includes(q)) ||
           (e.notes && e.notes.toLowerCase().includes(q)),
       )
-      .map((e) => quillEventToDomain(e, `cal-${e.account_id}`).event);
+      .map((e) => quillEventToDomain(e, eventCalendarId(e)).event);
     return { events: filtered, tasks: [] };
   }
 
   async exportIcs(calendarId?: string): Promise<string> {
     const now = Date.now();
-    const rawEvents = await listEvents(now - 365 * 86400000, now + 365 * 86400000);
-    const targetAccountId = calendarId ? Number(calendarId.replace("cal-", "")) : null;
-    const eventsToExport = targetAccountId
-      ? rawEvents.filter((e) => e.account_id === targetAccountId)
+    const rawEvents = await listEvents(
+      now - 365 * 86400000,
+      now + 365 * 86400000,
+    );
+    const target = calendarId ? parseCalendarId(calendarId) : null;
+    const eventsToExport = target
+      ? rawEvents.filter(
+          (e) =>
+            e.account_id === target.accountId &&
+            (!target.source || e.calendar_source === target.source),
+        )
       : rawEvents;
 
     const lines: string[] = [
@@ -286,11 +418,19 @@ export class QuillCalendarDataSource implements CalendarDataSource {
       lines.push(`UID:quill-${e.id}@quill.local`);
       lines.push(`DTSTAMP:${formatDateToIcs(new Date().toISOString())}`);
       if (e.all_day) {
-        lines.push(`DTSTART;VALUE=DATE:${formatDateToIcs(new Date(e.start_ms).toISOString(), true)}`);
-        lines.push(`DTEND;VALUE=DATE:${formatDateToIcs(new Date(e.end_ms).toISOString(), true)}`);
+        lines.push(
+          `DTSTART;VALUE=DATE:${formatDateToIcs(new Date(e.start_ms).toISOString(), true)}`,
+        );
+        lines.push(
+          `DTEND;VALUE=DATE:${formatDateToIcs(new Date(e.end_ms).toISOString(), true)}`,
+        );
       } else {
-        lines.push(`DTSTART:${formatDateToIcs(new Date(e.start_ms).toISOString())}`);
-        lines.push(`DTEND:${formatDateToIcs(new Date(e.end_ms).toISOString())}`);
+        lines.push(
+          `DTSTART:${formatDateToIcs(new Date(e.start_ms).toISOString())}`,
+        );
+        lines.push(
+          `DTEND:${formatDateToIcs(new Date(e.end_ms).toISOString())}`,
+        );
       }
       lines.push(`SUMMARY:${e.title.replace(/\n/g, " ")}`);
       if (e.location) lines.push(`LOCATION:${e.location.replace(/\n/g, " ")}`);
@@ -304,8 +444,14 @@ export class QuillCalendarDataSource implements CalendarDataSource {
 
   async importIcs(calendarId: string, icsText: string): Promise<Event[]> {
     const accounts = useAccounts()();
-    const defaultAccountId = Number(calendarId?.replace("cal-", "")) || accounts[0]?.id || 1;
-    const targetCalId = `cal-${defaultAccountId}`;
+    const parsed = calendarId ? parseCalendarId(calendarId) : null;
+    const defaultAccountId = parsed?.accountId || accounts[0]?.id || 1;
+    const targetSource = parsed?.source ?? null;
+    const targetCalId = calendarIdFor(defaultAccountId, targetSource);
+    const { name: calName, color: calColor } = await sourceMeta(
+      defaultAccountId,
+      targetSource,
+    );
 
     const importedEvents: Event[] = [];
     const veventRegex = /BEGIN:VEVENT[\s\S]*?END:VEVENT/gi;
@@ -350,6 +496,13 @@ export class QuillCalendarDataSource implements CalendarDataSource {
         all_day: allDay,
         location,
         notes,
+        alarm_minutes_before: null,
+        timezone: null,
+        travel_time_minutes: null,
+        calendar_source: targetSource,
+        calendar_name: calName,
+        calendar_color: calColor,
+        color: null,
       };
 
       const created = await createEvent(newEvt);
@@ -359,9 +512,11 @@ export class QuillCalendarDataSource implements CalendarDataSource {
     return importedEvents;
   }
 
-  async addAccount(
-    _spec: { kind: AccountKind; displayName: string; detail: string },
-  ): Promise<{ account: Account; calendars: Calendar[] }> {
+  async addAccount(_spec: {
+    kind: AccountKind;
+    displayName: string;
+    detail: string;
+  }): Promise<{ account: Account; calendars: Calendar[] }> {
     throw new Error("Add account via Quill settings");
   }
 
@@ -372,9 +527,12 @@ export class QuillCalendarDataSource implements CalendarDataSource {
     throw new Error("Connect Google account via Quill settings");
   }
 
-  async syncAccount(
-    _accountId: string,
-  ): Promise<{ accountId: string; syncedAt: string; success: boolean; message: string }> {
+  async syncAccount(_accountId: string): Promise<{
+    accountId: string;
+    syncedAt: string;
+    success: boolean;
+    message: string;
+  }> {
     return {
       accountId: _accountId,
       syncedAt: new Date().toISOString(),

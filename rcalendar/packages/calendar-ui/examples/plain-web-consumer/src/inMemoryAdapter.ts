@@ -9,16 +9,16 @@ import {
   OccurrenceItem,
   SearchResults,
   Task,
-} from '@rcalendar/ui';
+} from "@rcalendar/ui";
 
 export class InMemoryCalendarDataSource implements CalendarDataSource {
   private accounts: Account[] = [
     {
-      id: 'acc-web',
-      displayName: 'Web Local Account',
-      kind: 'local',
-      status: 'active',
-      detail: 'In-Memory Web Client',
+      id: "acc-web",
+      displayName: "Web Local Account",
+      kind: "local",
+      status: "active",
+      detail: "In-Memory Web Client",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     },
@@ -26,20 +26,20 @@ export class InMemoryCalendarDataSource implements CalendarDataSource {
 
   private calendars: Calendar[] = [
     {
-      id: 'cal-classes',
-      accountId: 'acc-web',
-      name: 'Classes',
-      color: '#C2410C',
+      id: "cal-classes",
+      accountId: "acc-web",
+      name: "Classes",
+      color: "#C2410C",
       enabled: true,
       eventCount: 2,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     },
     {
-      id: 'cal-personal',
-      accountId: 'acc-web',
-      name: 'Personal',
-      color: '#1F6FEB',
+      id: "cal-personal",
+      accountId: "acc-web",
+      name: "Personal",
+      color: "#1F6FEB",
       enabled: true,
       eventCount: 1,
       createdAt: new Date().toISOString(),
@@ -49,28 +49,28 @@ export class InMemoryCalendarDataSource implements CalendarDataSource {
 
   private events: Event[] = [
     {
-      id: 'evt-1',
-      calendarId: 'cal-classes',
-      uid: 'evt-1@web.local',
-      title: 'Stats 101 Lecture',
-      location: 'Kane 210',
-      notes: 'Weekly lecture',
-      startsAt: '2026-08-13T10:00:00Z',
-      endsAt: '2026-08-13T11:30:00Z',
+      id: "evt-1",
+      calendarId: "cal-classes",
+      uid: "evt-1@web.local",
+      title: "Stats 101 Lecture",
+      location: "Kane 210",
+      notes: "Weekly lecture",
+      startsAt: "2026-08-13T10:00:00Z",
+      endsAt: "2026-08-13T11:30:00Z",
       allDay: false,
       exdates: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     },
     {
-      id: 'evt-2',
-      calendarId: 'cal-personal',
-      uid: 'evt-2@web.local',
-      title: 'Dentist Appointment',
-      location: 'Medical Dental Bldg',
+      id: "evt-2",
+      calendarId: "cal-personal",
+      uid: "evt-2@web.local",
+      title: "Dentist Appointment",
+      location: "Medical Dental Bldg",
       notes: null,
-      startsAt: '2026-08-13T14:00:00Z',
-      endsAt: '2026-08-13T15:00:00Z',
+      startsAt: "2026-08-13T14:00:00Z",
+      endsAt: "2026-08-13T15:00:00Z",
       allDay: false,
       exdates: [],
       createdAt: new Date().toISOString(),
@@ -80,10 +80,10 @@ export class InMemoryCalendarDataSource implements CalendarDataSource {
 
   private tasks: Task[] = [
     {
-      id: 'task-1',
-      calendarId: 'cal-classes',
-      title: 'Submit Lab Report',
-      dueAt: '2026-08-13T17:00:00Z',
+      id: "task-1",
+      calendarId: "cal-classes",
+      title: "Submit Lab Report",
+      dueAt: "2026-08-13T17:00:00Z",
       completedAt: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -181,7 +181,7 @@ export class InMemoryCalendarDataSource implements CalendarDataSource {
 
   async toggleTask(id: string): Promise<Task> {
     const task = this.tasks.find((t) => t.id === id);
-    if (!task) throw new Error('Task not found');
+    if (!task) throw new Error("Task not found");
     task.completedAt = task.completedAt ? null : new Date().toISOString();
     return { ...task };
   }
@@ -190,15 +190,14 @@ export class InMemoryCalendarDataSource implements CalendarDataSource {
     const q = query.toLowerCase();
     const events = this.events.filter(
       (e) =>
-        e.title.toLowerCase().includes(q) ||
-        (e.location && e.location.toLowerCase().includes(q)),
+        e.title.toLowerCase().includes(q) || (e.location && e.location.toLowerCase().includes(q)),
     );
     const tasks = this.tasks.filter((t) => t.title.toLowerCase().includes(q));
     return { events, tasks };
   }
 
   async exportIcs(): Promise<string> {
-    return 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//rcalendar//Web//EN\r\nEND:VCALENDAR';
+    return "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//rcalendar//Web//EN\r\nEND:VCALENDAR";
   }
 
   async importIcs(): Promise<Event[]> {
@@ -214,7 +213,7 @@ export class InMemoryCalendarDataSource implements CalendarDataSource {
       id: `acc-${Date.now()}`,
       displayName: spec.displayName,
       kind: spec.kind,
-      status: 'active',
+      status: "active",
       detail: spec.detail,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -230,8 +229,8 @@ export class InMemoryCalendarDataSource implements CalendarDataSource {
     const account: Account = {
       id: `acc-google-${Date.now()}`,
       displayName: `Google (${email})`,
-      kind: 'google',
-      status: 'active',
+      kind: "google",
+      status: "active",
       detail: email,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -239,8 +238,8 @@ export class InMemoryCalendarDataSource implements CalendarDataSource {
     const calendar: Calendar = {
       id: `cal-google-${Date.now()}`,
       accountId: account.id,
-      name: 'Google Calendar',
-      color: '#1F6FEB',
+      name: "Google Calendar",
+      color: "#1F6FEB",
       enabled: true,
       eventCount: 1,
       createdAt: new Date().toISOString(),
@@ -256,7 +255,7 @@ export class InMemoryCalendarDataSource implements CalendarDataSource {
       accountId,
       syncedAt: new Date().toISOString(),
       success: true,
-      message: 'In-memory mock sync OK',
+      message: "In-memory mock sync OK",
     };
   }
 

@@ -4,4 +4,4 @@
  * A locally-stored draft (Epic 13.2). `id` is set when re-saving an existing
  * autosaved draft, so it updates in place in the Drafts folder.
  */
-export type Draft = { id: number | null, account_id: number, to: Array<string>, cc: Array<string>, subject: string, body: string, };
+export type Draft = { id: number | null, account_id: number, to: Array<string>, cc: Array<string>, bcc: Array<string>, subject: string, body: string, in_reply_to: string | null, references: string | null, };

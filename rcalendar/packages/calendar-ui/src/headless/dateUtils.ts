@@ -3,18 +3,46 @@
  */
 
 export const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
 export const MONTH_NAMES_SHORT = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
 ];
 
-export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-export const WEEKDAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-export const WEEKDAYS_LETTER = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+export const WEEKDAYS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+export const WEEKDAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+export const WEEKDAYS_LETTER = ["S", "M", "T", "W", "T", "F", "S"];
 
 export interface MonthGridCell {
   date: Date;
@@ -28,14 +56,14 @@ export interface MonthGridCell {
 /** Returns a date string formatted as YYYY-MM-DD. */
 export function toDateKey(d: Date): string {
   const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
 /** Parses a YYYY-MM-DD string into a local Date. */
 export function fromDateKey(key: string): Date {
-  const [y, m, d] = key.split('-').map(Number);
+  const [y, m, d] = key.split("-").map(Number);
   return new Date(y, m - 1, d, 0, 0, 0, 0);
 }
 
@@ -68,7 +96,7 @@ export function getWeekNumber(date: Date): number {
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
 }
 
 /** Checks whether two dates represent the exact same calendar day. */
@@ -86,7 +114,7 @@ export function buildMonthGrid(
   month: number,
   selectedDate: Date,
   today: Date = new Date(),
-  weekStartsOn = 0
+  weekStartsOn = 0,
 ): MonthGridCell[] {
   const firstOfMonth = new Date(year, month, 1);
   const startDay = startOfWeek(firstOfMonth, weekStartsOn);
@@ -112,7 +140,7 @@ export function buildMonthGrid(
 
 /** Formats time as HH:MM in 24-hour time. */
 export function formatTime24(date: Date): string {
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
   return `${hours}:${minutes}`;
 }
