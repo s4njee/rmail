@@ -6,6 +6,7 @@ import type { RuleField } from "../../lib/ipc/RuleField";
 import type { RuleMatchMode } from "../../lib/ipc/RuleMatchMode";
 import type { RuleOperator } from "../../lib/ipc/RuleOperator";
 import type { RulePreviewResult } from "../../lib/ipc/RulePreviewResult";
+import { folderLabel, isMailbox } from "../../lib/folders";
 import { useAccounts, useFolders } from "../../lib/mail";
 import { updateSettings, useSettings } from "../../lib/settings";
 import {
@@ -407,8 +408,10 @@ export function RulesSection() {
           value={selectedFolderToRun()}
           onChange={(e) => setSelectedFolderToRun(e.currentTarget.value)}
         >
-          <For each={folders()}>
-            {(f) => <option value={f.name}>{f.name}</option>}
+          <For each={folders().filter(isMailbox)}>
+            {(f) => (
+              <option value={f.path}>{folderLabel(f, accounts())}</option>
+            )}
           </For>
         </select>
         <button
@@ -740,8 +743,12 @@ export function RulesSection() {
                             })
                           }
                         >
-                          <For each={folders()}>
-                            {(f) => <option value={f.name}>{f.name}</option>}
+                          <For each={folders().filter(isMailbox)}>
+                            {(f) => (
+                              <option value={f.path}>
+                                {folderLabel(f, accounts())}
+                              </option>
+                            )}
                           </For>
                         </select>
                       </Show>

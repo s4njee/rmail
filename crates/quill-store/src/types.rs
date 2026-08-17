@@ -74,6 +74,11 @@ pub enum ActionType {
     Send,
     MarkAnswered,
     MarkForwarded,
+    CreateFolder,
+    RenameFolder,
+    DeleteFolder,
+    SubscribeFolder,
+    UnsubscribeFolder,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -250,15 +255,109 @@ pub struct AccountEdit {
     pub color: String,
 }
 
-/// A sidebar folder (unified set) with its live counts.
+/// Reserved ids for the unified special-folder section. Persisted per-account
+/// mailboxes start at [`FIRST_MAILBOX_ID`] so a stored filter can never collide.
+pub const UNIFIED_INBOX_ID: FolderId = 1;
+pub const FIRST_MAILBOX_ID: FolderId = 1000;
+
+/// A sidebar folder: either a unified special (Inbox, Starred, …) or a
+/// persisted per-account mailbox in the nested tree (T0.1).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export)]
 pub struct Folder {
     pub id: FolderId,
+    /// `None` for unified special folders that span every account.
+    pub account_id: Option<AccountId>,
+    /// Display name (last path component, or the unified special name).
     pub name: String,
+    /// Local storage key used in `messages.folder` (full path for custom).
+    pub path: String,
     pub kind: FolderKind,
     pub unread_count: u32,
     pub total_count: u32,
+    /// Counts including collapsed descendants, for the tree rollup.
+    pub unread_count_tree: u32,
+    pub total_count_tree: u32,
+    pub parent_id: Option<FolderId>,
+    pub server_name: Option<String>,
+    pub delimiter: String,
+    pub subscribed: bool,
+    /// Whether this mailbox is in the account's sync selection.
+    pub enabled: bool,
+    pub selectable: bool,
+    pub expanded: bool,
+    pub favourite: bool,
+    pub sort_order: i32,
+    /// JSON blob of per-folder view settings (sort, columns — T0.5).
+    pub view_settings: Option<String>,
+    #[ts(type = "number | null")]
+    pub last_opened_at_ms: Option<i64>,
+    /// IMAP namespace prefix (`""` = personal, `"[Gmail]"`, `"Other Users"`, …).
+    pub namespace: String,
+}
+
+impl Folder {
+    /// A unified special-folder row (ids 1..=8). Counts are own-only; there
+    /// are no children to roll up.
+    pub fn unified(
+        id: FolderId,
+        name: &str,
+        kind: FolderKind,
+        unread: u32,
+        total: u32,
+    ) -> Self {
+        Self {
+            id,
+            account_id: None,
+            name: name.to_string(),
+            path: name.to_string(),
+            kind,
+            unread_count: unread,
+            total_count: total,
+            unread_count_tree: unread,
+            total_count_tree: total,
+            parent_id: None,
+            server_name: None,
+            delimiter: "/".into(),
+            subscribed: true,
+            enabled: true,
+            selectable: kind.is_mailbox(),
+            expanded: false,
+            favourite: false,
+            sort_order: id as i32,
+            view_settings: None,
+            last_opened_at_ms: None,
+            namespace: String::new(),
+        }
+    }
+
+    pub fn is_unified(&self) -> bool {
+        self.account_id.is_none()
+    }
+
+    pub fn is_mailbox(&self) -> bool {
+        self.selectable && self.kind.is_mailbox()
+    }
+}
+
+/// Input for creating a mailbox (T0.1).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NewFolder {
+    pub account_id: AccountId,
+    pub parent_id: Option<FolderId>,
+    pub name: String,
+}
+
+/// Rename or reparent a mailbox.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FolderEdit {
+    pub id: FolderId,
+    pub name: Option<String>,
+    pub parent_id: Option<FolderId>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -276,10 +375,14 @@ pub enum FolderKind {
     /// `snoozed_until_ms`). Not a real mailbox — it never appears in server
     /// folder discovery.
     Snoozed,
+    /// Any server mailbox that is not a special-use folder. Must not collapse
+    /// to Inbox — that made custom mail unreachable (T0.1).
+    Custom,
 }
 
 impl FolderKind {
-    /// Stable lowercase key stored in the `synced_folders.kind` column.
+    /// Stable lowercase key stored in the `synced_folders.kind` / `folders.kind`
+    /// columns.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Inbox => "inbox",
@@ -290,6 +393,7 @@ impl FolderKind {
             Self::Junk => "junk",
             Self::Trash => "trash",
             Self::Snoozed => "snoozed",
+            Self::Custom => "custom",
         }
     }
 
@@ -303,7 +407,31 @@ impl FolderKind {
             "junk" => Self::Junk,
             "trash" => Self::Trash,
             "snoozed" => Self::Snoozed,
-            _ => Self::Inbox,
+            "custom" => Self::Custom,
+            _ => Self::Custom,
+        }
+    }
+
+    /// Starred and Snoozed are derived views, not IMAP mailboxes.
+    pub fn is_mailbox(self) -> bool {
+        !matches!(self, Self::Starred | Self::Snoozed)
+    }
+
+    pub fn is_virtual(self) -> bool {
+        matches!(self, Self::Starred | Self::Snoozed)
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Inbox => "Inbox",
+            Self::Starred => "Starred",
+            Self::Drafts => "Drafts",
+            Self::Sent => "Sent",
+            Self::Archive => "Archive",
+            Self::Junk => "Junk",
+            Self::Trash => "Trash",
+            Self::Snoozed => "Snoozed",
+            Self::Custom => "Folder",
         }
     }
 }
@@ -1086,6 +1214,19 @@ pub struct ServerFolder {
     /// Local display name (the folder storage key).
     pub local_name: String,
     pub kind: FolderKind,
+}
+
+/// Internal discovery record used to persist the folder tree. Not an IPC type.
+#[derive(Debug, Clone)]
+pub struct DiscoveredMailbox {
+    pub server_name: String,
+    pub local_name: String,
+    pub display_name: String,
+    pub kind: FolderKind,
+    pub delimiter: String,
+    pub subscribed: bool,
+    pub selectable: bool,
+    pub namespace: String,
 }
 
 /// A persisted folder-sync selection for an account.

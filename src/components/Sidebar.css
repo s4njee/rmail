@@ -179,6 +179,67 @@
   color: var(--sidebar-count-color);
 }
 
+.sidebar__count.is-unread {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.sidebar__jump {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-10px) var(--space-8px);
+}
+
+.sidebar__jump-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-4px) var(--space-8px);
+  border: var(--pane-border);
+  border-radius: var(--radius-control);
+  background: var(--color-reading, transparent);
+  color: var(--color-text-body);
+  font-family: var(--font-sans);
+  font-size: var(--fs-12px);
+}
+
+.sidebar__twistie {
+  flex: none;
+  width: var(--space-12px);
+  font-size: var(--fs-10px);
+  line-height: 1;
+  color: var(--color-text-faint);
+  transform: rotate(0deg);
+  transition: transform 80ms ease;
+}
+
+.sidebar__twistie.is-open {
+  transform: rotate(90deg);
+}
+
+.sidebar__twistie.is-hidden {
+  visibility: hidden;
+}
+
+.sidebar__row--tree {
+  width: 100%;
+  padding-left: calc(var(--space-8px) + var(--tree-depth, 0) * var(--space-12px));
+}
+
+.sidebar__row.is-unsubscribed {
+  opacity: 0.65;
+}
+
+.sidebar__fav {
+  flex: none;
+  font-size: var(--fs-10px);
+  color: var(--color-text-muted);
+}
+
+.sidebar__account-block {
+  display: flex;
+  flex-direction: column;
+}
+
 /* Account rows (5.3) */
 .sidebar__account-row {
   display: flex;

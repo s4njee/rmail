@@ -105,6 +105,15 @@ pub fn run() {
         ))
         .invoke_handler(tauri::generate_handler![
             commands::list_folders,
+            commands::create_folder,
+            commands::rename_folder,
+            commands::move_folder,
+            commands::delete_folder,
+            commands::set_folder_subscribed,
+            commands::set_folder_expanded,
+            commands::set_folder_favourite,
+            commands::set_folder_view_settings,
+            commands::record_folder_opened,
             commands::list_accounts,
             commands::footprint,
             commands::page_messages,

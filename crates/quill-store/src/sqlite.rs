@@ -10,7 +10,7 @@ use crate::demo::{demo_accounts, demo_events, demo_messages};
 use crate::types::*;
 use rusqlite::types::Value;
 use rusqlite::{params, Connection, OptionalExtension};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -182,8 +182,35 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Add each folder's own counts to every ancestor so a collapsed parent
+/// still shows unread/total for its hidden children.
+fn rollup_folder_counts(folders: &mut [Folder]) {
+    let index: HashMap<FolderId, usize> = folders
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.id, i))
+        .collect();
+    // Leaves first: a child is always listed after its parent in the default
+    // sort, so walk reversed and push counts up.
+    let order: Vec<usize> = (0..folders.len()).rev().collect();
+    for i in order {
+        let (parent_id, unread, total) = {
+            let f = &folders[i];
+            (f.parent_id, f.unread_count_tree, f.total_count_tree)
+        };
+        if let Some(pid) = parent_id {
+            if let Some(&pi) = index.get(&pid) {
+                folders[pi].unread_count_tree =
+                    folders[pi].unread_count_tree.saturating_add(unread);
+                folders[pi].total_count_tree =
+                    folders[pi].total_count_tree.saturating_add(total);
+            }
+        }
+    }
+}
+
 /// Forward-only migrations, indexed by target `user_version`.
-const MIGRATIONS: [&str; 24] = [
+const MIGRATIONS: [&str; 25] = [
     r#"
 CREATE TABLE accounts (
   id INTEGER PRIMARY KEY,
@@ -477,6 +504,33 @@ ALTER TABLE events ADD COLUMN color TEXT;
     r#"
 ALTER TABLE action_queue ADD COLUMN last_error TEXT;
 "#,
+    // T0.1: persisted per-account folder tree. Ids start at 1000 so they
+    // never collide with the unified special-folder ids 1..=8.
+    r#"
+CREATE TABLE IF NOT EXISTS folders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  server_name TEXT NOT NULL,
+  local_name TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  parent_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL,
+  delimiter TEXT NOT NULL DEFAULT '/',
+  subscribed INTEGER NOT NULL DEFAULT 1,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  selectable INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  expanded INTEGER NOT NULL DEFAULT 0,
+  favourite INTEGER NOT NULL DEFAULT 0,
+  last_opened_at_ms INTEGER,
+  view_settings TEXT,
+  namespace TEXT NOT NULL DEFAULT '',
+  UNIQUE(account_id, server_name)
+);
+CREATE INDEX IF NOT EXISTS idx_folders_account_parent ON folders(account_id, parent_id);
+CREATE INDEX IF NOT EXISTS idx_folders_account_local ON folders(account_id, local_name);
+INSERT OR IGNORE INTO sqlite_sequence (name, seq) VALUES ('folders', 999);
+"#,
 ];
 
 pub struct SqliteStore {
@@ -517,6 +571,7 @@ impl SqliteStore {
             db_path,
         };
         store.migrate()?;
+        store.backfill_folders_from_legacy()?;
         Ok(store)
     }
 
@@ -689,6 +744,34 @@ impl SqliteStore {
                created_at_ms INTEGER NOT NULL);",
         )
         .map_err(|e| e.to_string())?;
+        // T0.1 folders table — a database stamped past migration 25 still
+        // gets the schema.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS folders (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+              server_name TEXT NOT NULL,
+              local_name TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              parent_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
+              kind TEXT NOT NULL,
+              delimiter TEXT NOT NULL DEFAULT '/',
+              subscribed INTEGER NOT NULL DEFAULT 1,
+              enabled INTEGER NOT NULL DEFAULT 1,
+              selectable INTEGER NOT NULL DEFAULT 1,
+              sort_order INTEGER NOT NULL DEFAULT 0,
+              expanded INTEGER NOT NULL DEFAULT 0,
+              favourite INTEGER NOT NULL DEFAULT 0,
+              last_opened_at_ms INTEGER,
+              view_settings TEXT,
+              namespace TEXT NOT NULL DEFAULT '',
+              UNIQUE(account_id, server_name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_folders_account_parent ON folders(account_id, parent_id);
+            CREATE INDEX IF NOT EXISTS idx_folders_account_local ON folders(account_id, local_name);
+            INSERT OR IGNORE INTO sqlite_sequence (name, seq) VALUES ('folders', 999);",
+        )
+        .map_err(|e| e.to_string())?;
 
         // Reconcile the stamp: SQL migrations 1..N are all applied (the repair
         // above covers any that were skipped), so the version should be N.
@@ -801,6 +884,14 @@ impl SqliteStore {
     }
 
     pub fn folders(&self) -> Vec<Folder> {
+        let mut out = self.unified_folders();
+        out.extend(self.account_folders());
+        out
+    }
+
+    /// The unified special-folder section (ids 1..=8). Unchanged contract
+    /// for the existing sidebar and persisted `folderId` filters.
+    fn unified_folders(&self) -> Vec<Folder> {
         let conn = self.conn.lock().unwrap();
         const KINDS: [(FolderKind, &str); 8] = [
             (FolderKind::Inbox, "Inbox"),
@@ -824,7 +915,6 @@ impl SqliteStore {
                            AND (snoozed_until_ms IS NULL OR snoozed_until_ms <= ?1)",
                         None,
                     ),
-                    // P1.1: the local-only Snoozed view.
                     FolderKind::Snoozed => (
                         "SELECT COUNT(*), COALESCE(SUM(unread), 0) FROM messages \
                          WHERE snoozed_until_ms > ?1 AND deleted_at_ms IS NULL",
@@ -840,20 +930,103 @@ impl SqliteStore {
                 let (total, unread): (i64, i64) = match arg {
                     Some(a) => conn
                         .query_row(sql, params![a, now], |r| Ok((r.get(0)?, r.get(1)?)))
-                        .expect("folder count"),
+                        .unwrap_or((0, 0)),
                     None => conn
                         .query_row(sql, params![now], |r| Ok((r.get(0)?, r.get(1)?)))
-                        .expect("folder count"),
+                        .unwrap_or((0, 0)),
                 };
-                Folder {
-                    id: (i + 1) as FolderId,
-                    name: name.to_string(),
+                Folder::unified(
+                    (i + 1) as FolderId,
+                    name,
                     kind,
-                    total_count: total as u32,
-                    unread_count: unread as u32,
-                }
+                    unread as u32,
+                    total as u32,
+                )
             })
             .collect()
+    }
+
+    /// Persisted per-account mailboxes, with own counts and a descendant rollup.
+    fn account_folders(&self) -> Vec<Folder> {
+        let conn = self.conn.lock().unwrap();
+        let now = now_ms();
+        let mut count_stmt = match conn.prepare(
+            "SELECT account_id, folder, COUNT(*), COALESCE(SUM(unread), 0) FROM messages \
+             WHERE deleted_at_ms IS NULL \
+               AND (snoozed_until_ms IS NULL OR snoozed_until_ms <= ?1) \
+             GROUP BY account_id, folder",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let mut counts: HashMap<(AccountId, String), (u32, u32)> = HashMap::new();
+        if let Ok(rows) = count_stmt.query_map(params![now], |r| {
+            Ok((
+                r.get::<_, AccountId>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)? as u32,
+                r.get::<_, i64>(3)? as u32,
+            ))
+        }) {
+            for row in rows.flatten() {
+                counts.insert((row.0, row.1), (row.2, row.3));
+            }
+        }
+
+        let mut stmt = match conn.prepare(
+            "SELECT id, account_id, server_name, local_name, display_name, parent_id, kind, \
+                    delimiter, subscribed, enabled, selectable, sort_order, expanded, favourite, \
+                    last_opened_at_ms, view_settings, namespace \
+             FROM folders ORDER BY account_id, sort_order, display_name",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let mut folders: Vec<Folder> = stmt
+            .query_map([], |r| {
+                let account_id: AccountId = r.get(1)?;
+                let local_name: String = r.get(3)?;
+                let (total, unread) = counts
+                    .get(&(account_id, local_name.clone()))
+                    .copied()
+                    .unwrap_or((0, 0));
+                let kind = FolderKind::from_str(&r.get::<_, String>(6)?);
+                Ok(Folder {
+                    id: r.get::<_, i64>(0)? as FolderId,
+                    account_id: Some(account_id),
+                    name: r.get(4)?,
+                    path: local_name,
+                    kind,
+                    unread_count: unread,
+                    total_count: total,
+                    unread_count_tree: unread,
+                    total_count_tree: total,
+                    parent_id: r
+                        .get::<_, Option<i64>>(5)?
+                        .map(|id| id as FolderId),
+                    server_name: Some(r.get(2)?),
+                    delimiter: r.get(7)?,
+                    subscribed: r.get::<_, i64>(8)? != 0,
+                    enabled: r.get::<_, i64>(9)? != 0,
+                    selectable: r.get::<_, i64>(10)? != 0,
+                    sort_order: r.get::<_, i64>(11)? as i32,
+                    expanded: r.get::<_, i64>(12)? != 0,
+                    favourite: r.get::<_, i64>(13)? != 0,
+                    last_opened_at_ms: r.get(14)?,
+                    view_settings: r.get(15)?,
+                    namespace: r.get(16)?,
+                })
+            })
+            .ok()
+            .map(|rows| rows.flatten().collect())
+            .unwrap_or_default();
+
+        rollup_folder_counts(&mut folders);
+        folders
+    }
+
+    pub fn folder_by_id(&self, id: FolderId) -> Option<Folder> {
+        self.folders().into_iter().find(|f| f.id == id)
     }
 
     pub fn page_messages(&self, query: &MessageQuery) -> MessagePage {
@@ -1258,6 +1431,11 @@ impl SqliteStore {
             }
             ActionType::Move => {}
             ActionType::Send => {}
+            ActionType::CreateFolder
+            | ActionType::RenameFolder
+            | ActionType::DeleteFolder
+            | ActionType::SubscribeFolder
+            | ActionType::UnsubscribeFolder => {}
         }
         Ok(())
     }
@@ -1388,19 +1566,27 @@ impl SqliteStore {
     }
 
     pub fn move_message(&self, id: MessageId, destination_folder: &str) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
-        let (account_id, current_folder, uid): (AccountId, String, Option<u32>) = conn
-            .query_row(
-                "SELECT account_id, folder, uid FROM messages WHERE id = ?1",
+        let (account_id, current_folder, uid, server_folder): (
+            AccountId,
+            String,
+            Option<u32>,
+            Option<String>,
+        ) = {
+            let conn = self.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT account_id, folder, uid, server_folder FROM messages WHERE id = ?1",
                 params![id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
-            .map_err(|e| e.to_string())?;
-
+            .map_err(|e| e.to_string())?
+        };
+        let (local, dest_server) = self.resolve_move_destination(account_id, destination_folder);
+        let replay_folder = server_folder.unwrap_or(current_folder);
+        let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
-                "UPDATE messages SET folder = ?1 WHERE id = ?2",
-                params![destination_folder, id],
+                "UPDATE messages SET folder = ?1, server_folder = ?2 WHERE id = ?3",
+                params![local, dest_server, id],
             )
             .map_err(|e| e.to_string())?;
         if affected == 0 {
@@ -1411,7 +1597,7 @@ impl SqliteStore {
         let _ = conn.execute(
             "INSERT INTO action_queue (account_id, action_type, folder, uid, payload, created_at_ms, retries) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
-            params![account_id, "move", current_folder, uid, destination_folder, now],
+            params![account_id, "move", replay_folder, uid, dest_server, now],
         );
 
         Ok(())
@@ -1572,11 +1758,12 @@ impl SqliteStore {
             let Some((account_id, server_folder, uid)) = self.message_location(id) else {
                 return Err("no such message".into());
             };
-            self.enqueue_action_str(account_id, "move", &server_folder, uid, Some(destination));
+            let (local, dest_server) = self.resolve_move_destination(account_id, destination);
+            self.enqueue_action_str(account_id, "move", &server_folder, uid, Some(&dest_server));
             let conn = self.conn.lock().unwrap();
             conn.execute(
-                "UPDATE messages SET folder = ?1 WHERE id = ?2",
-                params![destination, id],
+                "UPDATE messages SET folder = ?1, server_folder = ?2 WHERE id = ?3",
+                params![local, dest_server, id],
             )
             .map_err(|e| e.to_string())?;
             Ok(())
@@ -3068,7 +3255,10 @@ impl SqliteStore {
                 .map_err(|e| e.to_string())?;
             }
         }
-        tx.commit().map_err(|e| e.to_string())
+        tx.commit().map_err(|e| e.to_string())?;
+        drop(conn);
+        let _ = self.sync_folder_enabled_from_selection(account_id);
+        Ok(())
     }
 
     /// Add folders missing from the account's selection, enabled by default.
@@ -3147,6 +3337,602 @@ impl SqliteStore {
         )
     }
 
+    // -- Persisted folder tree (T0.1) --------------------------------------
+
+    /// A mailbox as discovered on the server, ready to upsert into `folders`.
+    pub fn reconcile_folders(
+        &self,
+        account_id: AccountId,
+        discovered: &[DiscoveredMailbox],
+    ) -> Result<(), String> {
+        if discovered.is_empty() {
+            return Ok(());
+        }
+        {
+            let conn = self.conn.lock().unwrap();
+            let mut insert = conn
+                .prepare(
+                    "INSERT INTO folders \
+                     (account_id, server_name, local_name, display_name, kind, delimiter, \
+                      subscribed, enabled, selectable, namespace) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9) \
+                     ON CONFLICT(account_id, server_name) DO UPDATE SET \
+                       local_name = excluded.local_name, \
+                       display_name = excluded.display_name, \
+                       kind = excluded.kind, \
+                       delimiter = excluded.delimiter, \
+                       subscribed = excluded.subscribed, \
+                       selectable = excluded.selectable, \
+                       namespace = excluded.namespace",
+                )
+                .map_err(|e| e.to_string())?;
+            for d in discovered {
+                insert
+                    .execute(params![
+                        account_id,
+                        d.server_name,
+                        d.local_name,
+                        d.display_name,
+                        d.kind.as_str(),
+                        d.delimiter,
+                        d.subscribed as i64,
+                        d.selectable as i64,
+                        d.namespace,
+                    ])
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        self.recompute_folder_parents(account_id)?;
+        self.sync_folder_enabled_from_selection(account_id)?;
+        Ok(())
+    }
+
+    /// Re-link `parent_id` from each mailbox's server name and delimiter.
+    pub fn recompute_folder_parents(&self, account_id: AccountId) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        let rows: Vec<(i64, String, String)> = conn
+            .prepare("SELECT id, server_name, delimiter FROM folders WHERE account_id = ?1")
+            .map_err(|e| e.to_string())?
+            .query_map(params![account_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let by_server: HashMap<String, i64> = rows
+            .iter()
+            .map(|(id, server, _)| (server.clone(), *id))
+            .collect();
+        for (id, server, delim) in &rows {
+            let parent = crate::folders::parent_server_name(server, delim)
+                .and_then(|p| by_server.get(&p).copied());
+            conn.execute(
+                "UPDATE folders SET parent_id = ?1 WHERE id = ?2",
+                params![parent, id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn sync_folder_enabled_from_selection(&self, account_id: AccountId) -> Result<(), String> {
+        let selection = self.synced_folders(account_id);
+        if selection.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.lock().unwrap();
+        for f in selection {
+            let _ = conn.execute(
+                "UPDATE folders SET enabled = ?1 WHERE account_id = ?2 AND server_name = ?3",
+                params![f.enabled as i64, account_id, f.server_name],
+            );
+        }
+        Ok(())
+    }
+
+    /// Seed `folders` from `synced_folders` + distinct message locations so a
+    /// database that predates T0.1 still gets a tree on first launch.
+    fn backfill_folders_from_legacy(&self) -> Result<(), String> {
+        let existing: i64 = {
+            let conn = self.conn.lock().unwrap();
+            conn.query_row("SELECT COUNT(*) FROM folders", [], |r| r.get(0))
+                .unwrap_or(0)
+        };
+        if existing > 0 {
+            return Ok(());
+        }
+
+        let accounts: Vec<AccountId> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT id FROM accounts")
+                .map_err(|e| e.to_string())?;
+            let ids = stmt
+                .query_map([], |r| r.get(0))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            ids
+        };
+
+        for account_id in accounts {
+            let mut discovered: Vec<DiscoveredMailbox> = self
+                .synced_folders(account_id)
+                .into_iter()
+                .map(|s| {
+                    let delim = if s.server_name.contains('/') {
+                        "/"
+                    } else if s.server_name.contains('.') && !s.server_name.contains('@') {
+                        "."
+                    } else {
+                        "/"
+                    };
+                    DiscoveredMailbox {
+                        server_name: s.server_name.clone(),
+                        local_name: s.local_name.clone(),
+                        display_name: crate::folders::display_name_of(&s.server_name, delim),
+                        kind: s.kind,
+                        delimiter: delim.to_string(),
+                        subscribed: true,
+                        selectable: true,
+                        namespace: crate::folders::infer_namespace(&s.server_name, delim),
+                    }
+                })
+                .collect();
+
+            let extras: Vec<(String, Option<String>)> = {
+                let conn = self.conn.lock().unwrap();
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT DISTINCT folder, server_folder FROM messages WHERE account_id = ?1",
+                    )
+                    .map_err(|e| e.to_string())?;
+                let rows = stmt
+                    .query_map(params![account_id], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .map_err(|e| e.to_string())?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| e.to_string())?;
+                rows
+            };
+            let known: HashSet<String> = discovered.iter().map(|d| d.local_name.clone()).collect();
+            for (folder, server_folder) in extras {
+                if matches!(
+                    folder.as_str(),
+                    "Inbox" | "Starred" | "Drafts" | "Sent" | "Archive" | "Junk" | "Trash" | "Snoozed"
+                ) {
+                    continue;
+                }
+                if known.contains(&folder) {
+                    continue;
+                }
+                let server = server_folder.unwrap_or_else(|| folder.clone());
+                let delim = if server.contains('/') { "/" } else { "/" };
+                discovered.push(DiscoveredMailbox {
+                    server_name: server.clone(),
+                    local_name: folder,
+                    display_name: crate::folders::display_name_of(&server, delim),
+                    kind: FolderKind::Custom,
+                    delimiter: delim.to_string(),
+                    subscribed: true,
+                    selectable: true,
+                    namespace: crate::folders::infer_namespace(&server, delim),
+                });
+            }
+
+            if !discovered.is_empty() {
+                self.reconcile_folders(account_id, &discovered)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn create_local_folder(
+        &self,
+        account_id: AccountId,
+        parent_id: Option<FolderId>,
+        name: &str,
+    ) -> Result<Folder, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("folder name is required".into());
+        }
+        if name.contains(['/', '\\', '.']) {
+            return Err("folder name cannot contain a hierarchy delimiter".into());
+        }
+        let (parent_server, delimiter, namespace) = if let Some(pid) = parent_id {
+            let parent = self
+                .folder_by_id(pid)
+                .ok_or_else(|| "parent folder not found".to_string())?;
+            if parent.account_id != Some(account_id) {
+                return Err("parent folder belongs to another account".into());
+            }
+            (
+                parent.server_name.filter(|s| !s.is_empty()),
+                parent.delimiter,
+                parent.namespace,
+            )
+        } else {
+            (None, "/".to_string(), String::new())
+        };
+        let delimiter = if delimiter.is_empty() {
+            "/".to_string()
+        } else {
+            delimiter
+        };
+        let server_name = crate::folders::child_server_name(
+            parent_server.as_deref(),
+            name,
+            &delimiter,
+        );
+        let local_name = crate::folders::local_name_for(&server_name, FolderKind::Custom);
+        let display_name = name.to_string();
+        let ns = if namespace.is_empty() {
+            crate::folders::infer_namespace(&server_name, &delimiter)
+        } else {
+            namespace
+        };
+
+        let id = {
+            let conn = self.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO folders \
+                 (account_id, server_name, local_name, display_name, parent_id, kind, delimiter, \
+                  subscribed, enabled, selectable, namespace) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'custom', ?6, 1, 1, 1, ?7)",
+                params![
+                    account_id,
+                    server_name,
+                    local_name,
+                    display_name,
+                    parent_id.map(|id| id as i64),
+                    delimiter,
+                    ns,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.last_insert_rowid() as FolderId
+        };
+
+        let _ = self.upsert_synced_folders(
+            account_id,
+            &[SyncedFolder {
+                account_id,
+                server_name: server_name.clone(),
+                local_name: local_name.clone(),
+                kind: FolderKind::Custom,
+                enabled: true,
+            }],
+        );
+        let _ = self.enqueue_action(
+            account_id,
+            ActionType::CreateFolder,
+            &server_name,
+            None,
+            None,
+        );
+        self.folder_by_id(id)
+            .ok_or_else(|| "created folder not found".into())
+    }
+
+    pub fn rename_local_folder(&self, id: FolderId, new_name: &str) -> Result<Folder, String> {
+        let new_name = new_name.trim();
+        if new_name.is_empty() {
+            return Err("folder name is required".into());
+        }
+        let folder = self
+            .folder_by_id(id)
+            .ok_or_else(|| "folder not found".to_string())?;
+        let account_id = folder
+            .account_id
+            .ok_or_else(|| "unified folders cannot be renamed".to_string())?;
+        if folder.kind == FolderKind::Inbox {
+            return Err("the Inbox cannot be renamed".into());
+        }
+        let server = folder
+            .server_name
+            .clone()
+            .ok_or_else(|| "folder has no server name".to_string())?;
+        let parent = crate::folders::parent_server_name(&server, &folder.delimiter);
+        let new_server = crate::folders::child_server_name(
+            parent.as_deref(),
+            new_name,
+            &folder.delimiter,
+        );
+        self.rewrite_folder_path(account_id, &server, &new_server, &folder.delimiter)?;
+        let _ = self.enqueue_action(
+            account_id,
+            ActionType::RenameFolder,
+            &server,
+            None,
+            Some(&new_server),
+        );
+        self.folder_by_id(id)
+            .ok_or_else(|| "renamed folder not found".into())
+    }
+
+    pub fn move_local_folder(
+        &self,
+        id: FolderId,
+        new_parent_id: Option<FolderId>,
+    ) -> Result<Folder, String> {
+        let folder = self
+            .folder_by_id(id)
+            .ok_or_else(|| "folder not found".to_string())?;
+        let account_id = folder
+            .account_id
+            .ok_or_else(|| "unified folders cannot be moved".to_string())?;
+        if folder.kind == FolderKind::Inbox {
+            return Err("the Inbox cannot be moved".into());
+        }
+        if new_parent_id == Some(id) {
+            return Err("a folder cannot be its own parent".into());
+        }
+        // Refuse to move under a descendant.
+        if let Some(pid) = new_parent_id {
+            let mut walk = self.folder_by_id(pid);
+            while let Some(p) = walk {
+                if p.id == id {
+                    return Err("cannot move a folder under one of its descendants".into());
+                }
+                walk = p.parent_id.and_then(|id| self.folder_by_id(id));
+            }
+        }
+        let server = folder
+            .server_name
+            .clone()
+            .ok_or_else(|| "folder has no server name".to_string())?;
+        let (parent_server, delimiter) = if let Some(pid) = new_parent_id {
+            let parent = self
+                .folder_by_id(pid)
+                .ok_or_else(|| "parent folder not found".to_string())?;
+            if parent.account_id != Some(account_id) {
+                return Err("cannot move a folder to another account".into());
+            }
+            (parent.server_name.clone(), parent.delimiter.clone())
+        } else {
+            (None, folder.delimiter.clone())
+        };
+        let new_server = crate::folders::child_server_name(
+            parent_server.as_deref(),
+            &folder.name,
+            &delimiter,
+        );
+        self.rewrite_folder_path(account_id, &server, &new_server, &delimiter)?;
+        let _ = self.enqueue_action(
+            account_id,
+            ActionType::RenameFolder,
+            &server,
+            None,
+            Some(&new_server),
+        );
+        self.folder_by_id(id)
+            .ok_or_else(|| "moved folder not found".into())
+    }
+
+    fn rewrite_folder_path(
+        &self,
+        account_id: AccountId,
+        from: &str,
+        to: &str,
+        delimiter: &str,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        let rows: Vec<(i64, String, String)> = conn
+            .prepare(
+                "SELECT id, server_name, local_name FROM folders \
+                 WHERE account_id = ?1 AND (server_name = ?2 OR server_name LIKE ?3)",
+            )
+            .map_err(|e| e.to_string())?
+            .query_map(
+                params![account_id, from, format!("{from}{delimiter}%")],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        for (id, server, local) in rows {
+            let new_server = crate::folders::rewrite_prefix(&server, from, to, delimiter);
+            let kind = FolderKind::from_str(
+                &conn
+                    .query_row("SELECT kind FROM folders WHERE id = ?1", params![id], |r| {
+                        r.get::<_, String>(0)
+                    })
+                    .unwrap_or_else(|_| "custom".into()),
+            );
+            let new_local = if kind == FolderKind::Custom {
+                crate::folders::rewrite_prefix(&local, from, to, delimiter)
+            } else {
+                local.clone()
+            };
+            let display = crate::folders::display_name_of(&new_server, delimiter);
+            conn.execute(
+                "UPDATE folders SET server_name = ?1, local_name = ?2, display_name = ?3 \
+                 WHERE id = ?4",
+                params![new_server, new_local, display, id],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "UPDATE messages SET folder = ?1, server_folder = ?2 \
+                 WHERE account_id = ?3 AND (folder = ?4 OR server_folder = ?5)",
+                params![new_local, new_server, account_id, local, server],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "UPDATE synced_folders SET server_name = ?1, local_name = ?2 \
+                 WHERE account_id = ?3 AND server_name = ?4",
+                params![new_server, new_local, account_id, server],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        drop(conn);
+        self.recompute_folder_parents(account_id)
+    }
+
+    pub fn delete_local_folder(&self, id: FolderId) -> Result<(), String> {
+        let folder = self
+            .folder_by_id(id)
+            .ok_or_else(|| "folder not found".to_string())?;
+        let account_id = folder
+            .account_id
+            .ok_or_else(|| "unified folders cannot be deleted".to_string())?;
+        if folder.kind == FolderKind::Inbox {
+            return Err("the Inbox cannot be deleted".into());
+        }
+        let children = self
+            .account_folders()
+            .into_iter()
+            .any(|f| f.parent_id == Some(id));
+        if children {
+            return Err("delete or move child folders first".into());
+        }
+        let server = folder
+            .server_name
+            .clone()
+            .ok_or_else(|| "folder has no server name".to_string())?;
+        // Relocate remaining mail to Trash so it is not orphaned.
+        {
+            let conn = self.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE messages SET folder = 'Trash' WHERE account_id = ?1 AND folder = ?2",
+                params![account_id, folder.path],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute("DELETE FROM folders WHERE id = ?1", params![id as i64])
+                .map_err(|e| e.to_string())?;
+            conn.execute(
+                "DELETE FROM synced_folders WHERE account_id = ?1 AND server_name = ?2",
+                params![account_id, server],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        let _ = self.enqueue_action(
+            account_id,
+            ActionType::DeleteFolder,
+            &server,
+            None,
+            None,
+        );
+        Ok(())
+    }
+
+    pub fn set_folder_subscribed(&self, id: FolderId, subscribed: bool) -> Result<Folder, String> {
+        let folder = self
+            .folder_by_id(id)
+            .ok_or_else(|| "folder not found".to_string())?;
+        let account_id = folder
+            .account_id
+            .ok_or_else(|| "unified folders have no subscribe state".to_string())?;
+        let server = folder
+            .server_name
+            .clone()
+            .ok_or_else(|| "folder has no server name".to_string())?;
+        {
+            let conn = self.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE folders SET subscribed = ?1 WHERE id = ?2",
+                params![subscribed as i64, id as i64],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        let action = if subscribed {
+            ActionType::SubscribeFolder
+        } else {
+            ActionType::UnsubscribeFolder
+        };
+        let _ = self.enqueue_action(account_id, action, &server, None, None);
+        self.folder_by_id(id)
+            .ok_or_else(|| "folder not found".into())
+    }
+
+    pub fn set_folder_expanded(&self, id: FolderId, expanded: bool) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn
+            .execute(
+                "UPDATE folders SET expanded = ?1 WHERE id = ?2",
+                params![expanded as i64, id as i64],
+            )
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("folder not found".into());
+        }
+        Ok(())
+    }
+
+    pub fn set_folder_favourite(&self, id: FolderId, favourite: bool) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn
+            .execute(
+                "UPDATE folders SET favourite = ?1 WHERE id = ?2",
+                params![favourite as i64, id as i64],
+            )
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("folder not found".into());
+        }
+        Ok(())
+    }
+
+    pub fn set_folder_view_settings(
+        &self,
+        id: FolderId,
+        view_settings: Option<&str>,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn
+            .execute(
+                "UPDATE folders SET view_settings = ?1 WHERE id = ?2",
+                params![view_settings, id as i64],
+            )
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("folder not found".into());
+        }
+        Ok(())
+    }
+
+    pub fn record_folder_opened(&self, id: FolderId) -> Result<(), String> {
+        if id < FIRST_MAILBOX_ID {
+            return Ok(());
+        }
+        let conn = self.conn.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE folders SET last_opened_at_ms = ?1 WHERE id = ?2",
+            params![now_ms(), id as i64],
+        );
+        Ok(())
+    }
+
+    /// Resolve a move destination (local path or display name) to the local
+    /// storage key and the IMAP mailbox name for this account.
+    pub fn resolve_move_destination(
+        &self,
+        account_id: AccountId,
+        dest: &str,
+    ) -> (String, String) {
+        let folders = self.account_folders();
+        if let Some(f) = folders.iter().find(|f| {
+            f.account_id == Some(account_id)
+                && (f.path == dest
+                    || f.server_name.as_deref() == Some(dest)
+                    || f.name == dest)
+        }) {
+            return (
+                f.path.clone(),
+                f.server_name.clone().unwrap_or_else(|| dest.to_string()),
+            );
+        }
+        // Unified special name → that kind's mailbox for this account.
+        if let Some(f) = folders.iter().find(|f| {
+            f.account_id == Some(account_id) && f.kind.display_name() == dest && f.kind.is_mailbox()
+        }) {
+            return (
+                f.path.clone(),
+                f.server_name.clone().unwrap_or_else(|| dest.to_string()),
+            );
+        }
+        (dest.to_string(), dest.to_string())
+    }
+
     /// Update the editable fields of an existing account (server/port/TLS/sync
     /// mode/color). The address and protocol are the account's identity and are
     /// not changed by an edit.
@@ -3213,6 +3999,11 @@ impl SqliteStore {
     /// from the first message mapped to the display Archive folder. Callers
     /// fall back to "Archive" when nothing is known.
     pub fn archive_folder_name(&self, account_id: AccountId) -> Option<String> {
+        if let Some(f) = self.account_folders().into_iter().find(|f| {
+            f.account_id == Some(account_id) && f.kind == FolderKind::Archive
+        }) {
+            return f.server_name;
+        }
         let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT server_folder FROM messages WHERE account_id = ?1 AND folder = 'Archive' \
@@ -3416,6 +4207,11 @@ impl SqliteStore {
             ActionType::MarkAnswered => "mark_answered",
             ActionType::MarkForwarded => "mark_forwarded",
             ActionType::Send => "send",
+            ActionType::CreateFolder => "create_folder",
+            ActionType::RenameFolder => "rename_folder",
+            ActionType::DeleteFolder => "delete_folder",
+            ActionType::SubscribeFolder => "subscribe_folder",
+            ActionType::UnsubscribeFolder => "unsubscribe_folder",
         };
         conn.execute(
             "INSERT INTO action_queue (account_id, action_type, folder, uid, payload, created_at_ms, retries) \
@@ -3471,6 +4267,11 @@ impl SqliteStore {
                     "mark_answered" => ActionType::MarkAnswered,
                     "mark_forwarded" => ActionType::MarkForwarded,
                     "send" => ActionType::Send,
+                    "create_folder" => ActionType::CreateFolder,
+                    "rename_folder" => ActionType::RenameFolder,
+                    "delete_folder" => ActionType::DeleteFolder,
+                    "subscribe_folder" => ActionType::SubscribeFolder,
+                    "unsubscribe_folder" => ActionType::UnsubscribeFolder,
                     _ => ActionType::MarkRead,
                 };
                 Ok(QueuedAction {
@@ -4794,6 +5595,235 @@ mod tests {
         assert!(!inbox.enabled, "upsert must not flip enabled=false back on");
         let archive = rows.iter().find(|f| f.server_name == "Archive").unwrap();
         assert!(archive.enabled);
+    }
+
+    fn test_account(store: &SqliteStore) -> Account {
+        store
+            .create_account(
+                &NewAccount {
+                    address: format!("f{}@example.com", std::process::id()),
+                    protocol: "IMAP".into(),
+                    server: "imap.example.com".into(),
+                    port: 993,
+                    tls: true,
+                    sync_mode: "every 2 min".into(),
+                },
+                "#3b5bdb".into(),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn folder_kind_unknown_is_custom() {
+        assert_eq!(FolderKind::from_str("projects"), FolderKind::Custom);
+        assert_eq!(FolderKind::from_str("custom"), FolderKind::Custom);
+        assert_eq!(FolderKind::Custom.as_str(), "custom");
+        assert!(FolderKind::Custom.is_mailbox());
+        assert!(!FolderKind::Starred.is_mailbox());
+    }
+
+    #[test]
+    fn persisted_folder_tree_nests_and_rolls_up() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let acc = test_account(&store);
+        store
+            .reconcile_folders(
+                acc.id,
+                &[
+                    DiscoveredMailbox {
+                        server_name: "INBOX".into(),
+                        local_name: "Inbox".into(),
+                        display_name: "INBOX".into(),
+                        kind: FolderKind::Inbox,
+                        delimiter: "/".into(),
+                        subscribed: true,
+                        selectable: true,
+                        namespace: String::new(),
+                    },
+                    DiscoveredMailbox {
+                        server_name: "Work".into(),
+                        local_name: "Work".into(),
+                        display_name: "Work".into(),
+                        kind: FolderKind::Custom,
+                        delimiter: "/".into(),
+                        subscribed: true,
+                        selectable: true,
+                        namespace: String::new(),
+                    },
+                    DiscoveredMailbox {
+                        server_name: "Work/Projects".into(),
+                        local_name: "Work/Projects".into(),
+                        display_name: "Projects".into(),
+                        kind: FolderKind::Custom,
+                        delimiter: "/".into(),
+                        subscribed: true,
+                        selectable: true,
+                        namespace: String::new(),
+                    },
+                    DiscoveredMailbox {
+                        server_name: "Work/Projects/Q1".into(),
+                        local_name: "Work/Projects/Q1".into(),
+                        display_name: "Q1".into(),
+                        kind: FolderKind::Custom,
+                        delimiter: "/".into(),
+                        subscribed: false,
+                        selectable: true,
+                        namespace: String::new(),
+                    },
+                ],
+            )
+            .unwrap();
+
+        let tree: Vec<Folder> = store
+            .folders()
+            .into_iter()
+            .filter(|f| f.account_id == Some(acc.id))
+            .collect();
+        assert_eq!(tree.len(), 4);
+        let work = tree.iter().find(|f| f.path == "Work").unwrap();
+        let projects = tree.iter().find(|f| f.path == "Work/Projects").unwrap();
+        let q1 = tree.iter().find(|f| f.path == "Work/Projects/Q1").unwrap();
+        assert_eq!(projects.parent_id, Some(work.id));
+        assert_eq!(q1.parent_id, Some(projects.id));
+        assert!(!q1.subscribed);
+        assert!(work.id >= FIRST_MAILBOX_ID);
+
+        // A message in the leaf rolls up to collapsed parents.
+        store
+            .upsert_fetched_message(
+                acc.id,
+                "Work/Projects/Q1",
+                "Work/Projects/Q1",
+                1,
+                1,
+                "Ada",
+                "ada@example.com",
+                "Budget",
+                "q1 notes",
+                now_ms(),
+                true,
+                false,
+                false,
+                false,
+                false,
+            )
+            .unwrap();
+        let tree: Vec<Folder> = store
+            .folders()
+            .into_iter()
+            .filter(|f| f.account_id == Some(acc.id))
+            .collect();
+        let work = tree.iter().find(|f| f.path == "Work").unwrap();
+        let q1 = tree.iter().find(|f| f.path == "Work/Projects/Q1").unwrap();
+        assert_eq!(q1.total_count, 1);
+        assert_eq!(q1.unread_count, 1);
+        assert_eq!(work.total_count, 0);
+        assert_eq!(work.total_count_tree, 1);
+        assert_eq!(work.unread_count_tree, 1);
+    }
+
+    #[test]
+    fn folder_crud_queues_actions() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let acc = test_account(&store);
+        store
+            .reconcile_folders(
+                acc.id,
+                &[DiscoveredMailbox {
+                    server_name: "INBOX".into(),
+                    local_name: "Inbox".into(),
+                    display_name: "INBOX".into(),
+                    kind: FolderKind::Inbox,
+                    delimiter: "/".into(),
+                    subscribed: true,
+                    selectable: true,
+                    namespace: String::new(),
+                }],
+            )
+            .unwrap();
+
+        let created = store.create_local_folder(acc.id, None, "Receipts").unwrap();
+        assert_eq!(created.path, "Receipts");
+        assert_eq!(created.kind, FolderKind::Custom);
+        assert_eq!(created.account_id, Some(acc.id));
+
+        let inbox = store
+            .folders()
+            .into_iter()
+            .find(|f| f.account_id == Some(acc.id) && f.kind == FolderKind::Inbox)
+            .unwrap();
+        let nested = store
+            .create_local_folder(acc.id, Some(inbox.id), "Later")
+            .unwrap();
+        assert_eq!(nested.path, "INBOX/Later");
+        assert_eq!(nested.parent_id, Some(inbox.id));
+
+        let renamed = store.rename_local_folder(created.id, "Expenses").unwrap();
+        assert_eq!(renamed.path, "Expenses");
+        assert_eq!(renamed.server_name.as_deref(), Some("Expenses"));
+
+        store.set_folder_expanded(renamed.id, true).unwrap();
+        store.set_folder_favourite(renamed.id, true).unwrap();
+        store
+            .set_folder_view_settings(renamed.id, Some(r#"{"sort":"date"}"#))
+            .unwrap();
+        store.record_folder_opened(renamed.id).unwrap();
+        let fav = store.folder_by_id(renamed.id).unwrap();
+        assert!(fav.expanded);
+        assert!(fav.favourite);
+        assert_eq!(fav.view_settings.as_deref(), Some(r#"{"sort":"date"}"#));
+        assert!(fav.last_opened_at_ms.is_some());
+
+        store.delete_local_folder(renamed.id).unwrap();
+        assert!(store.folder_by_id(renamed.id).is_none());
+
+        let queued = store.list_queued_actions(Some(acc.id));
+        let types: Vec<ActionType> = queued.iter().map(|a| a.action_type).collect();
+        assert!(types.contains(&ActionType::CreateFolder));
+        assert!(types.contains(&ActionType::RenameFolder));
+        assert!(types.contains(&ActionType::DeleteFolder));
+    }
+
+    #[test]
+    fn five_hundred_folders_list_in_one_pass() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let acc = test_account(&store);
+        let mut discovered = Vec::new();
+        // Five levels: L0/L1/L2/L3/leaf — 100 roots × 5 = 500.
+        for i in 0..100 {
+            let mut path = format!("N{i}");
+            for depth in 0..5 {
+                if depth > 0 {
+                    path = format!("{path}/d{depth}");
+                }
+                discovered.push(DiscoveredMailbox {
+                    server_name: path.clone(),
+                    local_name: path.clone(),
+                    display_name: crate::folders::display_name_of(&path, "/"),
+                    kind: FolderKind::Custom,
+                    delimiter: "/".into(),
+                    subscribed: true,
+                    selectable: true,
+                    namespace: String::new(),
+                });
+            }
+        }
+        assert_eq!(discovered.len(), 500);
+        store.reconcile_folders(acc.id, &discovered).unwrap();
+        let tree: Vec<Folder> = store
+            .folders()
+            .into_iter()
+            .filter(|f| f.account_id == Some(acc.id))
+            .collect();
+        assert_eq!(tree.len(), 500);
+        let deep = tree.iter().find(|f| f.path.ends_with("/d4")).unwrap();
+        let mut depth = 0;
+        let mut walk = Some(deep.id);
+        while let Some(id) = walk {
+            depth += 1;
+            walk = tree.iter().find(|f| f.id == id).and_then(|f| f.parent_id);
+        }
+        assert_eq!(depth, 5);
     }
 
     /// Queued-action and draft counts feed the account-removal confirm.

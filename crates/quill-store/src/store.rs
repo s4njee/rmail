@@ -128,13 +128,13 @@ impl MemoryStore {
                         _ => m.folder == name,
                     })
                     .collect::<Vec<_>>();
-                Folder {
-                    id: (i + 1) as FolderId,
-                    name: name.to_string(),
+                Folder::unified(
+                    (i + 1) as FolderId,
+                    name,
                     kind,
-                    total_count: matching.len() as u32,
-                    unread_count: matching.iter().filter(|m| m.unread).count() as u32,
-                }
+                    matching.iter().filter(|m| m.unread).count() as u32,
+                    matching.len() as u32,
+                )
             })
             .collect()
     }
@@ -262,6 +262,11 @@ impl MemoryStore {
                         ActionType::MarkNotJunk => m.folder = "Inbox".to_string(),
                         ActionType::Move => {}
                         ActionType::Send => {}
+                        ActionType::CreateFolder
+                        | ActionType::RenameFolder
+                        | ActionType::DeleteFolder
+                        | ActionType::SubscribeFolder
+                        | ActionType::UnsubscribeFolder => {}
                     }
                 }
             }

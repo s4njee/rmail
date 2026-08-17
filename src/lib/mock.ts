@@ -154,14 +154,109 @@ export const MOCK_ACCOUNTS: Account[] = [
   },
 ];
 
+function unifiedFolder(
+  id: number,
+  name: string,
+  kind: Folder["kind"],
+  unread: number,
+  total: number,
+): Folder {
+  return {
+    id,
+    account_id: null,
+    name,
+    path: name,
+    kind,
+    unread_count: unread,
+    total_count: total,
+    unread_count_tree: unread,
+    total_count_tree: total,
+    parent_id: null,
+    server_name: null,
+    delimiter: "/",
+    subscribed: true,
+    enabled: true,
+    selectable: kind !== "starred" && kind !== "snoozed",
+    expanded: false,
+    favourite: false,
+    sort_order: id,
+    view_settings: null,
+    last_opened_at_ms: null,
+    namespace: "",
+  };
+}
+
+function mockMailbox(
+  id: number,
+  accountId: number,
+  name: string,
+  path: string,
+  parentId: number | null,
+  extra: Partial<Folder> = {},
+): Folder {
+  return {
+    id,
+    account_id: accountId,
+    name,
+    path,
+    kind: extra.kind ?? "custom",
+    unread_count: extra.unread_count ?? 0,
+    total_count: extra.total_count ?? 0,
+    unread_count_tree: extra.unread_count_tree ?? extra.unread_count ?? 0,
+    total_count_tree: extra.total_count_tree ?? extra.total_count ?? 0,
+    parent_id: parentId,
+    server_name: path,
+    delimiter: "/",
+    subscribed: extra.subscribed ?? true,
+    enabled: extra.enabled ?? true,
+    selectable: extra.selectable ?? true,
+    expanded: extra.expanded ?? false,
+    favourite: extra.favourite ?? false,
+    sort_order: extra.sort_order ?? 0,
+    view_settings: extra.view_settings ?? null,
+    last_opened_at_ms: extra.last_opened_at_ms ?? null,
+    namespace: extra.namespace ?? "",
+  };
+}
+
 export const MOCK_FOLDERS: Folder[] = [
-  { id: 1, name: "Inbox", kind: "inbox", unread_count: 12, total_count: 12 },
-  { id: 2, name: "Starred", kind: "starred", unread_count: 4, total_count: 4 },
-  { id: 3, name: "Drafts", kind: "drafts", unread_count: 0, total_count: 2 },
-  { id: 4, name: "Sent", kind: "sent", unread_count: 0, total_count: 8 },
-  { id: 5, name: "Archive", kind: "archive", unread_count: 0, total_count: 31 },
-  { id: 6, name: "Junk", kind: "junk", unread_count: 0, total_count: 1 },
-  { id: 7, name: "Trash", kind: "trash", unread_count: 0, total_count: 0 },
+  unifiedFolder(1, "Inbox", "inbox", 12, 12),
+  unifiedFolder(2, "Starred", "starred", 4, 4),
+  unifiedFolder(3, "Drafts", "drafts", 0, 2),
+  unifiedFolder(4, "Sent", "sent", 0, 8),
+  unifiedFolder(5, "Archive", "archive", 0, 31),
+  unifiedFolder(6, "Junk", "junk", 0, 1),
+  unifiedFolder(7, "Trash", "trash", 0, 0),
+  unifiedFolder(8, "Snoozed", "snoozed", 0, 0),
+  mockMailbox(1000, 1, "Inbox", "Inbox", null, {
+    kind: "inbox",
+    unread_count: 8,
+    total_count: 10,
+    unread_count_tree: 8,
+    total_count_tree: 10,
+  }),
+  mockMailbox(1001, 1, "Work", "Work", null, {
+    expanded: true,
+    unread_count_tree: 3,
+    total_count_tree: 5,
+  }),
+  mockMailbox(1002, 1, "Projects", "Work/Projects", 1001, {
+    unread_count: 3,
+    total_count: 5,
+    unread_count_tree: 3,
+    total_count_tree: 5,
+    favourite: true,
+  }),
+  mockMailbox(1003, 1, "Receipts", "Receipts", null, {
+    last_opened_at_ms: Date.now() - 3600_000,
+  }),
+  mockMailbox(1004, 2, "Inbox", "Inbox", null, {
+    kind: "inbox",
+    unread_count: 4,
+    total_count: 4,
+    unread_count_tree: 4,
+    total_count_tree: 4,
+  }),
 ];
 
 export const MOCK_EVENTS: CalendarEvent[] = [

@@ -46,7 +46,8 @@ export function NotificationsSection() {
     // Toggling any notification option must not clear the dock badge — pass the
     // real inbox unread count so an enabled badge stays accurate.
     const inboxUnread =
-      folders().find((f) => f.kind === "inbox")?.unread_count ?? 0;
+      folders().find((f) => f.kind === "inbox" && f.account_id == null)
+        ?.unread_count ?? 0;
     syncDockBadge(inboxUnread, next);
   };
 
@@ -255,7 +256,7 @@ export function NotificationsSection() {
                     <span class="general-option__title">{acc.address}</span>
                     <span class="general-option__desc">
                       {acc.protocol} ·{" "}
-                      {folders().find((f) => f.kind === "inbox")?.name ??
+                      {folders().find((f) => f.kind === "inbox" && f.account_id == null)?.name ??
                         "Inbox"}
                     </span>
                   </span>

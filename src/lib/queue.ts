@@ -34,6 +34,11 @@ export function actionLabel(a: QueuedAction): { label: string; state: string } {
     markAnswered: "Mark answered",
     markForwarded: "Mark forwarded",
     send: "Send message",
+    createFolder: `Create folder ${a.folder}`,
+    renameFolder: `Rename folder ${a.folder}`,
+    deleteFolder: `Delete folder ${a.folder}`,
+    subscribeFolder: `Subscribe ${a.folder}`,
+    unsubscribeFolder: `Unsubscribe ${a.folder}`,
   };
   const state =
     a.retries === 0 ? "pending" : a.retries >= 5 ? "stuck" : "retrying";

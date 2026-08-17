@@ -18,6 +18,7 @@ import type { ConnectionTestReport } from "./ipc/ConnectionTestReport";
 import type { DiscoveredSettings } from "./ipc/DiscoveredSettings";
 import type { FreeBusySlot } from "./ipc/FreeBusySlot";
 import type { Folder } from "./ipc/Folder";
+import type { NewFolder } from "./ipc/NewFolder";
 import type { ImportReport } from "./ipc/ImportReport";
 import type { MailRule } from "./ipc/MailRule";
 import type { MessageDetail } from "./ipc/MessageDetail";
@@ -60,6 +61,8 @@ export const isTauri = () =>
 let mockSettings = { ...MOCK_SETTINGS };
 let mockEvents = [...MOCK_EVENTS];
 const mockAccounts = [...MOCK_ACCOUNTS];
+let mockFolders = [...MOCK_FOLDERS];
+let mockNextFolderId = 2000;
 
 // Settings
 export const getSettings = async (): Promise<AppSettings> => {
@@ -142,7 +145,137 @@ export const getFootprint = async (): Promise<number> => {
 // Folders & accounts
 export const listFolders = async (): Promise<Folder[]> => {
   if (isTauri()) return invoke<Folder[]>("list_folders");
-  return MOCK_FOLDERS;
+  return mockFolders;
+};
+
+export const createFolder = async (spec: NewFolder): Promise<Folder> => {
+  if (isTauri()) return invoke<Folder>("create_folder", { spec });
+  const parent = spec.parentId
+    ? mockFolders.find((f) => f.id === spec.parentId)
+    : undefined;
+  const path = parent ? `${parent.path}/${spec.name}` : spec.name;
+  const folder: Folder = {
+    id: mockNextFolderId++,
+    account_id: spec.accountId,
+    name: spec.name,
+    path,
+    kind: "custom",
+    unread_count: 0,
+    total_count: 0,
+    unread_count_tree: 0,
+    total_count_tree: 0,
+    parent_id: spec.parentId,
+    server_name: path,
+    delimiter: parent?.delimiter ?? "/",
+    subscribed: true,
+    enabled: true,
+    selectable: true,
+    expanded: false,
+    favourite: false,
+    sort_order: 0,
+    view_settings: null,
+    last_opened_at_ms: null,
+    namespace: parent?.namespace ?? "",
+  };
+  mockFolders = [...mockFolders, folder];
+  return folder;
+};
+
+export const renameFolder = async (
+  id: number,
+  name: string,
+): Promise<Folder> => {
+  if (isTauri()) return invoke<Folder>("rename_folder", { id, name });
+  mockFolders = mockFolders.map((f) => {
+    if (f.id !== id) return f;
+    const parentPath = f.path.includes("/")
+      ? f.path.slice(0, f.path.lastIndexOf("/"))
+      : "";
+    const path = parentPath ? `${parentPath}/${name}` : name;
+    return { ...f, name, path, server_name: path };
+  });
+  const found = mockFolders.find((f) => f.id === id);
+  if (!found) throw new Error("folder not found");
+  return found;
+};
+
+export const moveFolder = async (
+  id: number,
+  parentId: number | null,
+): Promise<Folder> => {
+  if (isTauri()) return invoke<Folder>("move_folder", { id, parentId });
+  const folder = mockFolders.find((f) => f.id === id);
+  if (!folder) throw new Error("folder not found");
+  const parent = parentId
+    ? mockFolders.find((f) => f.id === parentId)
+    : undefined;
+  const path = parent ? `${parent.path}/${folder.name}` : folder.name;
+  mockFolders = mockFolders.map((f) =>
+    f.id === id
+      ? { ...f, parent_id: parentId, path, server_name: path }
+      : f,
+  );
+  return mockFolders.find((f) => f.id === id)!;
+};
+
+export const deleteFolder = async (id: number): Promise<void> => {
+  if (isTauri()) return invoke<void>("delete_folder", { id });
+  mockFolders = mockFolders.filter((f) => f.id !== id);
+};
+
+export const setFolderSubscribed = async (
+  id: number,
+  subscribed: boolean,
+): Promise<Folder> => {
+  if (isTauri())
+    return invoke<Folder>("set_folder_subscribed", { id, subscribed });
+  mockFolders = mockFolders.map((f) =>
+    f.id === id ? { ...f, subscribed } : f,
+  );
+  const found = mockFolders.find((f) => f.id === id);
+  if (!found) throw new Error("folder not found");
+  return found;
+};
+
+export const setFolderExpanded = async (
+  id: number,
+  expanded: boolean,
+): Promise<void> => {
+  if (isTauri()) return invoke<void>("set_folder_expanded", { id, expanded });
+  mockFolders = mockFolders.map((f) =>
+    f.id === id ? { ...f, expanded } : f,
+  );
+};
+
+export const setFolderFavourite = async (
+  id: number,
+  favourite: boolean,
+): Promise<void> => {
+  if (isTauri()) return invoke<void>("set_folder_favourite", { id, favourite });
+  mockFolders = mockFolders.map((f) =>
+    f.id === id ? { ...f, favourite } : f,
+  );
+};
+
+export const setFolderViewSettings = async (
+  id: number,
+  viewSettings: string | null,
+): Promise<void> => {
+  if (isTauri())
+    return invoke<void>("set_folder_view_settings", {
+      id,
+      viewSettings,
+    });
+  mockFolders = mockFolders.map((f) =>
+    f.id === id ? { ...f, view_settings: viewSettings } : f,
+  );
+};
+
+export const recordFolderOpened = async (id: number): Promise<void> => {
+  if (isTauri()) return invoke<void>("record_folder_opened", { id });
+  mockFolders = mockFolders.map((f) =>
+    f.id === id ? { ...f, last_opened_at_ms: Date.now() } : f,
+  );
 };
 
 export const listAccounts = async (): Promise<Account[]> => {

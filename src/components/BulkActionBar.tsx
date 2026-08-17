@@ -1,6 +1,8 @@
 import { createSignal, For, Show } from "solid-js";
 import type { BulkActionResult } from "../lib/ipc/BulkActionResult";
+import { folderLabel, isMailbox } from "../lib/folders";
 import type { Folder } from "../lib/ipc/Folder";
+import { useAccounts } from "../lib/mail";
 import {
   clearMultiSelect,
   snooze,
@@ -21,8 +23,8 @@ function MoveMenu(props: {
   onMove: (folder: string) => void;
 }) {
   const [open, setOpen] = createSignal(false);
-  const destinations = () =>
-    props.folders.filter((f) => f.name !== "Starred" && f.name !== "Snoozed");
+  const accounts = useAccounts();
+  const destinations = () => props.folders.filter(isMailbox);
   return (
     <div class="bulk-move">
       <button
@@ -49,10 +51,10 @@ function MoveMenu(props: {
                 class="bulk-move__item"
                 onClick={() => {
                   setOpen(false);
-                  props.onMove(folder.name);
+                  props.onMove(folder.path);
                 }}
               >
-                {folder.name}
+                {folderLabel(folder, accounts())}
               </button>
             )}
           </For>

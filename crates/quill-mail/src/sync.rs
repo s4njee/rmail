@@ -19,9 +19,12 @@ use futures::TryStreamExt;
 use mail_parser::{Address, MessageParser, MimeHeaders};
 use quill_store::sanitize::snippet_from_bodies;
 use quill_store::sqlite::SqliteStore;
+use quill_store::folders::{
+    classify_folder_kind, display_name_of, infer_namespace, local_name_for,
+};
 use quill_store::types::{
-    Account, ActionType, Attachment, FolderKind, MessageId, MessageProgressUpdate, MessageRow,
-    OutgoingMessage, Recipient,
+    Account, ActionType, Attachment, DiscoveredMailbox, FolderKind, MessageId,
+    MessageProgressUpdate, MessageRow, OutgoingMessage, Recipient,
 };
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
@@ -75,63 +78,36 @@ pub struct DiscoveredFolder {
     pub server_name: String,
     pub local_name: String,
     pub kind: FolderKind,
+    pub delimiter: String,
+    pub subscribed: bool,
+    pub selectable: bool,
+    pub namespace: String,
+}
+
+impl DiscoveredFolder {
+    pub fn to_mailbox(&self) -> DiscoveredMailbox {
+        DiscoveredMailbox {
+            server_name: self.server_name.clone(),
+            local_name: self.local_name.clone(),
+            display_name: display_name_of(&self.server_name, &self.delimiter),
+            kind: self.kind,
+            delimiter: self.delimiter.clone(),
+            subscribed: self.subscribed,
+            selectable: self.selectable,
+            namespace: self.namespace.clone(),
+        }
+    }
 }
 
 /// Detect the folder kind from IMAP attributes and name heuristics.
 pub fn detect_folder_kind(name: &str, attributes: &[NameAttribute]) -> FolderKind {
-    for attr in attributes {
-        let debug_str = format!("{attr:?}").to_lowercase();
-        if debug_str.contains("inbox") {
-            return FolderKind::Inbox;
-        }
-        if debug_str.contains("draft") {
-            return FolderKind::Drafts;
-        }
-        if debug_str.contains("sent") {
-            return FolderKind::Sent;
-        }
-        if debug_str.contains("junk") || debug_str.contains("spam") {
-            return FolderKind::Junk;
-        }
-        if debug_str.contains("trash") || debug_str.contains("bin") || debug_str.contains("deleted") {
-            return FolderKind::Trash;
-        }
-        if debug_str.contains("archive") || debug_str.contains("all") {
-            return FolderKind::Archive;
-        }
-    }
-
-    // Heuristics based on folder name
-    let lower = name.to_lowercase();
-    if lower == "inbox" {
-        FolderKind::Inbox
-    } else if lower.contains("draft") {
-        FolderKind::Drafts
-    } else if lower.contains("sent") {
-        FolderKind::Sent
-    } else if lower.contains("junk") || lower.contains("spam") || lower.contains("bulk") {
-        FolderKind::Junk
-    } else if lower.contains("trash") || lower.contains("bin") || lower.contains("deleted") {
-        FolderKind::Trash
-    } else if lower.contains("archive") || lower.contains("all mail") || lower.contains("all") {
-        FolderKind::Archive
-    } else {
-        FolderKind::Inbox
-    }
+    classify_folder_kind(name, attributes.iter().map(|a| format!("{a:?}")))
 }
 
-/// Map server folder name to canonical display name (e.g. INBOX -> "Inbox").
-pub fn canonical_folder_name(_server_name: &str, kind: FolderKind) -> String {
-    match kind {
-        FolderKind::Inbox => "Inbox".to_string(),
-        FolderKind::Drafts => "Drafts".to_string(),
-        FolderKind::Sent => "Sent".to_string(),
-        FolderKind::Archive => "Archive".to_string(),
-        FolderKind::Starred => "Starred".to_string(),
-        FolderKind::Junk => "Junk".to_string(),
-        FolderKind::Trash => "Trash".to_string(),
-        FolderKind::Snoozed => "Snoozed".to_string(),
-    }
+/// Map server folder name to the local storage key (e.g. INBOX -> "Inbox",
+/// custom mailboxes keep their server name).
+pub fn canonical_folder_name(server_name: &str, kind: FolderKind) -> String {
+    local_name_for(server_name, kind)
 }
 
 /// A one-shot signal that a message was written during a streaming sync; the
@@ -287,78 +263,89 @@ pub async fn discover_folders(
         .await
         .map_err(|e| format!("collect folder list: {e}"))?;
 
+    let subscribed: HashSet<String> = match session.lsub(None, Some("*")).await {
+        Ok(stream) => stream
+            .try_collect::<Vec<Name>>()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|n| n.name().to_string())
+            .collect(),
+        Err(_) => HashSet::new(),
+    };
+    let lsub_ok = !subscribed.is_empty();
+
     let mut folders = Vec::new();
     let mut seen_local = std::collections::HashSet::new();
     for name in names {
         let server_name = name.name().to_string();
-        // Skip non-selectable folders (e.g. \Noselect)
         let is_noselect = name
             .attributes()
             .iter()
             .any(|a| matches!(a, NameAttribute::NoSelect));
-        if is_noselect {
-            continue;
-        }
         // Gmail's [Gmail]/All Mail mirrors every message in the account;
         // syncing it would duplicate bodies and bloat the local DB (policy in
-        // docs/provider-quirks.md).
-        if server_name.eq_ignore_ascii_case("[Gmail]/All Mail") {
+        // docs/provider-quirks.md). Keep it out of the tree too.
+        if server_name.eq_ignore_ascii_case("[Gmail]/All Mail")
+            || server_name.eq_ignore_ascii_case("[Google Mail]/All Mail")
+        {
             continue;
         }
         let kind = detect_folder_kind(&server_name, name.attributes());
-        let local_name = if server_name.eq_ignore_ascii_case("inbox") {
-            "Inbox".to_string()
-        } else {
-            canonical_folder_name(&server_name, kind)
-        };
-        // The local name is the storage key for an account+folder. Two server
-        // mailboxes must never share one key: the second mailbox's full
-        // refetch would `delete_messages_not_in` the first mailbox's rows and
-        // wipe it. Gmail's labels, [Gmail]/Starred and [Gmail]/Spam, plus any
-        // custom folder, all collapsed to kind=Inbox and local_name="Inbox"
-        // here, so each sync cycle thrashed and wiped the real inbox. Keep
-        // only the first mailbox per local name, and drop anything that would
-        // masquerade as the inbox (the real INBOX always maps to "Inbox").
+        // A second mailbox classified as Inbox would share the local key and
+        // wipe the real inbox on refetch. Custom kinds keep their server name,
+        // so only a mis-classified special can collide.
         if kind == FolderKind::Inbox && !server_name.eq_ignore_ascii_case("inbox") {
             continue;
         }
+        let delimiter = name
+            .delimiter()
+            .filter(|d| !d.is_empty())
+            .unwrap_or("/")
+            .to_string();
+        let local_name = canonical_folder_name(&server_name, kind);
         if !seen_local.insert(local_name.clone()) {
             continue;
         }
+        let is_subscribed = if lsub_ok {
+            subscribed.contains(&server_name)
+        } else {
+            true
+        };
         folders.push(DiscoveredFolder {
-            server_name,
+            server_name: server_name.clone(),
             local_name,
             kind,
+            delimiter: delimiter.clone(),
+            subscribed: is_subscribed,
+            selectable: !is_noselect,
+            namespace: infer_namespace(&server_name, &delimiter),
         });
     }
 
     if folders.is_empty() {
         // Fallback to standard set if LIST returns empty
         folders = vec![
-            DiscoveredFolder {
-                server_name: "INBOX".into(),
-                local_name: "Inbox".into(),
-                kind: FolderKind::Inbox,
-            },
-            DiscoveredFolder {
-                server_name: "Drafts".into(),
-                local_name: "Drafts".into(),
-                kind: FolderKind::Drafts,
-            },
-            DiscoveredFolder {
-                server_name: "Sent".into(),
-                local_name: "Sent".into(),
-                kind: FolderKind::Sent,
-            },
-            DiscoveredFolder {
-                server_name: "Archive".into(),
-                local_name: "Archive".into(),
-                kind: FolderKind::Archive,
-            },
+            fallback_folder("INBOX", FolderKind::Inbox),
+            fallback_folder("Drafts", FolderKind::Drafts),
+            fallback_folder("Sent", FolderKind::Sent),
+            fallback_folder("Archive", FolderKind::Archive),
         ];
     }
 
     Ok(folders)
+}
+
+fn fallback_folder(server_name: &str, kind: FolderKind) -> DiscoveredFolder {
+    DiscoveredFolder {
+        server_name: server_name.to_string(),
+        local_name: canonical_folder_name(server_name, kind),
+        kind,
+        delimiter: "/".into(),
+        subscribed: true,
+        selectable: true,
+        namespace: String::new(),
+    }
 }
 
 /// UID range for a full refetch, bounded to the retention window via
@@ -423,39 +410,30 @@ pub async fn sync_account(
     let discovered = match discover_folders(&mut session).await {
         Ok(f) => f,
         Err(_) => vec![
-            DiscoveredFolder {
-                server_name: "INBOX".into(),
-                local_name: "Inbox".into(),
-                kind: FolderKind::Inbox,
-            },
-            DiscoveredFolder {
-                server_name: "Drafts".into(),
-                local_name: "Drafts".into(),
-                kind: FolderKind::Drafts,
-            },
-            DiscoveredFolder {
-                server_name: "Sent".into(),
-                local_name: "Sent".into(),
-                kind: FolderKind::Sent,
-            },
-            DiscoveredFolder {
-                server_name: "Archive".into(),
-                local_name: "Archive".into(),
-                kind: FolderKind::Archive,
-            },
+            fallback_folder("INBOX", FolderKind::Inbox),
+            fallback_folder("Drafts", FolderKind::Drafts),
+            fallback_folder("Sent", FolderKind::Sent),
+            fallback_folder("Archive", FolderKind::Archive),
         ],
     };
 
+    let mailboxes: Vec<DiscoveredMailbox> = discovered.iter().map(|d| d.to_mailbox()).collect();
+    let _ = store.reconcile_folders(account.id, &mailboxes);
     let _ = store.set_account_folder_count(account.id, discovered.len() as u32);
 
     // P0.2 folder selection: when the account has a configured selection, sync
     // only the enabled server mailboxes; an empty selection (pre-P0.2 and
     // never-chosen accounts) syncs everything discovered. Newly discovered
-    // mailboxes are added to the selection enabled by default so the user
-    // doesn't silently miss mail they never opted out of.
+    // mailboxes are added to the selection — subscribed ones enabled so the
+    // user doesn't silently miss mail, unsubscribed ones visible but not
+    // synced (T0.1). \Noselect parents are never fetched.
     let selection = store.synced_folders(account.id);
     let folders_to_sync: Vec<DiscoveredFolder> = if selection.is_empty() {
-        discovered.clone()
+        discovered
+            .iter()
+            .filter(|f| f.selectable)
+            .cloned()
+            .collect()
     } else {
         let known: HashSet<&str> = selection.iter().map(|s| s.server_name.as_str()).collect();
         let missing: Vec<quill_store::types::SyncedFolder> = discovered
@@ -466,7 +444,7 @@ pub async fn sync_account(
                 server_name: f.server_name.clone(),
                 local_name: f.local_name.clone(),
                 kind: f.kind,
-                enabled: true,
+                enabled: f.subscribed && f.selectable,
             })
             .collect();
         if !missing.is_empty() {
@@ -475,7 +453,7 @@ pub async fn sync_account(
         let enabled = store.enabled_folder_set(account.id).unwrap_or_default();
         discovered
             .into_iter()
-            .filter(|f| enabled.contains(&f.server_name))
+            .filter(|f| f.selectable && enabled.contains(&f.server_name))
             .collect()
     };
 
@@ -947,7 +925,15 @@ pub async fn replay_pending_actions(
         // them ("Outbox", or "Sent" for RSVP replies) is often not a real IMAP
         // mailbox — SELECTing it would fail and block every queued send
         // forever. Only re-select a mailbox for IMAP actions.
-        let needs_mailbox = !matches!(action.action_type, ActionType::Send);
+        let needs_mailbox = !matches!(
+            action.action_type,
+            ActionType::Send
+                | ActionType::CreateFolder
+                | ActionType::RenameFolder
+                | ActionType::DeleteFolder
+                | ActionType::SubscribeFolder
+                | ActionType::UnsubscribeFolder
+        );
         if needs_mailbox && !action.folder.is_empty() && action.folder != current_folder {
             if let Err(e) = session.select(&action.folder).await {
                 log::warn!("select for replay {}: {e}", action.folder);
@@ -1078,6 +1064,35 @@ pub async fn replay_pending_actions(
                     Ok(())
                 }
             }
+            ActionType::CreateFolder => match session.create(&action.folder).await {
+                Ok(()) => {
+                    let _ = session.subscribe(&action.folder).await;
+                    Ok(())
+                }
+                Err(e) => Err(format!("create folder {}: {e}", action.folder)),
+            }
+            ActionType::RenameFolder => {
+                let dest = action
+                    .payload
+                    .as_deref()
+                    .ok_or_else(|| "rename folder missing destination".to_string())?;
+                session
+                    .rename(&action.folder, dest)
+                    .await
+                    .map_err(|e| format!("rename folder {} → {dest}: {e}", action.folder))
+            }
+            ActionType::DeleteFolder => session
+                .delete(&action.folder)
+                .await
+                .map_err(|e| format!("delete folder {}: {e}", action.folder)),
+            ActionType::SubscribeFolder => session
+                .subscribe(&action.folder)
+                .await
+                .map_err(|e| format!("subscribe {}: {e}", action.folder)),
+            ActionType::UnsubscribeFolder => session
+                .unsubscribe(&action.folder)
+                .await
+                .map_err(|e| format!("unsubscribe {}: {e}", action.folder)),
         };
 
         match result {
@@ -1437,7 +1452,15 @@ mod tests {
         assert_eq!(detect_folder_kind("Trash", &[]), FolderKind::Trash);
         assert_eq!(detect_folder_kind("Junk Mail", &[]), FolderKind::Junk);
         assert_eq!(detect_folder_kind("Spam", &[]), FolderKind::Junk);
-        assert_eq!(detect_folder_kind("Receipts", &[]), FolderKind::Inbox);
+        assert_eq!(detect_folder_kind("Receipts", &[]), FolderKind::Custom);
+        assert_eq!(
+            detect_folder_kind("Work/Projects", &[]),
+            FolderKind::Custom
+        );
+        assert_eq!(
+            canonical_folder_name("Work/Projects", FolderKind::Custom),
+            "Work/Projects"
+        );
     }
 
     #[test]

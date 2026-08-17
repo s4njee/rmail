@@ -20,6 +20,7 @@ import {
   listAccounts,
   listFolders,
   listSavedSearches,
+  recordFolderOpened,
   markJunk,
   markRead,
   pageMessages,
@@ -109,7 +110,7 @@ export async function refreshMail(): Promise<void> {
 
   // Sync dock badge based on unread inbox messages
   const inboxUnread = f
-    .filter((folder) => folder.kind === "inbox")
+    .filter((folder) => folder.kind === "inbox" && folder.account_id == null)
     .reduce((sum, folder) => sum + folder.unread_count, 0);
   syncDockBadge(inboxUnread, s.notifications);
 }
@@ -117,6 +118,9 @@ export async function refreshMail(): Promise<void> {
 export function selectFolder(folderId: number): void {
   setFilter({ kind: "folder", folderId });
   persistFilter();
+  void recordFolderOpened(folderId).catch(() => {
+    /* non-fatal */
+  });
 }
 
 export function selectAccount(accountId: number): void {
@@ -208,18 +212,23 @@ export async function loadDetail(id: number): Promise<void> {
   }
 }
 
-/** Build the store query for a filter. A folder filter maps id → folder name
- * ("Starred" is the derived flagged set); an account filter is that account
- * across folders. */
+/** Build the store query for a filter. A folder filter maps id → path
+ * (`"Starred"` / `"Inbox"` for unified; custom mailboxes use their local
+ * path and account). An account filter is that account across folders. */
 export function buildQuery(
   current: MailFilter,
   allFolders: Folder[],
   threaded = true,
 ): MessageQuery {
   if (current.kind === "folder") {
-    const name =
-      allFolders.find((f) => f.id === current.folderId)?.name ?? null;
-    return { folder: name, account_id: null, offset: 0, limit: 500, threaded };
+    const folder = allFolders.find((f) => f.id === current.folderId);
+    return {
+      folder: folder?.path ?? folder?.name ?? null,
+      account_id: folder?.account_id ?? null,
+      offset: 0,
+      limit: 500,
+      threaded,
+    };
   }
   return {
     folder: null,
@@ -260,7 +269,9 @@ async function runSearch(q: string): Promise<void> {
   const current = filter();
   const currentFolder =
     current.kind === "folder"
-      ? (folders().find((f) => f.id === current.folderId)?.name ?? null)
+      ? (folders().find((f) => f.id === current.folderId)?.path ??
+        folders().find((f) => f.id === current.folderId)?.name ??
+        null)
       : null;
   const currentAccountId =
     current.kind === "account" ? current.accountId : null;

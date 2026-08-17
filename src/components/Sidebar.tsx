@@ -1,4 +1,5 @@
 import { createSignal, For, onMount, Show } from "solid-js";
+import { createStore } from "solid-js/store";
 import { Calendar, Sidebar as CalendarSidebar } from "@rcalendar/ui";
 import {
   calendarList,
@@ -20,6 +21,19 @@ import { openNewComposer } from "../lib/compose";
 import { openContextMenu } from "../lib/context-menu";
 import { formatBytes } from "../lib/format";
 import type { Account } from "../lib/ipc/Account";
+import { FolderTree } from "./FolderTree";
+import {
+  favourites,
+  folderCount,
+  isMailbox,
+  loadAccountExpanded,
+  mailboxFolders,
+  matchFolders,
+  recentFolders,
+  saveAccountExpanded,
+  unifiedFolders,
+} from "../lib/folders";
+import type { Folder } from "../lib/ipc/Folder";
 import {
   moveMessages,
   openAccountEdit,
@@ -39,7 +53,17 @@ import {
   useConnectivity,
   useFootprintBytes,
 } from "../lib/store-events";
-import { deleteSavedSearch, removeAccount } from "../lib/tauri";
+import {
+  createFolder,
+  deleteFolder,
+  deleteSavedSearch,
+  moveFolder,
+  removeAccount,
+  renameFolder,
+  setFolderExpanded,
+  setFolderFavourite,
+  setFolderSubscribed,
+} from "../lib/tauri";
 import { useTheme } from "../lib/theme";
 import { openSettings, switchSection, useSection } from "../lib/ui";
 import { ScheduledView } from "./ScheduledView";
@@ -68,6 +92,17 @@ export function Sidebar() {
     null,
   );
   const [scheduledOpen, setScheduledOpen] = createSignal(false);
+  const [jump, setJump] = createSignal("");
+  const [accountOpen, setAccountOpen] = createStore<Record<number, boolean>>(
+    loadAccountExpanded(),
+  );
+  const [nameDialog, setNameDialog] = createSignal<{
+    title: string;
+    initial: string;
+    onSubmit: (name: string) => void;
+  } | null>(null);
+  const [moveDialog, setMoveDialog] = createSignal<Folder | null>(null);
+  const [nameValue, setNameValue] = createSignal("");
 
   onMount(() => void refreshSavedSearches());
 
@@ -80,32 +115,129 @@ export function Sidebar() {
     setConfirmRemoving(null);
   };
 
-  // P1.1 drag-and-drop: dropping message rows on a real folder moves them.
-  // Derived views (Starred, Snoozed) aren't mailboxes and don't accept drops.
-  const isMailbox = (name: string) => name !== "Starred" && name !== "Snoozed";
-
-  const handleFolderDrop = (folderName: string, e: DragEvent) => {
+  const handleFolderDrop = (folder: Folder, e: DragEvent) => {
     e.preventDefault();
-    if (!isMailbox(folderName)) return;
+    if (!isMailbox(folder)) return;
     const raw = e.dataTransfer?.getData("application/x-quill-message-ids");
     if (!raw) return;
     try {
       const ids = JSON.parse(raw) as number[];
-      if (ids.length > 0) void moveMessages(ids, folderName);
+      if (ids.length > 0) void moveMessages(ids, folder.path);
     } catch {
       /* not one of our drag payloads */
     }
   };
 
-  const handleFolderDragOver = (folderName: string, e: DragEvent) => {
-    if (isMailbox(folderName)) e.preventDefault();
+  const handleFolderDragOver = (folder: Folder, e: DragEvent) => {
+    if (isMailbox(folder)) e.preventDefault();
   };
 
-  // Right-click on an account row: Edit (shared dialog) or Delete (confirm).
-  const openAccountMenu = (account: Account, event: MouseEvent) => {
+  const toggleAccount = (id: number) => {
+    const next = !(accountOpen[id] ?? true);
+    setAccountOpen(id, next);
+    saveAccountExpanded({ ...accountOpen, [id]: next });
+  };
+
+  const toggleFolder = async (folder: Folder) => {
+    const next = !folder.expanded;
+    try {
+      await setFolderExpanded(folder.id, next);
+      await refreshMail();
+    } catch {
+      /* non-fatal */
+    }
+  };
+
+  const askName = (
+    title: string,
+    initial: string,
+    onSubmit: (name: string) => void,
+  ) => {
+    setNameValue(initial);
+    setNameDialog({ title, initial, onSubmit });
+  };
+
+  const openFolderMenu = (folder: Folder, event: MouseEvent) => {
+    event.preventDefault();
+    if (folder.account_id == null) return;
+    const items = [
+      {
+        label: "New subfolder…",
+        onSelect: () =>
+          askName("New folder", "", (name) => {
+            if (!folder.account_id) return;
+            void createFolder({
+              accountId: folder.account_id,
+              parentId: folder.id,
+              name,
+            }).then(refreshMail);
+          }),
+      },
+      ...(folder.kind === "inbox"
+        ? []
+        : [
+            {
+              label: "Rename…",
+              onSelect: () =>
+                askName("Rename folder", folder.name, (name) => {
+                  void renameFolder(folder.id, name).then(refreshMail);
+                }),
+            },
+            {
+              label: "Move…",
+              onSelect: () => setMoveDialog(folder),
+            },
+          ]),
+      {
+        label: folder.favourite ? "Remove from favourites" : "Add to favourites",
+        onSelect: () =>
+          void setFolderFavourite(folder.id, !folder.favourite).then(
+            refreshMail,
+          ),
+      },
+      {
+        label: folder.subscribed ? "Unsubscribe" : "Subscribe",
+        onSelect: () =>
+          void setFolderSubscribed(folder.id, !folder.subscribed).then(
+            refreshMail,
+          ),
+      },
+      ...(folder.kind === "inbox"
+        ? []
+        : [
+            {
+              label: "Delete folder…",
+              danger: true,
+              onSelect: () => {
+                if (
+                  window.confirm(
+                    `Delete “${folder.name}” and move its mail to Trash?`,
+                  )
+                ) {
+                  void deleteFolder(folder.id).then(refreshMail);
+                }
+              },
+            },
+          ]),
+    ];
+    openContextMenu(items, event.clientX, event.clientY);
+  };
+
+  const openAccountFolderMenu = (account: Account, event: MouseEvent) => {
     event.preventDefault();
     openContextMenu(
       [
+        {
+          label: "New folder…",
+          onSelect: () =>
+            askName("New folder", "", (name) => {
+              void createFolder({
+                accountId: account.id,
+                parentId: null,
+                name,
+              }).then(refreshMail);
+            }),
+        },
         { label: "Edit account…", onSelect: () => openAccountEdit(account) },
         {
           label: "Delete account…",
@@ -210,30 +342,117 @@ export function Sidebar() {
         </button>
 
         <div class="sidebar__navs">
+          <div class="sidebar__jump">
+            <input
+              type="search"
+              class="sidebar__jump-input"
+              placeholder="Go to folder…"
+              aria-label="Go to folder"
+              value={jump()}
+              onInput={(e) => setJump(e.currentTarget.value)}
+            />
+          </div>
+
+          <Show when={jump().trim()}>
+            <nav class="sidebar__folders" aria-label="Folder jump results">
+              <For each={matchFolders(folders(), jump())}>
+                {(folder) => (
+                  <button
+                    type="button"
+                    class="sidebar__row"
+                    classList={{ "is-selected": isFolderActive(folder.id) }}
+                    onClick={() => {
+                      selectFolder(folder.id);
+                      setJump("");
+                    }}
+                  >
+                    <span class="sidebar__row-text">
+                      {folder.account_id != null ? folder.path : folder.name}
+                    </span>
+                  </button>
+                )}
+              </For>
+            </nav>
+          </Show>
+
+          <Show when={!jump().trim()}>
           <h2 class="sidebar__label">Unified</h2>
           <nav class="sidebar__folders" aria-label="Folders">
-            <For each={folders()}>
-              {(folder) => (
-                <button
-                  type="button"
-                  class="sidebar__row"
-                  classList={{ "is-selected": isFolderActive(folder.id) }}
-                  aria-current={isFolderActive(folder.id) ? "true" : undefined}
-                  onClick={() => selectFolder(folder.id)}
-                  onDragOver={(e) => handleFolderDragOver(folder.name, e)}
-                  onDrop={(e) => handleFolderDrop(folder.name, e)}
-                >
-                  <span class="sidebar__dot" aria-hidden="true" />
-                  <span class="sidebar__row-text">{folder.name}</span>
-                  <Show when={folder.total_count > 0}>
-                    <span class="sidebar__count tabular">
-                      {folder.total_count}
-                    </span>
-                  </Show>
-                </button>
-              )}
+            <For each={unifiedFolders(folders())}>
+              {(folder) => {
+                const count = () => folderCount(folder, false);
+                return (
+                  <button
+                    type="button"
+                    class="sidebar__row"
+                    classList={{ "is-selected": isFolderActive(folder.id) }}
+                    aria-current={isFolderActive(folder.id) ? "true" : undefined}
+                    onClick={() => selectFolder(folder.id)}
+                    onDragOver={(e) => handleFolderDragOver(folder, e)}
+                    onDrop={(e) => handleFolderDrop(folder, e)}
+                  >
+                    <span class="sidebar__dot" aria-hidden="true" />
+                    <span class="sidebar__row-text">{folder.name}</span>
+                    <Show when={count()}>
+                      {(c) => (
+                        <span
+                          class="sidebar__count tabular"
+                          classList={{ "is-unread": c().unread }}
+                        >
+                          {c().text}
+                        </span>
+                      )}
+                    </Show>
+                  </button>
+                );
+              }}
             </For>
           </nav>
+
+          <Show when={favourites(folders()).length > 0}>
+            <h2 class="sidebar__label sidebar__label--accounts">Favourites</h2>
+            <nav class="sidebar__folders" aria-label="Favourite folders">
+              <For each={favourites(folders())}>
+                {(folder) => (
+                  <button
+                    type="button"
+                    class="sidebar__row"
+                    classList={{ "is-selected": isFolderActive(folder.id) }}
+                    onClick={() => selectFolder(folder.id)}
+                    onDragOver={(e) => handleFolderDragOver(folder, e)}
+                    onDrop={(e) => handleFolderDrop(folder, e)}
+                    onContextMenu={(e) => openFolderMenu(folder, e)}
+                  >
+                    <span class="sidebar__fav" aria-hidden="true">
+                      ★
+                    </span>
+                    <span class="sidebar__row-text">{folder.path}</span>
+                  </button>
+                )}
+              </For>
+            </nav>
+          </Show>
+
+          <Show when={recentFolders(folders()).length > 0}>
+            <h2 class="sidebar__label sidebar__label--accounts">Recent</h2>
+            <nav class="sidebar__folders" aria-label="Recent folders">
+              <For each={recentFolders(folders())}>
+                {(folder) => (
+                  <button
+                    type="button"
+                    class="sidebar__row"
+                    classList={{ "is-selected": isFolderActive(folder.id) }}
+                    onClick={() => selectFolder(folder.id)}
+                    onDragOver={(e) => handleFolderDragOver(folder, e)}
+                    onDrop={(e) => handleFolderDrop(folder, e)}
+                    onContextMenu={(e) => openFolderMenu(folder, e)}
+                  >
+                    <span class="sidebar__row-text">{folder.path}</span>
+                  </button>
+                )}
+              </For>
+            </nav>
+          </Show>
 
           {/* P1.3 saved searches — persistent virtual folders. */}
           <Show when={savedSearches().length > 0}>
@@ -281,29 +500,64 @@ export function Sidebar() {
           <h2 class="sidebar__label sidebar__label--accounts">Accounts</h2>
           <nav class="sidebar__accounts" aria-label="Accounts">
             <For each={accounts()}>
-              {(account) => (
-                <button
-                  type="button"
-                  class="sidebar__account-row"
-                  classList={{ "is-selected": isAccountActive(account.id) }}
-                  aria-current={
-                    isAccountActive(account.id) ? "true" : undefined
-                  }
-                  onClick={() => selectAccount(account.id)}
-                  onContextMenu={(e) => openAccountMenu(account, e)}
-                >
-                  <span
-                    class="sidebar__account-dot"
-                    style={{ background: account.color }}
-                    aria-hidden="true"
-                  />
-                  <span class="sidebar__account-address">
-                    {account.address}
-                  </span>
-                </button>
-              )}
+              {(account) => {
+                const expanded = () => accountOpen[account.id] ?? true;
+                const selectedFolderId = () => {
+                  const current = filter();
+                  return current.kind === "folder" ? current.folderId : null;
+                };
+                return (
+                  <div class="sidebar__account-block">
+                    <button
+                      type="button"
+                      class="sidebar__account-row"
+                      classList={{ "is-selected": isAccountActive(account.id) }}
+                      aria-current={
+                        isAccountActive(account.id) ? "true" : undefined
+                      }
+                      aria-expanded={expanded()}
+                      onClick={() => {
+                        toggleAccount(account.id);
+                        selectAccount(account.id);
+                      }}
+                      onContextMenu={(e) =>
+                        openAccountFolderMenu(account, e)
+                      }
+                    >
+                      <span
+                        class="sidebar__twistie"
+                        classList={{ "is-open": expanded() }}
+                        aria-hidden="true"
+                      >
+                        ▸
+                      </span>
+                      <span
+                        class="sidebar__account-dot"
+                        style={{ background: account.color }}
+                        aria-hidden="true"
+                      />
+                      <span class="sidebar__account-address">
+                        {account.address}
+                      </span>
+                    </button>
+                    <Show when={expanded()}>
+                      <FolderTree
+                        folders={mailboxFolders(folders())}
+                        accountId={account.id}
+                        selectedId={selectedFolderId()}
+                        onSelect={(f) => selectFolder(f.id)}
+                        onToggle={(f) => void toggleFolder(f)}
+                        onContextMenu={openFolderMenu}
+                        onDragOver={handleFolderDragOver}
+                        onDrop={handleFolderDrop}
+                      />
+                    </Show>
+                  </div>
+                );
+              }}
             </For>
           </nav>
+          </Show>
         </div>
 
         {theme() === "banded" ? (
@@ -350,6 +604,83 @@ export function Sidebar() {
       {/* P1.1 send-later Outbox */}
       <Show when={scheduledOpen()}>
         <ScheduledView onClose={() => setScheduledOpen(false)} />
+      </Show>
+
+      <Show when={nameDialog()}>
+        {(d) => (
+          <div class="account-confirm" role="dialog" aria-label={d().title}>
+            <span class="account-confirm__text">{d().title}</span>
+            <input
+              class="sidebar__jump-input"
+              value={nameValue()}
+              onInput={(e) => setNameValue(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const name = nameValue().trim();
+                  if (name) d().onSubmit(name);
+                  setNameDialog(null);
+                }
+                if (e.key === "Escape") setNameDialog(null);
+              }}
+              autofocus
+            />
+            <button
+              type="button"
+              class="btn btn--secondary"
+              onClick={() => setNameDialog(null)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn btn--primary"
+              onClick={() => {
+                const name = nameValue().trim();
+                if (name) d().onSubmit(name);
+                setNameDialog(null);
+              }}
+            >
+              Save
+            </button>
+          </div>
+        )}
+      </Show>
+
+      <Show when={moveDialog()}>
+        {(folder) => (
+          <div class="account-confirm" role="dialog" aria-label="Move folder">
+            <span class="account-confirm__text">
+              Move “{folder().name}” under…
+            </span>
+            <select
+              class="sidebar__jump-input"
+              onChange={(e) => {
+                const raw = e.currentTarget.value;
+                const parentId = raw === "" ? null : Number(raw);
+                void moveFolder(folder().id, parentId).then(refreshMail);
+                setMoveDialog(null);
+              }}
+            >
+              <option value="">(top level)</option>
+              <For
+                each={mailboxFolders(folders()).filter(
+                  (f) =>
+                    f.account_id === folder().account_id &&
+                    f.id !== folder().id,
+                )}
+              >
+                {(f) => <option value={f.id}>{f.path}</option>}
+              </For>
+            </select>
+            <button
+              type="button"
+              class="btn btn--secondary"
+              onClick={() => setMoveDialog(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
       </Show>
 
       {/* Delete-account confirm (reached from a right-click menu) */}

@@ -29,6 +29,7 @@ import { syncNow } from "../lib/tauri";
 import { useTheme } from "../lib/theme";
 import { formatRelativeTime } from "../lib/format";
 import { openContextMenu } from "../lib/context-menu";
+import { folderLabel, isMailbox } from "../lib/folders";
 import type { MessageRow as MessageRowData } from "../lib/ipc/MessageRow";
 import { openShortcuts } from "../lib/shortcuts";
 import { BulkActionBar } from "./BulkActionBar";
@@ -240,10 +241,10 @@ export function MessageList() {
       : [row.id];
     const destinations = () =>
       folders()
-        .filter((f) => f.name !== "Starred" && f.name !== "Snoozed")
+        .filter(isMailbox)
         .map((f) => ({
-          label: f.name,
-          onSelect: () => void moveMessages(ids, f.name),
+          label: folderLabel(f, accounts()),
+          onSelect: () => void moveMessages(ids, f.path),
         }));
     openContextMenu(
       [
@@ -334,7 +335,8 @@ export function MessageList() {
     }
     const current = filter();
     if (current.kind === "folder") {
-      return folders().find((f) => f.id === current.folderId)?.name ?? "Inbox";
+      const f = folders().find((x) => x.id === current.folderId);
+      return f?.path || f?.name || "Inbox";
     }
     return (
       accounts().find((a) => a.id === current.accountId)?.address ?? "Account"
@@ -344,8 +346,8 @@ export function MessageList() {
   const scopeLabel = () => {
     const current = filter();
     if (current.kind === "folder") {
-      const name =
-        folders().find((f) => f.id === current.folderId)?.name ?? "Inbox";
+      const f = folders().find((x) => x.id === current.folderId);
+      const name = f?.path || f?.name || "Inbox";
       return `in ${name}`;
     }
     const addr =

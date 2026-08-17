@@ -373,7 +373,11 @@ export function GeneralSection() {
             aria-label="Import into folder"
           >
             <For each={folders()}>
-              {(f) => <option value={f.name}>{f.name}</option>}
+              {(f) => (
+                <option value={f.path || f.name}>
+                  {f.account_id != null ? f.path : f.name}
+                </option>
+              )}
             </For>
           </select>
           <button

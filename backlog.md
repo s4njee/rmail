@@ -5,6 +5,12 @@ replace a user's existing daily driver. [ROADMAP.md](ROADMAP.md) describes the b
 direction, while [plan2.md](plan2.md) records the original implementation plan. This file is the
 shorter, stricter queue for reaching a trustworthy public release.
 
+[backlog-thunderbird.md](backlog-thunderbird.md) is the companion *feature-parity* queue: what a
+Thunderbird user needs before they can switch and stay switched (folder tree, profile migration,
+Local Folders/POP, tags, list columns, HTML compose, address book, junk learning, encryption).
+This file takes priority when the two compete — parity on top of unproven sync is worse than
+nothing — but neither is sufficient alone.
+
 The bar is not that a feature has code or works with demo data. A feature is done when it works
 with real accounts, survives offline and failure cases, is understandable without developer help,
 and has enough automated or repeatable coverage to prevent regression.

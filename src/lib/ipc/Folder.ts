@@ -2,6 +2,35 @@
 import type { FolderKind } from "./FolderKind";
 
 /**
- * A sidebar folder (unified set) with its live counts.
+ * A sidebar folder: either a unified special (Inbox, Starred, …) or a
+ * persisted per-account mailbox in the nested tree (T0.1).
  */
-export type Folder = { id: number, name: string, kind: FolderKind, unread_count: number, total_count: number, };
+export type Folder = { id: number, 
+/**
+ * `None` for unified special folders that span every account.
+ */
+account_id: number | null, 
+/**
+ * Display name (last path component, or the unified special name).
+ */
+name: string, 
+/**
+ * Local storage key used in `messages.folder` (full path for custom).
+ */
+path: string, kind: FolderKind, unread_count: number, total_count: number, 
+/**
+ * Counts including collapsed descendants, for the tree rollup.
+ */
+unread_count_tree: number, total_count_tree: number, parent_id: number | null, server_name: string | null, delimiter: string, subscribed: boolean, 
+/**
+ * Whether this mailbox is in the account's sync selection.
+ */
+enabled: boolean, selectable: boolean, expanded: boolean, favourite: boolean, sort_order: number, 
+/**
+ * JSON blob of per-folder view settings (sort, columns — T0.5).
+ */
+view_settings: string | null, last_opened_at_ms: number | null, 
+/**
+ * IMAP namespace prefix (`""` = personal, `"[Gmail]"`, `"Other Users"`, …).
+ */
+namespace: string, };

@@ -22,6 +22,81 @@ pub fn list_folders(store: State<'_, SqliteStore>) -> Vec<Folder> {
 }
 
 #[tauri::command]
+pub fn create_folder(
+    store: State<'_, SqliteStore>,
+    spec: NewFolder,
+) -> Result<Folder, String> {
+    store.create_local_folder(spec.account_id, spec.parent_id, &spec.name)
+}
+
+#[tauri::command]
+pub fn rename_folder(
+    store: State<'_, SqliteStore>,
+    id: FolderId,
+    name: String,
+) -> Result<Folder, String> {
+    store.rename_local_folder(id, &name)
+}
+
+#[tauri::command]
+pub fn move_folder(
+    store: State<'_, SqliteStore>,
+    id: FolderId,
+    parent_id: Option<FolderId>,
+) -> Result<Folder, String> {
+    store.move_local_folder(id, parent_id)
+}
+
+#[tauri::command]
+pub fn delete_folder(store: State<'_, SqliteStore>, id: FolderId) -> Result<(), String> {
+    store.delete_local_folder(id)
+}
+
+#[tauri::command]
+pub fn set_folder_subscribed(
+    store: State<'_, SqliteStore>,
+    id: FolderId,
+    subscribed: bool,
+) -> Result<Folder, String> {
+    store.set_folder_subscribed(id, subscribed)
+}
+
+#[tauri::command]
+pub fn set_folder_expanded(
+    store: State<'_, SqliteStore>,
+    id: FolderId,
+    expanded: bool,
+) -> Result<(), String> {
+    store.set_folder_expanded(id, expanded)
+}
+
+#[tauri::command]
+pub fn set_folder_favourite(
+    store: State<'_, SqliteStore>,
+    id: FolderId,
+    favourite: bool,
+) -> Result<(), String> {
+    store.set_folder_favourite(id, favourite)
+}
+
+#[tauri::command]
+pub fn set_folder_view_settings(
+    store: State<'_, SqliteStore>,
+    id: FolderId,
+    view_settings: Option<String>,
+) -> Result<(), String> {
+    store.set_folder_view_settings(id, view_settings.as_deref())
+}
+
+#[tauri::command]
+pub fn record_folder_opened(
+    store: State<'_, SqliteStore>,
+    id: FolderId,
+) -> Result<(), String> {
+    store.record_folder_opened(id)
+}
+
+#[tauri::command]
 pub fn list_accounts(store: State<'_, SqliteStore>) -> Vec<Account> {
     store.accounts()
 }
