@@ -330,7 +330,7 @@ pub fn mark_read(store: State<'_, SqliteStore>, id: MessageId, unread: bool) -> 
         } else {
             ActionType::MarkRead
         };
-        let _ = store.enqueue_action(account_id, action_type, &server_folder, uid, None);
+        store.enqueue_action(account_id, action_type, &server_folder, uid, None)?;
     }
     store.set_read(id, unread)
 }
@@ -345,7 +345,7 @@ pub fn star(store: State<'_, SqliteStore>, id: MessageId, flagged: bool) -> Resu
         } else {
             ActionType::Unstar
         };
-        let _ = store.enqueue_action(account_id, action_type, &server_folder, uid, None);
+        store.enqueue_action(account_id, action_type, &server_folder, uid, None)?;
     }
     store.set_flagged(id, flagged)
 }
@@ -360,13 +360,13 @@ pub fn mark_answered(
         store.get_message_location(id)
     {
         if answered {
-            let _ = store.enqueue_action(
+            store.enqueue_action(
                 account_id,
                 ActionType::MarkAnswered,
                 &server_folder,
                 uid,
                 None,
-            );
+            )?;
         }
     }
     store.set_answered(id, answered)
@@ -382,13 +382,13 @@ pub fn mark_forwarded(
         store.get_message_location(id)
     {
         if forwarded {
-            let _ = store.enqueue_action(
+            store.enqueue_action(
                 account_id,
                 ActionType::MarkForwarded,
                 &server_folder,
                 uid,
                 None,
-            );
+            )?;
         }
     }
     store.set_forwarded(id, forwarded)
@@ -405,7 +405,7 @@ pub fn archive(store: State<'_, SqliteStore>, id: MessageId) -> Result<(), Strin
                     .into(),
             );
         }
-        let _ = store.enqueue_action(account_id, ActionType::Archive, &server_folder, uid, None);
+        store.enqueue_action(account_id, ActionType::Archive, &server_folder, uid, None)?;
     }
     store.archive(id)
 }
@@ -421,7 +421,7 @@ pub fn delete(store: State<'_, SqliteStore>, id: MessageId) -> Result<(), String
         {
             return Err("permanent deletion requires explicit confirmation".into());
         }
-        let _ = store.enqueue_action(account_id, ActionType::Delete, &server_folder, uid, None);
+        store.enqueue_action(account_id, ActionType::Delete, &server_folder, uid, None)?;
     }
     store.delete(id)
 }
@@ -448,7 +448,7 @@ pub fn delete_permanently(
     ) {
         return Err("permanent deletion is only available in Trash or Spam".into());
     }
-    let _ = store.enqueue_action(account_id, ActionType::Delete, &server_folder, uid, None);
+    store.enqueue_action(account_id, ActionType::Delete, &server_folder, uid, None)?;
     store.delete(id)
 }
 
@@ -509,13 +509,7 @@ pub fn restore_message(store: State<'_, SqliteStore>, id: MessageId) -> Result<(
                     "message_id": message_id,
                 })
                 .to_string();
-                let _ = store.enqueue_action(
-                    account_id,
-                    ActionType::Move,
-                    &trash,
-                    None,
-                    Some(&payload),
-                );
+                store.enqueue_action(account_id, ActionType::Move, &trash, None, Some(&payload))?;
             }
         }
     }
@@ -958,7 +952,7 @@ pub fn remove_account(store: State<'_, SqliteStore>, id: AccountId) -> Result<()
 pub fn list_queued_actions(
     store: State<'_, SqliteStore>,
     account_id: Option<AccountId>,
-) -> Vec<QueuedAction> {
+) -> Result<Vec<QueuedAction>, String> {
     store.list_queued_actions(account_id)
 }
 

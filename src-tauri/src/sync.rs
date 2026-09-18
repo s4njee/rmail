@@ -274,15 +274,16 @@ async fn spawn_idle_worker(app: AppHandle, account: Account) {
 }
 
 /// Trigger an immediate sync for every non-manual account — the frontend's
-/// scroll-to-top refresh. `replay_actions` is false so a manual refresh never
-/// double-replays an offline action that's racing the periodic sync.
+/// scroll-to-top refresh. Manual refresh is also an explicit request to flush
+/// the durable action queue; "on open" accounts therefore do not have to wait
+/// for a periodic cadence that they intentionally do not use.
 pub async fn sync_now(app: &AppHandle) {
     let accounts = app.state::<SqliteStore>().accounts();
     for account in accounts {
         if account.sync_mode == "manual" {
             continue;
         }
-        sync_one(app, &account, false).await;
+        sync_one(app, &account, true).await;
     }
 }
 

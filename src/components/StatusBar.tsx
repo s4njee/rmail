@@ -15,7 +15,7 @@ export function StatusBar() {
   const detailProgress = useDetailProgress();
   const calendarSyncing = useCalendarSyncing();
   const queued = useQueued();
-  const stuck = () => queued().filter((a) => a.retries >= 5).length;
+  const stuck = () => queued().filter((a) => a.status === "failed").length;
 
   const pct = () => {
     const p = detailProgress();

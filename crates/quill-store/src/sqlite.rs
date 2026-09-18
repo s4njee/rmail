@@ -212,7 +212,7 @@ fn rollup_folder_counts(folders: &mut [Folder]) {
 }
 
 /// Forward-only migrations, indexed by target `user_version`.
-const MIGRATIONS: [&str; 26] = [
+const MIGRATIONS: [&str; 27] = [
     r#"
 CREATE TABLE accounts (
   id INTEGER PRIMARY KEY,
@@ -538,6 +538,15 @@ INSERT OR IGNORE INTO sqlite_sequence (name, seq) VALUES ('folders', 999);
     r#"
 ALTER TABLE accounts ADD COLUMN body_cache_window_days INTEGER DEFAULT 365;
 "#,
+    // C0.5: make queued message identity and retry state durable. A moved row
+    // drops its source UID until destination sync resolves it by Message-ID.
+    r#"
+ALTER TABLE action_queue ADD COLUMN uidvalidity INTEGER;
+ALTER TABLE action_queue ADD COLUMN message_id_header TEXT;
+ALTER TABLE action_queue ADD COLUMN status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE action_queue ADD COLUMN next_attempt_at_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE messages ADD COLUMN location_pending INTEGER NOT NULL DEFAULT 0;
+"#,
 ];
 
 pub struct SqliteStore {
@@ -557,6 +566,22 @@ pub struct PendingBody {
     pub uid: u32,
     pub uidvalidity: u32,
 }
+
+type QueuedActionRow = (
+    i64,
+    AccountId,
+    String,
+    String,
+    Option<u32>,
+    Option<u32>,
+    Option<String>,
+    Option<String>,
+    i64,
+    u32,
+    String,
+    i64,
+    Option<String>,
+);
 
 impl SqliteStore {
     pub fn open(path: &Path) -> Result<Self, String> {
@@ -703,6 +728,35 @@ impl SqliteStore {
                 .map_err(|e| e.to_string())?;
             repaired = true;
         }
+        for (col, definition) in [
+            ("uidvalidity", "INTEGER"),
+            ("message_id_header", "TEXT"),
+            ("status", "TEXT NOT NULL DEFAULT 'pending'"),
+            ("next_attempt_at_ms", "INTEGER NOT NULL DEFAULT 0"),
+        ] {
+            if !aq_cols.iter().any(|c| c == col) {
+                conn.execute_batch(&format!(
+                    "ALTER TABLE action_queue ADD COLUMN {col} {definition};"
+                ))
+                .map_err(|e| e.to_string())?;
+                repaired = true;
+            }
+        }
+        if !msg_cols.iter().any(|c| c == "location_pending") {
+            conn.execute_batch(
+                "ALTER TABLE messages ADD COLUMN location_pending INTEGER NOT NULL DEFAULT 0;",
+            )
+            .map_err(|e| e.to_string())?;
+            repaired = true;
+        }
+        // A process may have stopped after claiming an action but before
+        // recording success/failure. Claims are process-local, so recover
+        // them on launch.
+        conn.execute(
+            "UPDATE action_queue SET status = 'pending' WHERE status = 'running'",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
         // C0.2: older databases need the per-account body cache window even
         // when their schema version was advanced by a previous code build.
         let account_cols: Vec<String> = conn
@@ -1382,87 +1436,39 @@ impl SqliteStore {
         thread_id: &str,
         action: ActionType,
     ) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
-        match action {
-            ActionType::MarkRead => {
-                conn.execute(
-                    "UPDATE messages SET unread = 0 WHERE account_id = ?1 AND thread_id = ?2",
-                    params![account_id, thread_id],
+        let ids: Vec<MessageId> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id FROM messages WHERE account_id = ?1 AND thread_id = ?2 \
+                 AND deleted_at_ms IS NULL",
                 )
                 .map_err(|e| e.to_string())?;
-            }
-            ActionType::MarkUnread => {
-                conn.execute(
-                    "UPDATE messages SET unread = 1 WHERE account_id = ?1 AND thread_id = ?2",
-                    params![account_id, thread_id],
-                )
+            let ids = stmt
+                .query_map(params![account_id, thread_id], |r| r.get(0))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<_, _>>()
                 .map_err(|e| e.to_string())?;
-            }
-            ActionType::Star => {
-                conn.execute(
-                    "UPDATE messages SET flagged = 1 WHERE account_id = ?1 AND thread_id = ?2",
-                    params![account_id, thread_id],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            ActionType::Unstar => {
-                conn.execute(
-                    "UPDATE messages SET flagged = 0 WHERE account_id = ?1 AND thread_id = ?2",
-                    params![account_id, thread_id],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            ActionType::Archive => {
-                conn.execute(
-                    "UPDATE messages SET folder = 'Archive' WHERE account_id = ?1 AND thread_id = ?2",
-                    params![account_id, thread_id],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            ActionType::Delete => {
-                conn.execute(
-                    "UPDATE messages SET folder = 'Trash' WHERE account_id = ?1 AND thread_id = ?2",
-                    params![account_id, thread_id],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            ActionType::MarkAnswered => {
-                conn.execute(
-                    "UPDATE messages SET answered = 1 WHERE account_id = ?1 AND thread_id = ?2",
-                    params![account_id, thread_id],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            ActionType::MarkForwarded => {
-                conn.execute(
-                    "UPDATE messages SET forwarded = 1 WHERE account_id = ?1 AND thread_id = ?2",
-                    params![account_id, thread_id],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            ActionType::MarkJunk => {
-                conn.execute(
-                    "UPDATE messages SET folder = 'Junk' WHERE account_id = ?1 AND thread_id = ?2",
-                    params![account_id, thread_id],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            ActionType::MarkNotJunk => {
-                conn.execute(
-                    "UPDATE messages SET folder = 'Inbox' WHERE account_id = ?1 AND thread_id = ?2",
-                    params![account_id, thread_id],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            ActionType::Move => {}
-            ActionType::Send => {}
-            ActionType::CreateFolder
-            | ActionType::RenameFolder
-            | ActionType::DeleteFolder
-            | ActionType::SubscribeFolder
-            | ActionType::UnsubscribeFolder => {}
+            ids
+        };
+        let (ok, errors) = match action {
+            ActionType::MarkRead => self.bulk_set_read(&ids, false),
+            ActionType::MarkUnread => self.bulk_set_read(&ids, true),
+            ActionType::Star => self.bulk_set_flagged(&ids, true),
+            ActionType::Unstar => self.bulk_set_flagged(&ids, false),
+            ActionType::Archive => self.bulk_archive(&ids),
+            ActionType::Delete => self.bulk_delete(&ids),
+            ActionType::MarkAnswered => self.bulk_set_answered(&ids),
+            ActionType::MarkForwarded => self.bulk_set_forwarded(&ids),
+            ActionType::MarkJunk => self.bulk_mark_junk(&ids, true),
+            ActionType::MarkNotJunk => self.bulk_mark_junk(&ids, false),
+            _ => return Err("unsupported thread action".into()),
+        };
+        if errors.is_empty() && ok == ids.len() as u32 {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
         }
-        Ok(())
     }
 
     pub fn set_read(&self, id: MessageId, unread: bool) -> Result<(), String> {
@@ -1522,11 +1528,32 @@ impl SqliteStore {
     }
 
     pub fn archive(&self, id: MessageId) -> Result<(), String> {
+        let (account_id, uid): (AccountId, Option<u32>) = {
+            let conn = self.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT account_id, uid FROM messages WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|e| e.to_string())?
+        };
+        let destination = if uid.is_some() {
+            Some(
+                self.archive_folder_name(account_id)
+                    .ok_or_else(|| "no Archive or All Mail mailbox configured".to_string())?,
+            )
+        } else {
+            None
+        };
         let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
-                "UPDATE messages SET folder = 'Archive', unread = 0 WHERE id = ?1",
-                params![id],
+                "UPDATE messages SET folder = 'Archive', server_folder = COALESCE(?1, server_folder), \
+                 unread = 0, uid = CASE WHEN ?1 IS NULL THEN uid ELSE NULL END, \
+                 uidvalidity = CASE WHEN ?1 IS NULL THEN uidvalidity ELSE NULL END, \
+                 location_pending = CASE WHEN ?1 IS NULL THEN 0 ELSE 1 END \
+                 WHERE id = ?2 AND account_id = ?3",
+                params![destination, id, account_id],
             )
             .map_err(|e| e.to_string())?;
         if affected == 0 {
@@ -1607,57 +1634,75 @@ impl SqliteStore {
         };
         let (local, dest_server) = self.resolve_move_destination(account_id, destination_folder);
         let replay_folder = server_folder.unwrap_or(current_folder);
+        self.enqueue_action(
+            account_id,
+            ActionType::Move,
+            &replay_folder,
+            uid,
+            Some(&dest_server),
+        )?;
         let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
-                "UPDATE messages SET folder = ?1, server_folder = ?2 WHERE id = ?3",
-                params![local, dest_server, id],
+                "UPDATE messages SET folder = ?1, \
+                 server_folder = CASE WHEN ?2 THEN ?3 ELSE server_folder END, \
+                 uid = CASE WHEN ?2 THEN NULL ELSE uid END, \
+                 uidvalidity = CASE WHEN ?2 THEN NULL ELSE uidvalidity END, \
+                 location_pending = CASE WHEN ?2 THEN 1 ELSE 0 END WHERE id = ?4",
+                params![local, uid.is_some(), dest_server, id],
             )
             .map_err(|e| e.to_string())?;
         if affected == 0 {
             return Err("no such message".into());
         }
-
-        let now = now_ms();
-        let _ = conn.execute(
-            "INSERT INTO action_queue (account_id, action_type, folder, uid, payload, created_at_ms, retries) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
-            params![account_id, "move", replay_folder, uid, dest_server, now],
-        );
-
         Ok(())
     }
 
     pub fn mark_junk(&self, id: MessageId, junk: bool) -> Result<(), String> {
         let destination_folder = if junk { "Junk" } else { "Inbox" };
-        let action_name = if junk { "mark_junk" } else { "mark_not_junk" };
+        let action_type = if junk {
+            ActionType::MarkJunk
+        } else {
+            ActionType::MarkNotJunk
+        };
 
-        let conn = self.conn.lock().unwrap();
-        let (account_id, current_folder, uid): (AccountId, String, Option<u32>) = conn
-            .query_row(
-                "SELECT account_id, folder, uid FROM messages WHERE id = ?1",
+        let (account_id, current_folder, uid): (AccountId, String, Option<u32>) = {
+            let conn = self.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT account_id, COALESCE(server_folder, folder), uid FROM messages WHERE id = ?1",
                 params![id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+        };
+        self.enqueue_action(account_id, action_type, &current_folder, uid, None)?;
+        let destination_server = if uid.is_none() {
+            None
+        } else if junk {
+            Some(
+                self.junk_folder_name(account_id)
+                    .ok_or_else(|| "no Junk/Spam mailbox configured".to_string())?,
+            )
+        } else {
+            Some(
+                self.inbox_folder_name(account_id)
+                    .unwrap_or_else(|| "INBOX".to_string()),
+            )
+        };
 
+        let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
-                "UPDATE messages SET folder = ?1 WHERE id = ?2",
-                params![destination_folder, id],
+                "UPDATE messages SET folder = ?1, server_folder = COALESCE(?2, server_folder), \
+                 uid = CASE WHEN ?2 IS NULL THEN uid ELSE NULL END, \
+                 uidvalidity = CASE WHEN ?2 IS NULL THEN uidvalidity ELSE NULL END, \
+                 location_pending = CASE WHEN ?2 IS NULL THEN 0 ELSE 1 END WHERE id = ?3",
+                params![destination_folder, destination_server, id],
             )
             .map_err(|e| e.to_string())?;
         if affected == 0 {
             return Err("no such message".into());
         }
-
-        let now = now_ms();
-        let _ = conn.execute(
-            "INSERT INTO action_queue (account_id, action_type, folder, uid, payload, created_at_ms, retries) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
-            params![account_id, action_name, current_folder, uid, destination_folder, now],
-        );
-
         Ok(())
     }
 
@@ -1681,20 +1726,16 @@ impl SqliteStore {
         .ok()
     }
 
-    fn enqueue_action_str(
+    fn enqueue_message_action(
         &self,
         account_id: AccountId,
-        action_type: &str,
+        action_type: ActionType,
         folder: &str,
         uid: Option<u32>,
         payload: Option<&str>,
-    ) {
-        let conn = self.conn.lock().unwrap();
-        let _ = conn.execute(
-            "INSERT INTO action_queue (account_id, action_type, folder, uid, payload, created_at_ms, retries) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
-            params![account_id, action_type, folder, uid, payload, now_ms()],
-        );
+    ) -> Result<(), String> {
+        self.enqueue_action(account_id, action_type, folder, uid, payload)?;
+        Ok(())
     }
 
     fn apply_each<F>(ids: &[MessageId], mut apply: F) -> (u32, Vec<String>)
@@ -1713,12 +1754,16 @@ impl SqliteStore {
     }
 
     pub fn bulk_set_read(&self, ids: &[MessageId], unread: bool) -> (u32, Vec<String>) {
-        let action = if unread { "mark_unread" } else { "mark_read" };
+        let action = if unread {
+            ActionType::MarkUnread
+        } else {
+            ActionType::MarkRead
+        };
         Self::apply_each(ids, |id| {
             let Some((account_id, server_folder, uid)) = self.message_location(id) else {
                 return Err("no such message".into());
             };
-            self.enqueue_action_str(account_id, action, &server_folder, uid, None);
+            self.enqueue_message_action(account_id, action, &server_folder, uid, None)?;
             let conn = self.conn.lock().unwrap();
             conn.execute(
                 "UPDATE messages SET unread = ?1 WHERE id = ?2",
@@ -1730,12 +1775,16 @@ impl SqliteStore {
     }
 
     pub fn bulk_set_flagged(&self, ids: &[MessageId], flagged: bool) -> (u32, Vec<String>) {
-        let action = if flagged { "star" } else { "unstar" };
+        let action = if flagged {
+            ActionType::Star
+        } else {
+            ActionType::Unstar
+        };
         Self::apply_each(ids, |id| {
             let Some((account_id, server_folder, uid)) = self.message_location(id) else {
                 return Err("no such message".into());
             };
-            self.enqueue_action_str(account_id, action, &server_folder, uid, None);
+            self.enqueue_message_action(account_id, action, &server_folder, uid, None)?;
             let conn = self.conn.lock().unwrap();
             conn.execute(
                 "UPDATE messages SET flagged = ?1 WHERE id = ?2",
@@ -1746,16 +1795,66 @@ impl SqliteStore {
         })
     }
 
+    pub fn bulk_set_answered(&self, ids: &[MessageId]) -> (u32, Vec<String>) {
+        Self::apply_each(ids, |id| {
+            let Some((account_id, server_folder, uid)) = self.message_location(id) else {
+                return Err("no such message".into());
+            };
+            self.enqueue_message_action(
+                account_id,
+                ActionType::MarkAnswered,
+                &server_folder,
+                uid,
+                None,
+            )?;
+            self.set_answered(id, true)
+        })
+    }
+
+    pub fn bulk_set_forwarded(&self, ids: &[MessageId]) -> (u32, Vec<String>) {
+        Self::apply_each(ids, |id| {
+            let Some((account_id, server_folder, uid)) = self.message_location(id) else {
+                return Err("no such message".into());
+            };
+            self.enqueue_message_action(
+                account_id,
+                ActionType::MarkForwarded,
+                &server_folder,
+                uid,
+                None,
+            )?;
+            self.set_forwarded(id, true)
+        })
+    }
+
     pub fn bulk_archive(&self, ids: &[MessageId]) -> (u32, Vec<String>) {
         Self::apply_each(ids, |id| {
             let Some((account_id, server_folder, uid)) = self.message_location(id) else {
                 return Err("no such message".into());
             };
-            self.enqueue_action_str(account_id, "archive", &server_folder, uid, None);
+            let destination = if uid.is_some() {
+                Some(
+                    self.archive_folder_name(account_id)
+                        .ok_or_else(|| "no Archive or All Mail mailbox configured".to_string())?,
+                )
+            } else {
+                None
+            };
+            self.enqueue_message_action(
+                account_id,
+                ActionType::Archive,
+                &server_folder,
+                uid,
+                None,
+            )?;
             let conn = self.conn.lock().unwrap();
             conn.execute(
-                "UPDATE messages SET folder = 'Archive', unread = 0 WHERE id = ?1",
-                params![id],
+                "UPDATE messages SET folder = 'Archive', \
+                 server_folder = COALESCE(?1, server_folder), unread = 0, \
+                 uid = CASE WHEN ?1 IS NULL THEN uid ELSE NULL END, \
+                 uidvalidity = CASE WHEN ?1 IS NULL THEN uidvalidity ELSE NULL END, \
+                 location_pending = CASE WHEN ?1 IS NULL THEN 0 ELSE 1 END WHERE id = ?2",
+                params![destination, id],
             )
             .map_err(|e| e.to_string())?;
             Ok(())
@@ -1780,7 +1879,7 @@ impl SqliteStore {
             let Some((account_id, server_folder, uid)) = self.message_location(id) else {
                 return Err("no such message".into());
             };
-            self.enqueue_action_str(account_id, "delete", &server_folder, uid, None);
+            self.enqueue_message_action(account_id, ActionType::Delete, &server_folder, uid, None)?;
             let conn = self.conn.lock().unwrap();
             conn.execute(
                 "UPDATE messages SET deleted_at_ms = ?1 WHERE id = ?2",
@@ -1797,11 +1896,21 @@ impl SqliteStore {
                 return Err("no such message".into());
             };
             let (local, dest_server) = self.resolve_move_destination(account_id, destination);
-            self.enqueue_action_str(account_id, "move", &server_folder, uid, Some(&dest_server));
+            self.enqueue_message_action(
+                account_id,
+                ActionType::Move,
+                &server_folder,
+                uid,
+                Some(&dest_server),
+            )?;
             let conn = self.conn.lock().unwrap();
             conn.execute(
-                "UPDATE messages SET folder = ?1, server_folder = ?2 WHERE id = ?3",
-                params![local, dest_server, id],
+                "UPDATE messages SET folder = ?1, \
+                 server_folder = CASE WHEN ?2 THEN ?3 ELSE server_folder END, \
+                 uid = CASE WHEN ?2 THEN NULL ELSE uid END, \
+                 uidvalidity = CASE WHEN ?2 THEN NULL ELSE uidvalidity END, \
+                 location_pending = CASE WHEN ?2 THEN 1 ELSE 0 END WHERE id = ?4",
+                params![local, uid.is_some(), dest_server, id],
             )
             .map_err(|e| e.to_string())?;
             Ok(())
@@ -1810,19 +1919,35 @@ impl SqliteStore {
 
     pub fn bulk_mark_junk(&self, ids: &[MessageId], junk: bool) -> (u32, Vec<String>) {
         let (dest, action) = if junk {
-            ("Junk", "mark_junk")
+            ("Junk", ActionType::MarkJunk)
         } else {
-            ("Inbox", "mark_not_junk")
+            ("Inbox", ActionType::MarkNotJunk)
         };
         Self::apply_each(ids, |id| {
             let Some((account_id, server_folder, uid)) = self.message_location(id) else {
                 return Err("no such message".into());
             };
-            self.enqueue_action_str(account_id, action, &server_folder, uid, None);
+            let dest_server = if uid.is_none() {
+                None
+            } else if junk {
+                Some(
+                    self.junk_folder_name(account_id)
+                        .ok_or_else(|| "no Junk/Spam mailbox configured".to_string())?,
+                )
+            } else {
+                Some(
+                    self.inbox_folder_name(account_id)
+                        .unwrap_or_else(|| "INBOX".to_string()),
+                )
+            };
+            self.enqueue_message_action(account_id, action, &server_folder, uid, None)?;
             let conn = self.conn.lock().unwrap();
             conn.execute(
-                "UPDATE messages SET folder = ?1 WHERE id = ?2",
-                params![dest, id],
+                "UPDATE messages SET folder = ?1, server_folder = COALESCE(?2, server_folder), \
+                 uid = CASE WHEN ?2 IS NULL THEN uid ELSE NULL END, \
+                 uidvalidity = CASE WHEN ?2 IS NULL THEN uidvalidity ELSE NULL END, \
+                 location_pending = CASE WHEN ?2 IS NULL THEN 0 ELSE 1 END WHERE id = ?3",
+                params![dest, dest_server, id],
             )
             .map_err(|e| e.to_string())?;
             Ok(())
@@ -2225,34 +2350,44 @@ impl SqliteStore {
         let mut count = 0;
         for msg in messages {
             let detail = self.get_message(msg.id);
-            let actions = crate::rules::evaluate_rules(rules, &msg, detail.as_ref());
+            let mut actions = crate::rules::evaluate_rules(rules, &msg, detail.as_ref());
             if actions.is_empty() {
                 continue;
             }
+            // A move clears the source UID until destination sync resolves the
+            // row. Apply flag mutations first so every queued action records
+            // the same still-valid source identity, regardless of rule order.
+            actions.sort_by_key(|action| {
+                matches!(
+                    action,
+                    RuleAction::MoveToFolder { .. } | RuleAction::Delete | RuleAction::Archive
+                )
+            });
 
             for action in actions {
-                match action {
+                let relocates = matches!(
+                    &action,
+                    RuleAction::MoveToFolder { .. } | RuleAction::Delete | RuleAction::Archive
+                );
+                let (ok, errors) = match action {
                     RuleAction::MoveToFolder { folder_name } => {
-                        let _ = self.move_message(msg.id, &folder_name);
+                        self.bulk_move(&[msg.id], &folder_name)
                     }
-                    RuleAction::MarkRead => {
-                        let _ = self.set_read(msg.id, false);
-                    }
-                    RuleAction::MarkUnread => {
-                        let _ = self.set_read(msg.id, true);
-                    }
-                    RuleAction::MarkFlagged => {
-                        let _ = self.set_flagged(msg.id, true);
-                    }
-                    RuleAction::MarkUnflagged => {
-                        let _ = self.set_flagged(msg.id, false);
-                    }
-                    RuleAction::Delete => {
-                        let _ = self.delete(msg.id);
-                    }
-                    RuleAction::Archive => {
-                        let _ = self.archive(msg.id);
-                    }
+                    RuleAction::MarkRead => self.bulk_set_read(&[msg.id], false),
+                    RuleAction::MarkUnread => self.bulk_set_read(&[msg.id], true),
+                    RuleAction::MarkFlagged => self.bulk_set_flagged(&[msg.id], true),
+                    RuleAction::MarkUnflagged => self.bulk_set_flagged(&[msg.id], false),
+                    RuleAction::Delete => self.bulk_delete(&[msg.id]),
+                    RuleAction::Archive => self.bulk_archive(&[msg.id]),
+                };
+                if ok != 1 || !errors.is_empty() {
+                    return Err(errors
+                        .into_iter()
+                        .next()
+                        .unwrap_or_else(|| "rule action was not applied".to_string()));
+                }
+                if relocates {
+                    break;
                 }
             }
             count += 1;
@@ -2335,8 +2470,8 @@ impl SqliteStore {
     }
 
     /// P1.3: undo an applied rule run — restore each previewed message to its
-    /// before-state (folder/read/star) and cancel the queued server action for
-    /// moved messages. Returns how many messages were reverted.
+    /// before-state (folder/read/star) and cancel every queued server action
+    /// produced by that run. Returns how many messages were reverted.
     pub fn revert_rules(
         &self,
         account_id: AccountId,
@@ -2348,23 +2483,65 @@ impl SqliteStore {
                 continue;
             };
             let row = detail.row;
-            if row.folder != p.folder_before {
-                if let Some((acct, _local, Some(server_folder), uid)) =
-                    self.get_message_location(p.message_id)
-                {
-                    let _ = self.cancel_pending_actions(acct, &server_folder, uid);
-                }
-                let _ = self.move_message(p.message_id, &p.folder_before);
+            let changed = row.folder != p.folder_before
+                || row.unread != p.unread_before
+                || row.flagged != p.flagged_before;
+            let conn = self.conn.lock().unwrap();
+            let message_id_header: Option<String> = conn
+                .query_row(
+                    "SELECT message_id_header FROM messages WHERE id = ?1 AND account_id = ?2",
+                    params![p.message_id, account_id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+                .flatten();
+            let source: Option<(String, Option<u32>, Option<u32>)> =
+                if let Some(message_id_header) = message_id_header.as_deref() {
+                    let source = conn
+                        .query_row(
+                            "SELECT folder, uid, uidvalidity FROM action_queue \
+                             WHERE account_id = ?1 AND message_id_header = ?2 \
+                             ORDER BY id LIMIT 1",
+                            params![account_id, message_id_header],
+                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                        )
+                        .optional()
+                        .map_err(|e| e.to_string())?;
+                    conn.execute(
+                        "DELETE FROM action_queue WHERE account_id = ?1 AND message_id_header = ?2",
+                        params![account_id, message_id_header],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    source
+                } else {
+                    None
+                };
+            let (source_folder, source_uid, source_uidvalidity) = source
+                .map(|(folder, uid, uidvalidity)| (Some(folder), uid, uidvalidity))
+                .unwrap_or((None, None, None));
+            conn.execute(
+                "UPDATE messages SET folder = ?1, unread = ?2, flagged = ?3, \
+                 server_folder = COALESCE(?4, server_folder), uid = COALESCE(?5, uid), \
+                 uidvalidity = COALESCE(?6, uidvalidity), \
+                 location_pending = CASE WHEN ?4 IS NULL THEN location_pending ELSE 0 END \
+                 WHERE id = ?7 AND account_id = ?8",
+                params![
+                    p.folder_before,
+                    p.unread_before as i64,
+                    p.flagged_before as i64,
+                    source_folder,
+                    source_uid,
+                    source_uidvalidity,
+                    p.message_id,
+                    account_id
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            if changed {
                 reverted += 1;
             }
-            if row.unread != p.unread_before {
-                let _ = self.set_read(p.message_id, p.unread_before);
-            }
-            if row.flagged != p.flagged_before {
-                let _ = self.set_flagged(p.message_id, p.flagged_before);
-            }
         }
-        let _ = account_id;
         Ok(reverted)
     }
 
@@ -4388,98 +4565,182 @@ impl SqliteStore {
     ) -> Result<i64, String> {
         let conn = self.conn.lock().unwrap();
         let now = now_ms();
-        let type_str = match action_type {
-            ActionType::MarkRead => "mark_read",
-            ActionType::MarkUnread => "mark_unread",
-            ActionType::Star => "star",
-            ActionType::Unstar => "unstar",
-            ActionType::Archive => "archive",
-            ActionType::Delete => "delete",
-            ActionType::Move => "move",
-            ActionType::MarkJunk => "mark_junk",
-            ActionType::MarkNotJunk => "mark_not_junk",
-            ActionType::MarkAnswered => "mark_answered",
-            ActionType::MarkForwarded => "mark_forwarded",
-            ActionType::Send => "send",
-            ActionType::CreateFolder => "create_folder",
-            ActionType::RenameFolder => "rename_folder",
-            ActionType::DeleteFolder => "delete_folder",
-            ActionType::SubscribeFolder => "subscribe_folder",
-            ActionType::UnsubscribeFolder => "unsubscribe_folder",
+        let restore_move = action_type == ActionType::Move
+            && uid.is_none()
+            && payload.is_some_and(|value| value.contains("\"restore_to\""));
+        if action_type.requires_message_uid() && uid.is_none() && !restore_move {
+            let pending: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM messages WHERE account_id = ?1 \
+                     AND COALESCE(server_folder, folder) = ?2 AND location_pending = 1)",
+                    params![account_id, folder],
+                    |r| r.get(0),
+                )
+                .unwrap_or(false);
+            if pending {
+                return Err(
+                    "message location is pending; sync before applying another action".into(),
+                );
+            }
+            // Imported/demo/local-only rows have no server identity. Their
+            // action is intentionally local and must not create a no-op queue
+            // entry that would later be reported as synced.
+            return Ok(0);
+        }
+        let (uidvalidity, message_id_header): (Option<u32>, Option<String>) = if let Some(uid) = uid
+        {
+            let identity: (Option<u32>, Option<String>) = conn
+                .query_row(
+                    "SELECT uidvalidity, message_id_header FROM messages \
+                 WHERE account_id = ?1 AND COALESCE(server_folder, folder) = ?2 AND uid = ?3 \
+                 ORDER BY id DESC LIMIT 1",
+                    params![account_id, folder, uid],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "cannot queue action without the message UIDVALIDITY".to_string())?;
+            if identity.0.is_none() {
+                return Err("message UIDVALIDITY is unknown; refresh before retrying".into());
+            }
+            if matches!(
+                action_type,
+                ActionType::Archive
+                    | ActionType::Delete
+                    | ActionType::Move
+                    | ActionType::MarkJunk
+                    | ActionType::MarkNotJunk
+            ) && identity.1.is_none()
+            {
+                return Err(
+                    "message has no Message-ID; refresh before moving it to another folder".into(),
+                );
+            }
+            identity
+        } else {
+            let message_id = payload
+                .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                .and_then(|value| {
+                    value
+                        .get("message_id")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                });
+            (None, message_id)
         };
         conn.execute(
-            "INSERT INTO action_queue (account_id, action_type, folder, uid, payload, created_at_ms, retries) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
-            params![account_id, type_str, folder, uid, payload, now],
+            "INSERT INTO action_queue \
+             (account_id, action_type, folder, uid, uidvalidity, message_id_header, payload, \
+              created_at_ms, retries, status, next_attempt_at_ms) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, 'pending', ?8)",
+            params![
+                account_id,
+                action_type.as_key(),
+                folder,
+                uid,
+                uidvalidity,
+                message_id_header,
+                payload,
+                now
+            ],
         )
         .map_err(|e| e.to_string())?;
         Ok(conn.last_insert_rowid())
     }
 
-    pub fn peek_pending_actions(&self, account_id: AccountId) -> Vec<QueuedAction> {
-        self.list_queued_actions(Some(account_id))
+    pub fn peek_pending_actions(&self, account_id: AccountId) -> Result<Vec<QueuedAction>, String> {
+        self.query_queued_actions(
+            "WHERE account_id = ?1 AND status = 'pending' AND next_attempt_at_ms <= ?2",
+            &[
+                Value::Integer(i64::from(account_id)),
+                Value::Integer(now_ms()),
+            ],
+        )
     }
 
     /// P0.3: the queued actions for one account (or all when `None`), newest
     /// first — the "Sync & queue" surface's data.
-    pub fn list_queued_actions(&self, account_id: Option<AccountId>) -> Vec<QueuedAction> {
-        let conn = self.conn.lock().unwrap();
-        let (sql, arg): (&str, Option<AccountId>) = match account_id {
-            Some(id) => (
-                "SELECT id, account_id, action_type, folder, uid, payload, created_at_ms, retries, last_error \
-                 FROM action_queue WHERE account_id = ?1 ORDER BY id ASC LIMIT 200",
-                Some(id),
-            ),
-            None => (
-                "SELECT id, account_id, action_type, folder, uid, payload, created_at_ms, retries, last_error \
-                 FROM action_queue ORDER BY id ASC LIMIT 200",
-                None,
-            ),
-        };
-        let mut stmt = match conn.prepare(sql) {
-            Ok(s) => s,
-            Err(_) => return Vec::new(),
-        };
-        let mut qparams: Vec<rusqlite::types::Value> = Vec::new();
-        if let Some(id) = arg {
-            qparams.push(rusqlite::types::Value::Integer(i64::from(id)));
+    pub fn list_queued_actions(
+        &self,
+        account_id: Option<AccountId>,
+    ) -> Result<Vec<QueuedAction>, String> {
+        match account_id {
+            Some(id) => {
+                self.query_queued_actions("WHERE account_id = ?1", &[Value::Integer(i64::from(id))])
+            }
+            None => self.query_queued_actions("", &[]),
         }
-        let rows = stmt.query_map(rusqlite::params_from_iter(qparams.iter()), |r| {
-            let type_str: String = r.get(2)?;
-            let action_type = match type_str.as_str() {
-                "mark_read" => ActionType::MarkRead,
-                "mark_unread" => ActionType::MarkUnread,
-                "star" => ActionType::Star,
-                "unstar" => ActionType::Unstar,
-                "archive" => ActionType::Archive,
-                "delete" => ActionType::Delete,
-                "move" => ActionType::Move,
-                "mark_junk" => ActionType::MarkJunk,
-                "mark_not_junk" => ActionType::MarkNotJunk,
-                "mark_answered" => ActionType::MarkAnswered,
-                "mark_forwarded" => ActionType::MarkForwarded,
-                "send" => ActionType::Send,
-                "create_folder" => ActionType::CreateFolder,
-                "rename_folder" => ActionType::RenameFolder,
-                "delete_folder" => ActionType::DeleteFolder,
-                "subscribe_folder" => ActionType::SubscribeFolder,
-                "unsubscribe_folder" => ActionType::UnsubscribeFolder,
-                _ => ActionType::MarkRead,
-            };
-            Ok(QueuedAction {
-                id: r.get(0)?,
-                account_id: r.get(1)?,
-                action_type,
-                folder: r.get(3)?,
-                uid: r.get(4)?,
-                payload: r.get(5)?,
-                created_at_ms: r.get(6)?,
-                retries: r.get::<_, i64>(7)? as u32,
-                last_error: r.get(8)?,
+    }
+
+    fn query_queued_actions(
+        &self,
+        where_clause: &str,
+        values: &[Value],
+    ) -> Result<Vec<QueuedAction>, String> {
+        let conn = self.conn.lock().unwrap();
+        let sql = format!(
+            "SELECT id, account_id, action_type, folder, uid, uidvalidity, \
+             message_id_header, payload, created_at_ms, retries, status, \
+             next_attempt_at_ms, last_error FROM action_queue {where_clause} \
+             ORDER BY id ASC LIMIT 200"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows: Vec<QueuedActionRow> = stmt
+            .query_map(rusqlite::params_from_iter(values.iter()), |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                    r.get(8)?,
+                    r.get::<_, i64>(9)? as u32,
+                    r.get(10)?,
+                    r.get(11)?,
+                    r.get(12)?,
+                ))
             })
-        });
-        rows.map(|iter| iter.flatten().collect())
-            .unwrap_or_default()
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        rows.into_iter()
+            .map(
+                |(
+                    id,
+                    account_id,
+                    type_str,
+                    folder,
+                    uid,
+                    uidvalidity,
+                    message_id_header,
+                    payload,
+                    created_at_ms,
+                    retries,
+                    status,
+                    next_attempt_at_ms,
+                    last_error,
+                )| {
+                    Ok(QueuedAction {
+                        id,
+                        account_id,
+                        action_type: ActionType::from_key(&type_str)?,
+                        folder,
+                        uid,
+                        uidvalidity,
+                        message_id_header,
+                        payload,
+                        created_at_ms,
+                        retries,
+                        status,
+                        next_attempt_at_ms,
+                        last_error,
+                    })
+                },
+            )
+            .collect()
     }
 
     /// Record the last replay failure (or clear it on success) — P0.3.
@@ -4493,6 +4754,75 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Atomically reserve an action for one replay worker. Manual refresh,
+    /// periodic sync, and account-open sync can overlap; only one may execute
+    /// a queued action (especially a Send).
+    pub fn claim_action(&self, id: i64) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn
+            .execute(
+                "UPDATE action_queue SET status = 'running' \
+                 WHERE id = ?1 AND status = 'pending' AND next_attempt_at_ms <= ?2",
+                params![id, now_ms()],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(changed == 1)
+    }
+
+    pub fn update_action_identity(
+        &self,
+        id: i64,
+        uid: u32,
+        uidvalidity: u32,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE action_queue SET uid = ?1, uidvalidity = ?2 WHERE id = ?3",
+            params![uid, uidvalidity, id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn pending_message_locations(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Vec<(MessageId, String, String)>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, server_folder, message_id_header FROM messages \
+                 WHERE account_id = ?1 AND location_pending = 1 \
+                 AND server_folder IS NOT NULL AND message_id_header IS NOT NULL",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![account_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    pub fn resolve_pending_message_location(
+        &self,
+        message_id: MessageId,
+        server_folder: &str,
+        uid: u32,
+        uidvalidity: u32,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE messages SET server_folder = ?1, uid = ?2, uidvalidity = ?3, \
+             location_pending = 0 WHERE id = ?4 AND location_pending = 1",
+            params![server_folder, uid, uidvalidity, message_id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// Undo an optimistic local folder/tombstone change when its server action
     /// fails. The queued action remains visible with `last_error` for retry.
     pub fn rollback_action_local(
@@ -4501,10 +4831,9 @@ impl SqliteStore {
         action_type: ActionType,
         source_server_folder: &str,
         uid: Option<u32>,
+        uidvalidity: Option<u32>,
+        message_id_header: Option<&str>,
     ) -> Result<(), String> {
-        let Some(uid) = uid else {
-            return Ok(());
-        };
         let local_folder = {
             let conn = self.conn.lock().unwrap();
             conn.query_row(
@@ -4525,22 +4854,41 @@ impl SqliteStore {
         let conn = self.conn.lock().unwrap();
         match action_type {
             ActionType::Delete => {
-                conn.execute(
-                    "UPDATE messages SET deleted_at_ms = NULL WHERE account_id = ?1 AND uid = ?2",
-                    params![account_id, uid],
-                )
-                .map_err(|e| e.to_string())?;
+                if let Some(uid) = uid {
+                    conn.execute(
+                        "UPDATE messages SET deleted_at_ms = NULL WHERE account_id = ?1 AND uid = ?2",
+                        params![account_id, uid],
+                    )
+                    .map_err(|e| e.to_string())?;
+                } else if let Some(message_id_header) = message_id_header {
+                    conn.execute(
+                        "UPDATE messages SET deleted_at_ms = NULL WHERE account_id = ?1 \
+                         AND message_id_header = ?2",
+                        params![account_id, message_id_header],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
             }
             ActionType::Archive
             | ActionType::Move
             | ActionType::MarkJunk
             | ActionType::MarkNotJunk => {
-                conn.execute(
-                    "UPDATE messages SET folder = ?1, server_folder = ?2 \
-                     WHERE account_id = ?3 AND uid = ?4",
-                    params![local_folder, source_server_folder, account_id, uid],
-                )
-                .map_err(|e| e.to_string())?;
+                if let Some(message_id_header) = message_id_header {
+                    conn.execute(
+                        "UPDATE messages SET folder = ?1, server_folder = ?2, uid = ?3, \
+                         uidvalidity = ?4, location_pending = CASE WHEN ?3 IS NULL THEN 1 ELSE 0 END \
+                         WHERE account_id = ?5 AND message_id_header = ?6 AND location_pending = 1",
+                        params![
+                            local_folder,
+                            source_server_folder,
+                            uid,
+                            uidvalidity,
+                            account_id,
+                            message_id_header
+                        ],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
             }
             _ => {}
         }
@@ -4552,8 +4900,9 @@ impl SqliteStore {
     pub fn retry_queued_action(&self, id: i64) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE action_queue SET retries = 0, last_error = NULL WHERE id = ?1",
-            params![id],
+            "UPDATE action_queue SET retries = 0, last_error = NULL, status = 'pending', \
+             next_attempt_at_ms = ?1 WHERE id = ?2",
+            params![now_ms(), id],
         )
         .map_err(|e| e.to_string())?;
         Ok(())
@@ -4566,14 +4915,36 @@ impl SqliteStore {
         Ok(())
     }
 
-    pub fn increment_action_retry(&self, id: i64) -> Result<(), String> {
+    pub fn record_action_failure(&self, id: i64, error: &str) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
+        let retries: u32 = conn
+            .query_row(
+                "SELECT retries FROM action_queue WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let next_retries = retries.saturating_add(1);
+        let failed = next_retries >= 5;
+        let delay_secs = 5_i64.saturating_mul(1_i64 << retries.min(6));
+        let next_attempt_at_ms = now_ms().saturating_add(delay_secs.min(300) * 1000);
         conn.execute(
-            "UPDATE action_queue SET retries = retries + 1 WHERE id = ?1",
-            params![id],
+            "UPDATE action_queue SET retries = ?1, last_error = ?2, status = ?3, \
+             next_attempt_at_ms = ?4 WHERE id = ?5",
+            params![
+                next_retries,
+                error,
+                if failed { "failed" } else { "pending" },
+                next_attempt_at_ms,
+                id
+            ],
         )
         .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    pub fn increment_action_retry(&self, id: i64) -> Result<(), String> {
+        self.record_action_failure(id, "action replay failed")
     }
 
     /// The subject + recipients of a queued `Send` (parsed from its payload) —
@@ -4680,7 +5051,88 @@ impl SqliteStore {
         forwarded: bool,
         has_attachments: bool,
     ) -> Result<MessageId, String> {
+        self.upsert_fetched_message_with_message_id(
+            account_id,
+            folder,
+            server_folder,
+            uid,
+            uidvalidity,
+            sender_name,
+            sender_address,
+            subject,
+            snippet,
+            received_at_ms,
+            unread,
+            flagged,
+            answered,
+            forwarded,
+            has_attachments,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn upsert_fetched_message_with_message_id(
+        &self,
+        account_id: AccountId,
+        folder: &str,
+        server_folder: &str,
+        uid: u32,
+        uidvalidity: i64,
+        sender_name: &str,
+        sender_address: &str,
+        subject: &str,
+        snippet: &str,
+        received_at_ms: i64,
+        unread: bool,
+        flagged: bool,
+        answered: bool,
+        forwarded: bool,
+        has_attachments: bool,
+        message_id_header: Option<&str>,
+    ) -> Result<MessageId, String> {
         let conn = self.conn.lock().unwrap();
+        let pending: Option<MessageId> = if let Some(message_id_header) = message_id_header {
+            conn.query_row(
+                "SELECT id FROM messages WHERE account_id = ?1 AND message_id_header = ?2 \
+                 AND location_pending = 1 ORDER BY id LIMIT 1",
+                params![account_id, message_id_header],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+        } else {
+            None
+        };
+        if let Some(id) = pending {
+            conn.execute(
+                "UPDATE messages SET folder = ?1, server_folder = ?2, uid = ?3, uidvalidity = ?4, \
+                 sender_name = ?5, sender_address = ?6, subject = ?7, \
+                 snippet = CASE WHEN ?8 <> '' THEN ?8 ELSE snippet END, received_at_ms = ?9, \
+                 unread = ?10, flagged = ?11, answered = ?12, forwarded = ?13, \
+                 has_attachments = CASE WHEN ?14 <> 0 THEN 1 ELSE has_attachments END, \
+                 location_pending = 0 WHERE id = ?15",
+                params![
+                    folder,
+                    server_folder,
+                    uid,
+                    uidvalidity,
+                    sender_name,
+                    sender_address,
+                    subject,
+                    snippet,
+                    received_at_ms,
+                    unread as i64,
+                    flagged as i64,
+                    answered as i64,
+                    forwarded as i64,
+                    has_attachments as i64,
+                    id
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            return Ok(id);
+        }
         let existing: Option<MessageId> = conn
             .query_row(
                 "SELECT id FROM messages WHERE account_id = ?1 AND folder = ?2 \
@@ -4696,7 +5148,8 @@ impl SqliteStore {
                 "UPDATE messages SET sender_name = ?1, sender_address = ?2, subject = ?3, \
                  snippet = CASE WHEN ?4 <> '' THEN ?4 ELSE snippet END, received_at_ms = ?5, unread = ?6, flagged = ?7, \
                  answered = ?8, forwarded = ?9, has_attachments = CASE WHEN ?10 <> 0 THEN 1 ELSE has_attachments END, server_folder = ?11, \
-                 thread_id = COALESCE(thread_id, ?12) WHERE id = ?13",
+                 thread_id = COALESCE(thread_id, ?12), message_id_header = COALESCE(?13, message_id_header), \
+                 location_pending = 0 WHERE id = ?14",
                 params![
                     sender_name,
                     sender_address,
@@ -4710,6 +5163,7 @@ impl SqliteStore {
                     has_attachments as i64,
                     server_folder,
                     thread_id,
+                    message_id_header,
                     id
                 ],
             )
@@ -4718,8 +5172,9 @@ impl SqliteStore {
         } else {
             conn.execute(
                 "INSERT INTO messages (account_id, folder, server_folder, sender_name, sender_address, subject, \
-                 snippet, received_at_ms, unread, flagged, answered, forwarded, uid, uidvalidity, has_attachments, thread_id) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                 snippet, received_at_ms, unread, flagged, answered, forwarded, uid, uidvalidity, \
+                 has_attachments, thread_id, message_id_header, location_pending) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, 0)",
                 params![
                     account_id,
                     folder,
@@ -4736,7 +5191,8 @@ impl SqliteStore {
                     uid,
                     uidvalidity,
                     has_attachments as i64,
-                    thread_id
+                    thread_id,
+                    message_id_header
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -6178,7 +6634,7 @@ mod tests {
         store.delete_local_folder(renamed.id).unwrap();
         assert!(store.folder_by_id(renamed.id).is_none());
 
-        let queued = store.list_queued_actions(Some(acc.id));
+        let queued = store.list_queued_actions(Some(acc.id)).unwrap();
         let types: Vec<ActionType> = queued.iter().map(|a| a.action_type).collect();
         assert!(types.contains(&ActionType::CreateFolder));
         assert!(types.contains(&ActionType::RenameFolder));
@@ -6246,6 +6702,18 @@ mod tests {
             .unwrap();
         assert_eq!(store.pending_action_count(acc.id), 0);
         assert_eq!(store.draft_count(acc.id), 0);
+
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO messages (account_id, folder, server_folder, sender_name, sender_address, \
+                 subject, snippet, received_at_ms, uid, uidvalidity) \
+                 VALUES (?1, 'Inbox', 'Inbox', '', '', '', '', 0, 1, 9)",
+                params![acc.id],
+            )
+            .unwrap();
 
         store
             .enqueue_action(acc.id, ActionType::MarkRead, "Inbox", Some(1), None)
@@ -6387,8 +6855,10 @@ mod tests {
             let conn = store.conn.lock().unwrap();
             conn.execute(
                 "INSERT INTO messages (id, account_id, folder, server_folder, sender_name, \
-                 sender_address, subject, snippet, received_at_ms, unread, flagged, uid, has_attachments) \
-                 VALUES (1, ?1, 'Inbox', 'INBOX', 'S', 's@e.com', 'Subj', 'snip', 0, 1, 0, 1001, 0)",
+                 sender_address, subject, snippet, received_at_ms, unread, flagged, uid, uidvalidity, \
+                 message_id_header, has_attachments) \
+                 VALUES (1, ?1, 'Inbox', 'INBOX', 'S', 's@e.com', 'Subj', 'snip', 0, 1, 0, \
+                 1001, 9, '<delete@test>', 0)",
                 params![acc.id],
             )
             .unwrap();
@@ -7243,6 +7713,16 @@ mod tests {
     #[test]
     fn action_queue_operations() {
         let store = seeded();
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE messages SET server_folder = 'Inbox', uid = 101, uidvalidity = 9 \
+                 WHERE id = (SELECT MIN(id) FROM messages WHERE account_id = 1)",
+                [],
+            )
+            .unwrap();
         let action_id = store
             .enqueue_action(
                 1,
@@ -7254,18 +7734,18 @@ mod tests {
             .unwrap();
         assert!(action_id > 0);
 
-        let pending = store.peek_pending_actions(1);
+        let pending = store.peek_pending_actions(1).unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].action_type, ActionType::MarkRead);
         assert_eq!(pending[0].uid, Some(101));
         assert_eq!(pending[0].retries, 0);
 
         store.increment_action_retry(action_id).unwrap();
-        let pending = store.peek_pending_actions(1);
+        let pending = store.list_queued_actions(Some(1)).unwrap();
         assert_eq!(pending[0].retries, 1);
 
         store.remove_action(action_id).unwrap();
-        assert!(store.peek_pending_actions(1).is_empty());
+        assert!(store.peek_pending_actions(1).unwrap().is_empty());
     }
 
     /// P0.3: a failed replay records its error, Retry resets it, and the queue
@@ -7273,12 +7753,22 @@ mod tests {
     #[test]
     fn queued_action_recovery_lifecycle() {
         let store = seeded();
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE messages SET server_folder = 'Inbox', uid = 5, uidvalidity = 9 \
+                 WHERE id = (SELECT MIN(id) FROM messages WHERE account_id = 1)",
+                [],
+            )
+            .unwrap();
         let id = store
             .enqueue_action(1, ActionType::Star, "Inbox", Some(5), None)
             .unwrap();
 
         // Pending: no error yet.
-        let q = store.peek_pending_actions(1);
+        let q = store.peek_pending_actions(1).unwrap();
         assert_eq!(q.len(), 1);
         assert_eq!(q[0].retries, 0);
         assert_eq!(q[0].last_error, None);
@@ -7286,18 +7776,18 @@ mod tests {
         // A failed replay records the failure.
         store.increment_action_retry(id).unwrap();
         store.set_action_error(id, Some("offline")).unwrap();
-        let q = store.peek_pending_actions(1);
+        let q = store.list_queued_actions(Some(1)).unwrap();
         assert_eq!(q[0].retries, 1);
         assert_eq!(q[0].last_error.as_deref(), Some("offline"));
 
         // Retry resets both.
         store.retry_queued_action(id).unwrap();
-        let q = store.peek_pending_actions(1);
+        let q = store.peek_pending_actions(1).unwrap();
         assert_eq!(q[0].retries, 0);
         assert_eq!(q[0].last_error, None);
 
         // Cross-account listing + Send payload display.
-        assert_eq!(store.list_queued_actions(None).len(), 1);
+        assert_eq!(store.list_queued_actions(None).unwrap().len(), 1);
         let sid = store
             .enqueue_action(
                 1,
@@ -7312,7 +7802,138 @@ mod tests {
         assert_eq!(to, vec!["b@x.com"]);
 
         store.remove_action(sid).unwrap();
-        assert!(store.peek_pending_actions(1).iter().all(|a| a.id != sid));
+        assert!(store
+            .peek_pending_actions(1)
+            .unwrap()
+            .iter()
+            .all(|a| a.id != sid));
+    }
+
+    #[test]
+    fn unknown_queue_action_is_an_error() {
+        let store = seeded();
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO action_queue \
+                 (account_id, action_type, folder, created_at_ms, retries) \
+                 VALUES (1, 'markJunk', 'Inbox', 0, 0)",
+                [],
+            )
+            .unwrap();
+        let error = store.list_queued_actions(None).unwrap_err();
+        assert!(error.contains("unknown queued action type: markJunk"));
+    }
+
+    #[test]
+    fn retry_backoff_caps_in_visible_failed_state() {
+        let store = seeded();
+        let id = store
+            .enqueue_action(1, ActionType::Send, "Outbox", None, Some("{}"))
+            .unwrap();
+        for attempt in 1..=5 {
+            store
+                .record_action_failure(id, &format!("failure {attempt}"))
+                .unwrap();
+        }
+        let queued = store.list_queued_actions(Some(1)).unwrap();
+        let action = queued.iter().find(|action| action.id == id).unwrap();
+        assert_eq!(action.retries, 5);
+        assert_eq!(action.status, "failed");
+        assert_eq!(action.last_error.as_deref(), Some("failure 5"));
+        assert!(!store
+            .peek_pending_actions(1)
+            .unwrap()
+            .iter()
+            .any(|action| action.id == id));
+
+        store.retry_queued_action(id).unwrap();
+        let action = store
+            .peek_pending_actions(1)
+            .unwrap()
+            .into_iter()
+            .find(|action| action.id == id)
+            .unwrap();
+        assert_eq!(action.status, "pending");
+        assert_eq!(action.retries, 0);
+    }
+
+    #[test]
+    fn move_drops_source_uid_until_message_id_resolves_destination() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let account = test_account(&store);
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO messages \
+                 (id, account_id, folder, server_folder, sender_name, sender_address, subject, \
+                  snippet, received_at_ms, uid, uidvalidity, message_id_header) \
+                 VALUES (1, ?1, 'Inbox', 'INBOX', '', '', 'subject', '', 0, 42, 7, '<m@id>')",
+                params![account.id],
+            )
+            .unwrap();
+        }
+
+        let (ok, errors) = store.bulk_move(&[1], "Archive");
+        assert_eq!(ok, 1, "{errors:?}");
+        let location: (Option<u32>, Option<u32>, i64) = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT uid, uidvalidity, location_pending FROM messages WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(location, (None, None, 1));
+        let queued = store.list_queued_actions(Some(account.id)).unwrap();
+        assert_eq!(queued[0].uid, Some(42));
+        assert_eq!(queued[0].uidvalidity, Some(7));
+        assert_eq!(queued[0].message_id_header.as_deref(), Some("<m@id>"));
+
+        let (ok, errors) = store.bulk_set_read(&[1], false);
+        assert_eq!(ok, 0);
+        assert!(errors[0].contains("location is pending"));
+        assert_eq!(
+            store.list_queued_actions(Some(account.id)).unwrap().len(),
+            1
+        );
+
+        let resolved = store
+            .upsert_fetched_message_with_message_id(
+                account.id,
+                "Archive",
+                "Archive",
+                99,
+                8,
+                "",
+                "",
+                "subject",
+                "",
+                0,
+                false,
+                false,
+                false,
+                false,
+                false,
+                Some("<m@id>"),
+            )
+            .unwrap();
+        assert_eq!(resolved, 1);
+        let location: (Option<u32>, Option<u32>, i64) = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT uid, uidvalidity, location_pending FROM messages WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(location, (Some(99), Some(8), 0));
     }
 
     #[test]
@@ -7753,6 +8374,61 @@ mod tests {
     }
 
     #[test]
+    fn rule_actions_use_the_durable_queue() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let account = test_account(&store);
+        store
+            .upsert_fetched_message_with_message_id(
+                account.id,
+                "Inbox",
+                "INBOX",
+                12,
+                4,
+                "Alice",
+                "alice@example.com",
+                "Queued rule",
+                "",
+                0,
+                true,
+                false,
+                false,
+                false,
+                false,
+                Some("<rule@id>"),
+            )
+            .unwrap();
+        let rules = vec![MailRule {
+            id: "queue-rule".into(),
+            name: "Queue it".into(),
+            enabled: true,
+            match_mode: RuleMatchMode::All,
+            conditions: vec![RuleCondition {
+                field: RuleField::From,
+                operator: RuleOperator::Contains,
+                value: "alice@example.com".into(),
+            }],
+            actions: vec![
+                RuleAction::MoveToFolder {
+                    folder_name: "Archive".into(),
+                },
+                RuleAction::MarkRead,
+            ],
+            stop_processing: true,
+        }];
+        assert_eq!(
+            store
+                .apply_rules_to_folder(account.id, "Inbox", &rules)
+                .unwrap(),
+            1
+        );
+        let queued = store.list_queued_actions(Some(account.id)).unwrap();
+        assert_eq!(queued.len(), 2);
+        assert_eq!(queued[0].action_type, ActionType::MarkRead);
+        assert_eq!(queued[1].action_type, ActionType::Move);
+        assert!(queued.iter().all(|action| action.uidvalidity == Some(4)));
+    }
+
+    #[test]
     fn test_conversation_threading_and_thread_actions() {
         let store = SqliteStore::open_in_memory().unwrap();
         let acct = store
@@ -7839,6 +8515,12 @@ mod tests {
         let d2 = store.get_message(msg2_id).unwrap();
         assert!(!d1.row.unread);
         assert!(!d2.row.unread);
+        let queued = store.list_queued_actions(Some(acct.id)).unwrap();
+        assert_eq!(queued.len(), 2);
+        assert!(queued
+            .iter()
+            .all(|action| action.action_type == ActionType::MarkRead));
+        assert!(queued.iter().all(|action| action.uidvalidity == Some(1)));
 
         // When threaded = false, flat listing returns 2 separate rows
         let page_flat = store.page_messages(&MessageQuery {

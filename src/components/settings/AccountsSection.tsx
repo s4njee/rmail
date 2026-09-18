@@ -262,11 +262,11 @@ export function AccountsSection() {
         </span>
       </div>
 
-      {/* P0.3 Sync & queue — queued/retrying/stuck offline actions, recoverable. */}
+      {/* C0.5 Sync & queue — queued/retrying/failed actions, recoverable. */}
       <Show when={queued().length > 0}>
         <h3 class="settings-note">Sync & queue</h3>
         <p class="settings-note">
-          Changes made while offline wait here until they can sync. A stuck
+          Changes made while offline wait here until they can sync. A failed
           action shows its last error; Retry resets it, Remove discards it.
         </p>
         <div class="queue-list">

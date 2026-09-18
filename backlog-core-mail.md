@@ -109,16 +109,16 @@ a regression test; the protocol ones need the fake-server harness from C3.2.
 
 ### C0.5 Make the action queue correct
 
-- [ ] One enum ↔ string mapping for action types; an unknown type is an error, never `MarkRead`
+- [x] One enum ↔ string mapping for action types; an unknown type is an error, never `MarkRead`
       (fixes `markJunk` → `MarkRead`).
-- [ ] After a move, capture the new UID (`COPYUID`/`MOVE` response) or mark the row "location
+- [x] After a move, capture the new UID (`COPYUID`/`MOVE` response) or mark the row "location
       pending" until the next sync resolves it by Message-ID; later actions never reuse the source
       UID in the destination folder.
-- [ ] Record UIDVALIDITY on every queued action; on mismatch, re-resolve or fail visibly.
-- [ ] Retry with capped exponential backoff; after the cap the action is `failed` and visible.
-- [ ] Route thread actions (`apply_thread_action`) and rule actions through the same enqueue path so
+- [x] Record UIDVALIDITY on every queued action; on mismatch, re-resolve or fail visibly.
+- [x] Retry with capped exponential backoff; after the cap the action is `failed` and visible.
+- [x] Route thread actions (`apply_thread_action`) and rule actions through the same enqueue path so
       the next sync doesn't undo them.
-- [ ] Replay on manual refresh and for "on open" accounts, not only on the periodic loop.
+- [x] Replay on manual refresh and for "on open" accounts, not only on the periodic loop.
 
 ### C0.6 Attachments that are real files
 
@@ -389,10 +389,9 @@ Snooze, send later, bulk selection, and undo exist.
 
 ## Remaining
 
-C0.1 is complete. The remaining work is the mail-safety and everyday-use queue:
+C0.1–C0.5 are complete. The remaining work is the mail-safety and everyday-use queue:
 
-- **C0.2–C0.10:** preserve all mailbox history, make delete/Trash and archive/junk server-correct,
-  repair the action queue, persist real attachments, make sending exactly-once and threaded, finish
+- **C0.6–C0.10:** persist real attachments, make sending exactly-once and threaded, finish
   Gmail/OAuth onboarding, improve threading and scale, enable notifications, and make drafts roam.
 - **C1:** close the provider and release-trust gaps: labels, quick filters, accessibility, signing,
   connection limits, and recovery drills.

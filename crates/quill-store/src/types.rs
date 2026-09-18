@@ -81,6 +81,72 @@ pub enum ActionType {
     UnsubscribeFolder,
 }
 
+impl ActionType {
+    /// Canonical durable representation used by the action queue. Keep all
+    /// serialization in this one mapping so writers and readers cannot drift.
+    pub fn as_key(self) -> &'static str {
+        match self {
+            Self::MarkRead => "mark_read",
+            Self::MarkUnread => "mark_unread",
+            Self::Star => "star",
+            Self::Unstar => "unstar",
+            Self::Archive => "archive",
+            Self::Delete => "delete",
+            Self::Move => "move",
+            Self::MarkJunk => "mark_junk",
+            Self::MarkNotJunk => "mark_not_junk",
+            Self::Send => "send",
+            Self::MarkAnswered => "mark_answered",
+            Self::MarkForwarded => "mark_forwarded",
+            Self::CreateFolder => "create_folder",
+            Self::RenameFolder => "rename_folder",
+            Self::DeleteFolder => "delete_folder",
+            Self::SubscribeFolder => "subscribe_folder",
+            Self::UnsubscribeFolder => "unsubscribe_folder",
+        }
+    }
+
+    pub fn from_key(value: &str) -> Result<Self, String> {
+        match value {
+            "mark_read" => Ok(Self::MarkRead),
+            "mark_unread" => Ok(Self::MarkUnread),
+            "star" => Ok(Self::Star),
+            "unstar" => Ok(Self::Unstar),
+            "archive" => Ok(Self::Archive),
+            "delete" => Ok(Self::Delete),
+            "move" => Ok(Self::Move),
+            "mark_junk" => Ok(Self::MarkJunk),
+            "mark_not_junk" => Ok(Self::MarkNotJunk),
+            "send" => Ok(Self::Send),
+            "mark_answered" => Ok(Self::MarkAnswered),
+            "mark_forwarded" => Ok(Self::MarkForwarded),
+            "create_folder" => Ok(Self::CreateFolder),
+            "rename_folder" => Ok(Self::RenameFolder),
+            "delete_folder" => Ok(Self::DeleteFolder),
+            "subscribe_folder" => Ok(Self::SubscribeFolder),
+            "unsubscribe_folder" => Ok(Self::UnsubscribeFolder),
+            _ => Err(format!("unknown queued action type: {value}")),
+        }
+    }
+
+    pub fn requires_message_uid(self) -> bool {
+        matches!(
+            self,
+            Self::MarkRead
+                | Self::MarkUnread
+                | Self::Star
+                | Self::Unstar
+                | Self::Archive
+                | Self::Delete
+                | Self::Move
+                | Self::MarkJunk
+                | Self::MarkNotJunk
+                | Self::MarkAnswered
+                | Self::MarkForwarded
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export)]
 pub struct QueuedAction {
@@ -90,10 +156,17 @@ pub struct QueuedAction {
     pub action_type: ActionType,
     pub folder: String,
     pub uid: Option<u32>,
+    pub uidvalidity: Option<u32>,
+    pub message_id_header: Option<String>,
     pub payload: Option<String>,
     #[ts(type = "number")]
     pub created_at_ms: i64,
     pub retries: u32,
+    /// `pending` actions are replayable; `failed` actions reached the retry cap
+    /// and remain visible until the user retries or discards them.
+    pub status: String,
+    #[ts(type = "number")]
+    pub next_attempt_at_ms: i64,
     /// The last replay failure, when the action couldn't be applied (P0.3).
     /// `None` = pending or successful.
     pub last_error: Option<String>,

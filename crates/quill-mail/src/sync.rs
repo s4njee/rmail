@@ -155,7 +155,11 @@ fn write_envelope(
     let Some((row, uid, parsed)) = envelope_row(account, folder, uidvalidity, fetch) else {
         return Ok(None);
     };
-    let message_id = store.upsert_fetched_message(
+    let envelope_message_id = fetch
+        .envelope()
+        .and_then(|envelope| envelope.message_id.as_ref())
+        .map(|value| String::from_utf8_lossy(value).into_owned());
+    let message_id = store.upsert_fetched_message_with_message_id(
         account.id,
         folder,
         server_folder,
@@ -171,6 +175,7 @@ fn write_envelope(
         row.answered,
         row.forwarded,
         row.has_attachments,
+        envelope_message_id.as_deref(),
     )?;
     // When a body was requested with this fetch, persist it (plus its
     // recipients/attachment metadata). Header-only fetches still create or
@@ -353,10 +358,8 @@ fn is_all_mail_mailbox(server_name: &str) -> bool {
 /// Sync every tracked folder for one account. Replays pending offline actions
 /// first, then incrementally synchronizes each folder.
 ///
-/// `replay_actions` gates the offline-action replay. Only the periodic sync
-/// path replays — the IDLE push worker must not, or the two (which run
-/// concurrently for the same account) would both read a queued `Send` and
-/// deliver it twice.
+/// `replay_actions` gates the offline-action replay. Periodic, on-open, and
+/// explicit refresh syncs replay; the concurrent IDLE push worker does not.
 pub async fn sync_account(
     store: &SqliteStore,
     account: &Account,
@@ -382,6 +385,11 @@ pub async fn sync_account(
             log::warn!("action replay for account {}: {e}", account.id);
         }
     }
+
+    // A server MOVE assigns a destination UID. Resolve optimistic rows by
+    // Message-ID before normal folder sync, including Gmail All Mail (which is
+    // intentionally excluded from full synchronization to avoid duplicates).
+    resolve_pending_locations(store, account.id, &mut session).await;
 
     // 2. Discover server folders.
     let discovered = match discover_folders(&mut session).await {
@@ -471,6 +479,39 @@ pub async fn sync_account(
 
     let _ = session.logout().await;
     Ok(outcome)
+}
+
+async fn resolve_pending_locations(
+    store: &SqliteStore,
+    account_id: u32,
+    session: &mut async_imap::Session<Stream>,
+) {
+    let Ok(pending) = store.pending_message_locations(account_id) else {
+        return;
+    };
+    for (message_id, server_folder, message_id_header) in pending {
+        let Ok(mailbox) = session.select(&server_folder).await else {
+            continue;
+        };
+        let Some(uidvalidity) = mailbox.uid_validity else {
+            continue;
+        };
+        let query = format!(
+            "HEADER Message-ID \"{}\"",
+            message_id_header.replace('"', "")
+        );
+        let Ok(matches) = session.uid_search(query).await else {
+            continue;
+        };
+        if let Some(uid) = matches.iter().next().copied() {
+            let _ = store.resolve_pending_message_location(
+                message_id,
+                &server_folder,
+                uid,
+                uidvalidity,
+            );
+        }
+    }
 }
 
 /// Synchronize a single folder incrementally.
@@ -948,10 +989,14 @@ pub async fn replay_pending_actions(
     session: &mut async_imap::Session<Stream>,
     credential: &Credential,
 ) -> Result<(), String> {
-    let actions = store.peek_pending_actions(account.id);
+    let actions = store.peek_pending_actions(account.id)?;
     let mut current_folder = String::new();
+    let mut current_uidvalidity = None;
 
     for action in actions {
+        if !store.claim_action(action.id)? {
+            continue;
+        }
         // SMTP sends don't operate on a mailbox, and the folder recorded for
         // them ("Outbox", or "Sent" for RSVP replies) is often not a real IMAP
         // mailbox — SELECTing it would fail and block every queued send
@@ -966,189 +1011,290 @@ pub async fn replay_pending_actions(
                 | ActionType::UnsubscribeFolder
         );
         if needs_mailbox && !action.folder.is_empty() && action.folder != current_folder {
-            if let Err(e) = session.select(&action.folder).await {
-                log::warn!("select for replay {}: {e}", action.folder);
-                let _ = store.increment_action_retry(action.id);
-                continue;
+            match session.select(&action.folder).await {
+                Ok(mailbox) => current_uidvalidity = mailbox.uid_validity,
+                Err(e) => {
+                    let error = format!("select for replay {}: {e}", action.folder);
+                    log::warn!("{error}");
+                    let _ = store.rollback_action_local(
+                        account.id,
+                        action.action_type,
+                        &action.folder,
+                        action.uid,
+                        action.uidvalidity,
+                        action.message_id_header.as_deref(),
+                    );
+                    let _ = store.record_action_failure(action.id, &error);
+                    continue;
+                }
             }
             current_folder = action.folder.clone();
         }
 
-        let result = match action.action_type {
-            ActionType::MarkRead => {
-                if let Some(uid) = action.uid {
-                    set_seen(session, uid, true).await
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::MarkUnread => {
-                if let Some(uid) = action.uid {
-                    set_seen(session, uid, false).await
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::Star => {
-                if let Some(uid) = action.uid {
-                    set_flagged(session, uid, true).await
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::Unstar => {
-                if let Some(uid) = action.uid {
-                    set_flagged(session, uid, false).await
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::Archive => {
-                if let Some(uid) = action.uid {
-                    // Copy to the account's Archive mailbox first, and only
-                    // delete the source if the copy succeeded. Gmail has no
-                    // mailbox literally named "Archive" (Gmail's archive is
-                    // [Gmail]/All Mail, persisted during discovery), so a
-                    // provider-aware target is required before moving.
-                    let archive_folder =
-                        store.archive_folder_name(account.id).ok_or_else(|| {
-                            "no Archive or All Mail mailbox configured for this account".to_string()
-                        })?;
-                    move_uid_to_mailbox(session, uid, &archive_folder).await
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::Delete => {
-                if let Some(uid) = action.uid {
-                    let trash_folder = store
-                        .trash_folder_name(account.id)
-                        .unwrap_or_else(|| "Trash".to_string());
-                    if action.folder == trash_folder || is_spam_mailbox(&action.folder) {
-                        // Deleting from Trash is the explicit permanent-delete
-                        // path; scope UID EXPUNGE to this one UID.
-                        expunge_uid(session, uid).await
-                    } else {
-                        move_uid_to_mailbox(session, uid, &trash_folder).await
+        let mut effective_uidvalidity = action.uidvalidity;
+        let resolved_uid = if action.action_type.requires_message_uid() {
+            match (action.uid, action.uidvalidity, current_uidvalidity) {
+                (Some(uid), Some(expected), Some(actual)) if expected == actual => Some(uid),
+                (Some(_), _, _) => {
+                    let message_id = action.message_id_header.as_deref().ok_or_else(|| {
+                        "UIDVALIDITY changed and the action has no Message-ID to re-resolve"
+                            .to_string()
+                    });
+                    match message_id {
+                        Ok(message_id) => {
+                            let query =
+                                format!("HEADER Message-ID \"{}\"", message_id.replace('"', ""));
+                            match session.uid_search(query).await {
+                                Ok(mut matches) => {
+                                    let resolved = matches.drain().next();
+                                    if let (Some(uid), Some(uidvalidity)) =
+                                        (resolved, current_uidvalidity)
+                                    {
+                                        effective_uidvalidity = Some(uidvalidity);
+                                        let _ = store.update_action_identity(
+                                            action.id,
+                                            uid,
+                                            uidvalidity,
+                                        );
+                                    }
+                                    resolved
+                                }
+                                Err(e) => {
+                                    let error = format!("re-resolve after UIDVALIDITY change: {e}");
+                                    let _ = store.rollback_action_local(
+                                        account.id,
+                                        action.action_type,
+                                        &action.folder,
+                                        None,
+                                        None,
+                                        action.message_id_header.as_deref(),
+                                    );
+                                    let _ = store.record_action_failure(action.id, &error);
+                                    continue;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            let _ = store.rollback_action_local(
+                                account.id,
+                                action.action_type,
+                                &action.folder,
+                                None,
+                                None,
+                                action.message_id_header.as_deref(),
+                            );
+                            let _ = store.record_action_failure(action.id, &error);
+                            continue;
+                        }
                     }
-                } else {
-                    Ok(())
                 }
+                (None, _, _) if action.action_type == ActionType::Move => None,
+                _ => None,
             }
-            ActionType::Move => {
-                if let Some(ref payload) = action.payload {
-                    let (dest, uid) = if let Ok(restore) =
-                        serde_json::from_str::<serde_json::Value>(payload)
-                    {
-                        let Some(dest) = restore.get("restore_to").and_then(|v| v.as_str()) else {
-                            return Err("restore action missing destination".into());
-                        };
-                        let message_id = restore
-                            .get("message_id")
-                            .and_then(|v| v.as_str())
-                            .ok_or_else(|| "restore action missing Message-ID".to_string())?;
-                        let query =
-                            format!("HEADER Message-ID \"{}\"", message_id.replace('"', ""));
-                        let mut matches = session
-                            .uid_search(query)
-                            .await
-                            .map_err(|e| format!("find message in Trash: {e}"))?;
-                        let uid = matches
-                            .drain()
-                            .next()
-                            .ok_or_else(|| "message no longer exists in Trash".to_string())?;
-                        (dest.to_string(), uid)
-                    } else if let Some(uid) = action.uid {
-                        (payload.clone(), uid)
+        } else {
+            action.uid
+        };
+
+        let restore_move = action.action_type == ActionType::Move
+            && action.uid.is_none()
+            && action.payload.as_deref().is_some_and(|payload| {
+                serde_json::from_str::<serde_json::Value>(payload)
+                    .ok()
+                    .and_then(|value| value.get("restore_to").cloned())
+                    .is_some()
+            });
+        if action.action_type.requires_message_uid() && resolved_uid.is_none() && !restore_move {
+            let error = "message UID is missing or could not be re-resolved";
+            let _ = store.rollback_action_local(
+                account.id,
+                action.action_type,
+                &action.folder,
+                None,
+                None,
+                action.message_id_header.as_deref(),
+            );
+            let _ = store.record_action_failure(action.id, error);
+            continue;
+        }
+
+        let result: Result<(), String> = async {
+            match action.action_type {
+                ActionType::MarkRead => {
+                    if let Some(uid) = resolved_uid {
+                        set_seen(session, uid, true).await
                     } else {
-                        return Ok(());
-                    };
-                    move_uid_to_mailbox(session, uid, &dest).await
-                } else {
-                    Ok(())
+                        Ok(())
+                    }
                 }
-            }
-            ActionType::MarkAnswered => {
-                if let Some(uid) = action.uid {
-                    set_answered(session, uid, true).await
-                } else {
-                    Ok(())
+                ActionType::MarkUnread => {
+                    if let Some(uid) = resolved_uid {
+                        set_seen(session, uid, false).await
+                    } else {
+                        Ok(())
+                    }
                 }
-            }
-            ActionType::MarkForwarded => {
-                if let Some(uid) = action.uid {
-                    set_forwarded(session, uid, true).await
-                } else {
-                    Ok(())
+                ActionType::Star => {
+                    if let Some(uid) = resolved_uid {
+                        set_flagged(session, uid, true).await
+                    } else {
+                        Ok(())
+                    }
                 }
-            }
-            ActionType::MarkJunk => {
-                if let Some(uid) = action.uid {
-                    let junk_folder = store
-                        .junk_folder_name(account.id)
-                        .ok_or_else(|| "no Junk/Spam mailbox configured".to_string())?;
-                    move_uid_to_mailbox(session, uid, &junk_folder).await
-                } else {
-                    Ok(())
+                ActionType::Unstar => {
+                    if let Some(uid) = resolved_uid {
+                        set_flagged(session, uid, false).await
+                    } else {
+                        Ok(())
+                    }
                 }
-            }
-            ActionType::MarkNotJunk => {
-                if let Some(uid) = action.uid {
-                    let _ = session
-                        .uid_store(format!("{uid}"), "-FLAGS.SILENT ($Junk)")
-                        .await;
-                    let _ = session
-                        .uid_store(format!("{uid}"), "+FLAGS.SILENT ($NotJunk)")
-                        .await;
-                    let inbox_folder = store
-                        .inbox_folder_name(account.id)
-                        .unwrap_or_else(|| "INBOX".to_string());
-                    move_uid_to_mailbox(session, uid, &inbox_folder).await
-                } else {
-                    Ok(())
+                ActionType::Archive => {
+                    if let Some(uid) = resolved_uid {
+                        // Copy to the account's Archive mailbox first, and only
+                        // delete the source if the copy succeeded. Gmail has no
+                        // mailbox literally named "Archive" (Gmail's archive is
+                        // [Gmail]/All Mail, persisted during discovery), so a
+                        // provider-aware target is required before moving.
+                        let archive_folder =
+                            store.archive_folder_name(account.id).ok_or_else(|| {
+                                "no Archive or All Mail mailbox configured for this account"
+                                    .to_string()
+                            })?;
+                        move_uid_to_mailbox(session, uid, &archive_folder).await
+                    } else {
+                        Ok(())
+                    }
                 }
-            }
-            ActionType::Send => {
-                if let Some(ref payload) = action.payload {
-                    if let Ok(outgoing) = serde_json::from_str::<OutgoingMessage>(payload) {
+                ActionType::Delete => {
+                    if let Some(uid) = resolved_uid {
+                        let trash_folder = store
+                            .trash_folder_name(account.id)
+                            .unwrap_or_else(|| "Trash".to_string());
+                        if action.folder == trash_folder || is_spam_mailbox(&action.folder) {
+                            // Deleting from Trash is the explicit permanent-delete
+                            // path; scope UID EXPUNGE to this one UID.
+                            expunge_uid(session, uid).await
+                        } else {
+                            move_uid_to_mailbox(session, uid, &trash_folder).await
+                        }
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::Move => {
+                    if let Some(ref payload) = action.payload {
+                        let (dest, uid) = if let Ok(restore) =
+                            serde_json::from_str::<serde_json::Value>(payload)
+                        {
+                            let Some(dest) = restore.get("restore_to").and_then(|v| v.as_str())
+                            else {
+                                return Err("restore action missing destination".into());
+                            };
+                            let message_id = restore
+                                .get("message_id")
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| "restore action missing Message-ID".to_string())?;
+                            let query =
+                                format!("HEADER Message-ID \"{}\"", message_id.replace('"', ""));
+                            let mut matches = session
+                                .uid_search(query)
+                                .await
+                                .map_err(|e| format!("find message in Trash: {e}"))?;
+                            let uid = matches
+                                .drain()
+                                .next()
+                                .ok_or_else(|| "message no longer exists in Trash".to_string())?;
+                            (dest.to_string(), uid)
+                        } else if let Some(uid) = resolved_uid {
+                            (payload.clone(), uid)
+                        } else {
+                            return Ok(());
+                        };
+                        move_uid_to_mailbox(session, uid, &dest).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::MarkAnswered => {
+                    if let Some(uid) = resolved_uid {
+                        set_answered(session, uid, true).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::MarkForwarded => {
+                    if let Some(uid) = resolved_uid {
+                        set_forwarded(session, uid, true).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::MarkJunk => {
+                    if let Some(uid) = resolved_uid {
+                        let junk_folder = store
+                            .junk_folder_name(account.id)
+                            .ok_or_else(|| "no Junk/Spam mailbox configured".to_string())?;
+                        move_uid_to_mailbox(session, uid, &junk_folder).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::MarkNotJunk => {
+                    if let Some(uid) = resolved_uid {
+                        let _ = session
+                            .uid_store(format!("{uid}"), "-FLAGS.SILENT ($Junk)")
+                            .await;
+                        let _ = session
+                            .uid_store(format!("{uid}"), "+FLAGS.SILENT ($NotJunk)")
+                            .await;
+                        let inbox_folder = store
+                            .inbox_folder_name(account.id)
+                            .unwrap_or_else(|| "INBOX".to_string());
+                        move_uid_to_mailbox(session, uid, &inbox_folder).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::Send => {
+                    if let Some(ref payload) = action.payload {
+                        let outgoing = serde_json::from_str::<OutgoingMessage>(payload)
+                            .map_err(|e| format!("invalid queued send payload: {e}"))?;
                         crate::smtp::send_email(account, &outgoing, credential).await
                     } else {
-                        Ok(()) // invalid payload, drop
+                        Err("queued send is missing its payload".into())
                     }
-                } else {
-                    Ok(())
                 }
-            }
-            ActionType::CreateFolder => match session.create(&action.folder).await {
-                Ok(()) => {
-                    let _ = session.subscribe(&action.folder).await;
-                    Ok(())
+                ActionType::CreateFolder => match session.create(&action.folder).await {
+                    Ok(()) => {
+                        let _ = session.subscribe(&action.folder).await;
+                        Ok(())
+                    }
+                    Err(e) => Err(format!("create folder {}: {e}", action.folder)),
+                },
+                ActionType::RenameFolder => {
+                    let dest = action
+                        .payload
+                        .as_deref()
+                        .ok_or_else(|| "rename folder missing destination".to_string())?;
+                    session
+                        .rename(&action.folder, dest)
+                        .await
+                        .map_err(|e| format!("rename folder {} → {dest}: {e}", action.folder))
                 }
-                Err(e) => Err(format!("create folder {}: {e}", action.folder)),
-            },
-            ActionType::RenameFolder => {
-                let dest = action
-                    .payload
-                    .as_deref()
-                    .ok_or_else(|| "rename folder missing destination".to_string())?;
-                session
-                    .rename(&action.folder, dest)
+                ActionType::DeleteFolder => session
+                    .delete(&action.folder)
                     .await
-                    .map_err(|e| format!("rename folder {} → {dest}: {e}", action.folder))
+                    .map_err(|e| format!("delete folder {}: {e}", action.folder)),
+                ActionType::SubscribeFolder => session
+                    .subscribe(&action.folder)
+                    .await
+                    .map_err(|e| format!("subscribe {}: {e}", action.folder)),
+                ActionType::UnsubscribeFolder => session
+                    .unsubscribe(&action.folder)
+                    .await
+                    .map_err(|e| format!("unsubscribe {}: {e}", action.folder)),
             }
-            ActionType::DeleteFolder => session
-                .delete(&action.folder)
-                .await
-                .map_err(|e| format!("delete folder {}: {e}", action.folder)),
-            ActionType::SubscribeFolder => session
-                .subscribe(&action.folder)
-                .await
-                .map_err(|e| format!("subscribe {}: {e}", action.folder)),
-            ActionType::UnsubscribeFolder => session
-                .unsubscribe(&action.folder)
-                .await
-                .map_err(|e| format!("unsubscribe {}: {e}", action.folder)),
-        };
+        }
+        .await;
 
         match result {
             Ok(()) => {
@@ -1160,12 +1306,13 @@ pub async fn replay_pending_actions(
                     account.id,
                     action.action_type,
                     &action.folder,
-                    action.uid,
+                    resolved_uid,
+                    effective_uidvalidity,
+                    action.message_id_header.as_deref(),
                 );
-                let _ = store.increment_action_retry(action.id);
-                // A failed server action is never reported as success: retain
-                // it in the queue with its error for retry or user recovery.
-                let _ = store.set_action_error(action.id, Some(&e));
+                // Bounded exponential backoff. At the cap the row becomes
+                // `failed`, stays visible, and is replayed only after Retry.
+                let _ = store.record_action_failure(action.id, &e);
             }
         }
     }
