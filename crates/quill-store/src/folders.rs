@@ -85,7 +85,8 @@ pub fn infer_namespace(server_name: &str, delimiter: &str) -> String {
 
 /// Local storage key for `messages.folder`. Special kinds keep their
 /// canonical display name so unified views and existing rows keep working;
-/// custom mailboxes use the server name so two labels never collide.
+/// custom mailboxes use the server name so two labels never collide. The sync
+/// layer keeps Gmail All Mail's provider mailbox name when persisting it.
 pub fn local_name_for(server_name: &str, kind: FolderKind) -> String {
     if kind == FolderKind::Custom {
         server_name.to_string()
@@ -135,7 +136,10 @@ pub fn classify_folder_kind(
         {
             return FolderKind::Trash;
         }
-        if debug_str.contains("archive") || debug_str.contains("allmail") {
+        if debug_str.contains("archive")
+            || debug_str.contains("allmail")
+            || debug_str.contains("\\all")
+        {
             return FolderKind::Archive;
         }
         if debug_str.contains("flagged") || debug_str.contains("starred") {
@@ -150,7 +154,17 @@ pub fn classify_folder_kind(
         FolderKind::Drafts
     } else if leaf_is(name, &["sent", "sent mail", "sent messages", "sent items"]) {
         FolderKind::Sent
-    } else if leaf_is(name, &["junk", "spam", "bulk", "junk mail", "bulk mail"]) {
+    } else if leaf_is(
+        name,
+        &[
+            "junk",
+            "spam",
+            "bulk",
+            "junk mail",
+            "junk email",
+            "bulk mail",
+        ],
+    ) {
         FolderKind::Junk
     } else if leaf_is(
         name,

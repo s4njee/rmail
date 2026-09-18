@@ -99,12 +99,12 @@ a regression test; the protocol ones need the fake-server harness from C3.2.
 
 ### C0.4 Archive and Junk land in real folders
 
-- [ ] Resolve and persist special-use folders per account (`\Archive \Junk \Trash \Sent \Drafts
+- [x] Resolve and persist special-use folders per account (`\Archive \Junk \Trash \Sent \Drafts
 \All`) at folder discovery; name heuristics only as fallback.
-- [ ] Gmail archive = remove the Inbox label (move to All Mail); Gmail junk = `[Gmail]/Spam`;
+- [x] Gmail archive = remove the Inbox label (move to All Mail); Gmail junk = `[Gmail]/Spam`;
       M365 junk = "Junk Email".
-- [ ] If an account has no archive folder, ask once (create "Archive" or pick one).
-- [ ] A failed server action is never reported as success: it surfaces in the existing queued-
+- [x] If an account has no archive folder, ask once (create "Archive" or pick one).
+- [x] A failed server action is never reported as success: it surfaces in the existing queued-
       actions UI and the local change reverts.
 
 ### C0.5 Make the action queue correct

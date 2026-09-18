@@ -1630,7 +1630,7 @@ impl SqliteStore {
 
     pub fn mark_junk(&self, id: MessageId, junk: bool) -> Result<(), String> {
         let destination_folder = if junk { "Junk" } else { "Inbox" };
-        let action_name = if junk { "markJunk" } else { "markNotJunk" };
+        let action_name = if junk { "mark_junk" } else { "mark_not_junk" };
 
         let conn = self.conn.lock().unwrap();
         let (account_id, current_folder, uid): (AccountId, String, Option<u32>) = conn
@@ -4045,10 +4045,12 @@ impl SqliteStore {
         .flatten()
     }
 
-    /// The server mailbox name used for archiving an account's mail, derived
-    /// from the first message mapped to the display Archive folder. Callers
-    /// fall back to "Archive" when nothing is known.
+    /// The server mailbox name used for archiving an account's mail, preferring
+    /// Gmail/Google Mail All Mail and then the discovered Archive mailbox.
     pub fn archive_folder_name(&self, account_id: AccountId) -> Option<String> {
+        if let Some(all_mail) = self.all_mail_folder_name(account_id) {
+            return Some(all_mail);
+        }
         if let Some(f) = self
             .account_folders()
             .into_iter()
@@ -4066,6 +4068,78 @@ impl SqliteStore {
         .optional()
         .ok()
         .flatten()
+    }
+
+    /// Gmail/Google Mail's archive target. All Mail is a label mailbox rather
+    /// than a duplicate local folder, so it is preferred whenever discovered.
+    pub fn all_mail_folder_name(&self, account_id: AccountId) -> Option<String> {
+        self.account_folders()
+            .into_iter()
+            .find(|f| {
+                f.account_id == Some(account_id)
+                    && f.server_name.as_deref().is_some_and(|name| {
+                        let lower = name.to_ascii_lowercase();
+                        lower == "all"
+                            || lower == "all mail"
+                            || lower.ends_with("/all mail")
+                            || lower.ends_with(".all mail")
+                    })
+            })
+            .and_then(|f| f.server_name)
+    }
+
+    /// Resolve the account's Junk/Spam mailbox from special-use discovery,
+    /// then conservative provider/name fallbacks.
+    pub fn junk_folder_name(&self, account_id: AccountId) -> Option<String> {
+        if let Some(f) = self
+            .account_folders()
+            .into_iter()
+            .find(|f| f.account_id == Some(account_id) && f.kind == FolderKind::Junk)
+        {
+            return f.server_name;
+        }
+        let conn = self.conn.lock().unwrap();
+        let row: Option<(Option<String>, String, String)> = conn
+            .query_row(
+                "SELECT server_folder, address, protocol FROM accounts a \
+                 LEFT JOIN messages m ON m.account_id = a.id AND m.folder = 'Junk' \
+                 WHERE a.id = ?1 LIMIT 1",
+                params![account_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .ok()
+            .flatten();
+        if let Some((Some(server), _, _)) = row.as_ref() {
+            return Some(server.clone());
+        }
+        let Some((_, address, protocol)) = row else {
+            return None;
+        };
+        let lower = address.to_ascii_lowercase();
+        if lower.ends_with("@gmail.com") || lower.ends_with("@googlemail.com") {
+            Some("[Gmail]/Spam".into())
+        } else if protocol.to_ascii_lowercase().contains("microsoft")
+            || lower.ends_with("@outlook.com")
+            || lower.ends_with("@hotmail.com")
+            || lower.ends_with("@live.com")
+        {
+            Some("Junk Email".into())
+        } else {
+            Some("Junk".into())
+        }
+    }
+
+    /// Resolve the account's Inbox mailbox for the not-junk action.
+    pub fn inbox_folder_name(&self, account_id: AccountId) -> Option<String> {
+        if let Some(f) = self
+            .account_folders()
+            .into_iter()
+            .find(|f| f.account_id == Some(account_id) && f.kind == FolderKind::Inbox)
+        {
+            return f.server_name;
+        }
+        Some("INBOX".into())
     }
 
     /// The server mailbox used for Trash, resolved from RFC 6154 special-use
@@ -4416,6 +4490,60 @@ impl SqliteStore {
             params![error, id],
         )
         .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Undo an optimistic local folder/tombstone change when its server action
+    /// fails. The queued action remains visible with `last_error` for retry.
+    pub fn rollback_action_local(
+        &self,
+        account_id: AccountId,
+        action_type: ActionType,
+        source_server_folder: &str,
+        uid: Option<u32>,
+    ) -> Result<(), String> {
+        let Some(uid) = uid else {
+            return Ok(());
+        };
+        let local_folder = {
+            let conn = self.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT local_name FROM folders WHERE account_id = ?1 AND server_name = ?2 LIMIT 1",
+                params![account_id, source_server_folder],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .unwrap_or_else(|| {
+                if source_server_folder.eq_ignore_ascii_case("inbox") {
+                    "Inbox".into()
+                } else {
+                    source_server_folder.to_string()
+                }
+            })
+        };
+        let conn = self.conn.lock().unwrap();
+        match action_type {
+            ActionType::Delete => {
+                conn.execute(
+                    "UPDATE messages SET deleted_at_ms = NULL WHERE account_id = ?1 AND uid = ?2",
+                    params![account_id, uid],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            ActionType::Archive
+            | ActionType::Move
+            | ActionType::MarkJunk
+            | ActionType::MarkNotJunk => {
+                conn.execute(
+                    "UPDATE messages SET folder = ?1, server_folder = ?2 \
+                     WHERE account_id = ?3 AND uid = ?4",
+                    params![local_folder, source_server_folder, account_id, uid],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -5830,6 +5958,43 @@ mod tests {
         assert_eq!(
             store.trash_folder_name(acc.id).as_deref(),
             Some("[Gmail]/Trash")
+        );
+    }
+
+    #[test]
+    fn archive_folder_name_prefers_gmail_all_mail() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let acc = test_account(&store);
+        store
+            .reconcile_folders(
+                acc.id,
+                &[
+                    DiscoveredMailbox {
+                        server_name: "Archive".into(),
+                        local_name: "Archive".into(),
+                        display_name: "Archive".into(),
+                        kind: FolderKind::Archive,
+                        delimiter: "/".into(),
+                        subscribed: true,
+                        selectable: true,
+                        namespace: String::new(),
+                    },
+                    DiscoveredMailbox {
+                        server_name: "[Gmail]/All Mail".into(),
+                        local_name: "[Gmail]/All Mail".into(),
+                        display_name: "All Mail".into(),
+                        kind: FolderKind::Archive,
+                        delimiter: "/".into(),
+                        subscribed: true,
+                        selectable: true,
+                        namespace: "[Gmail]".into(),
+                    },
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            store.archive_folder_name(acc.id).as_deref(),
+            Some("[Gmail]/All Mail")
         );
     }
 

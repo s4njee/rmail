@@ -276,14 +276,6 @@ pub async fn discover_folders(
             .attributes()
             .iter()
             .any(|a| matches!(a, NameAttribute::NoSelect));
-        // Gmail's [Gmail]/All Mail mirrors every message in the account;
-        // syncing it would duplicate bodies and bloat the local DB (policy in
-        // docs/provider-quirks.md). Keep it out of the tree too.
-        if server_name.eq_ignore_ascii_case("[Gmail]/All Mail")
-            || server_name.eq_ignore_ascii_case("[Google Mail]/All Mail")
-        {
-            continue;
-        }
         let kind = detect_folder_kind(&server_name, name.attributes());
         // A second mailbox classified as Inbox would share the local key and
         // wipe the real inbox on refetch. Custom kinds keep their server name,
@@ -296,7 +288,13 @@ pub async fn discover_folders(
             .filter(|d| !d.is_empty())
             .unwrap_or("/")
             .to_string();
-        let local_name = canonical_folder_name(&server_name, kind);
+        // Persist Gmail/Google Mail All Mail for provider actions, but keep it
+        // out of the normal sync set so it does not duplicate every message.
+        let local_name = if is_all_mail_mailbox(&server_name) {
+            server_name.clone()
+        } else {
+            canonical_folder_name(&server_name, kind)
+        };
         if !seen_local.insert(local_name.clone()) {
             continue;
         }
@@ -340,6 +338,16 @@ fn fallback_folder(server_name: &str, kind: FolderKind) -> DiscoveredFolder {
         selectable: true,
         namespace: String::new(),
     }
+}
+
+fn is_all_mail_mailbox(server_name: &str) -> bool {
+    let lower = server_name.to_ascii_lowercase();
+    lower == "all"
+        || lower == "all mail"
+        || lower == "[gmail]/all mail"
+        || lower == "[google mail]/all mail"
+        || lower.ends_with("/all mail")
+        || lower.ends_with(".all mail")
 }
 
 /// Sync every tracked folder for one account. Replays pending offline actions
@@ -401,7 +409,7 @@ pub async fn sync_account(
     let folders_to_sync: Vec<DiscoveredFolder> = if selection.is_empty() {
         discovered
             .iter()
-            .filter(|f| f.selectable)
+            .filter(|f| f.selectable && !is_all_mail_mailbox(&f.server_name))
             .cloned()
             .collect()
     } else {
@@ -423,7 +431,11 @@ pub async fn sync_account(
         let enabled = store.enabled_folder_set(account.id).unwrap_or_default();
         discovered
             .into_iter()
-            .filter(|f| f.selectable && enabled.contains(&f.server_name))
+            .filter(|f| {
+                f.selectable
+                    && !is_all_mail_mailbox(&f.server_name)
+                    && enabled.contains(&f.server_name)
+            })
             .collect()
     };
 
@@ -995,17 +1007,14 @@ pub async fn replay_pending_actions(
                 if let Some(uid) = action.uid {
                     // Copy to the account's Archive mailbox first, and only
                     // delete the source if the copy succeeded. Gmail has no
-                    // mailbox literally named "Archive" (its archive is
-                    // [Gmail]/All Mail, skipped in discovery), so the previous
-                    // copy-then-delete-anyway silently deleted the message
-                    // instead of archiving it.
-                    let archive_folder = store
-                        .archive_folder_name(account.id)
-                        .unwrap_or_else(|| "Archive".to_string());
-                    match session.uid_copy(format!("{uid}"), &archive_folder).await {
-                        Ok(_) => expunge_uid(session, uid).await,
-                        Err(e) => Err(format!("archive copy to {archive_folder}: {e}")),
-                    }
+                    // mailbox literally named "Archive" (Gmail's archive is
+                    // [Gmail]/All Mail, persisted during discovery), so a
+                    // provider-aware target is required before moving.
+                    let archive_folder =
+                        store.archive_folder_name(account.id).ok_or_else(|| {
+                            "no Archive or All Mail mailbox configured for this account".to_string()
+                        })?;
+                    move_uid_to_mailbox(session, uid, &archive_folder).await
                 } else {
                     Ok(())
                 }
@@ -1075,14 +1084,10 @@ pub async fn replay_pending_actions(
             }
             ActionType::MarkJunk => {
                 if let Some(uid) = action.uid {
-                    let _ = session
-                        .uid_store(format!("{uid}"), "+FLAGS.SILENT ($Junk)")
-                        .await;
-                    let junk_folder = "Junk";
-                    match session.uid_copy(format!("{uid}"), junk_folder).await {
-                        Ok(_) => expunge_uid(session, uid).await,
-                        Err(_) => Ok(()),
-                    }
+                    let junk_folder = store
+                        .junk_folder_name(account.id)
+                        .ok_or_else(|| "no Junk/Spam mailbox configured".to_string())?;
+                    move_uid_to_mailbox(session, uid, &junk_folder).await
                 } else {
                     Ok(())
                 }
@@ -1095,11 +1100,10 @@ pub async fn replay_pending_actions(
                     let _ = session
                         .uid_store(format!("{uid}"), "+FLAGS.SILENT ($NotJunk)")
                         .await;
-                    let inbox_folder = "INBOX";
-                    match session.uid_copy(format!("{uid}"), inbox_folder).await {
-                        Ok(_) => expunge_uid(session, uid).await,
-                        Err(_) => Ok(()),
-                    }
+                    let inbox_folder = store
+                        .inbox_folder_name(account.id)
+                        .unwrap_or_else(|| "INBOX".to_string());
+                    move_uid_to_mailbox(session, uid, &inbox_folder).await
                 } else {
                     Ok(())
                 }
@@ -1152,15 +1156,16 @@ pub async fn replay_pending_actions(
             }
             Err(e) => {
                 log::warn!("failed action replay {}: {e}", action.id);
-                // If the error indicates missing message / conflict, remove it so it doesn't block queue
-                if e.contains("no such message") || e.contains("not found") {
-                    let _ = store.remove_action(action.id);
-                } else {
-                    let _ = store.increment_action_retry(action.id);
-                    // P0.3: surface the failure so a stuck action is visible
-                    // and recoverable in the UI.
-                    let _ = store.set_action_error(action.id, Some(&e));
-                }
+                let _ = store.rollback_action_local(
+                    account.id,
+                    action.action_type,
+                    &action.folder,
+                    action.uid,
+                );
+                let _ = store.increment_action_retry(action.id);
+                // A failed server action is never reported as success: retain
+                // it in the queue with its error for retry or user recovery.
+                let _ = store.set_action_error(action.id, Some(&e));
             }
         }
     }
@@ -1542,6 +1547,7 @@ mod tests {
         assert_eq!(detect_folder_kind("Archive", &[]), FolderKind::Archive);
         assert_eq!(detect_folder_kind("Trash", &[]), FolderKind::Trash);
         assert_eq!(detect_folder_kind("Junk Mail", &[]), FolderKind::Junk);
+        assert_eq!(detect_folder_kind("Junk Email", &[]), FolderKind::Junk);
         assert_eq!(detect_folder_kind("Spam", &[]), FolderKind::Junk);
         assert_eq!(detect_folder_kind("Receipts", &[]), FolderKind::Custom);
         assert_eq!(detect_folder_kind("Work/Projects", &[]), FolderKind::Custom);

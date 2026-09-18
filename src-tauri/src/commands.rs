@@ -399,6 +399,12 @@ pub fn archive(store: State<'_, SqliteStore>, id: MessageId) -> Result<(), Strin
     if let Some((account_id, _local_folder, Some(server_folder), uid)) =
         store.get_message_location(id)
     {
+        if store.archive_folder_name(account_id).is_none() {
+            return Err(
+                "No Archive or All Mail folder is configured; create or choose one before archiving"
+                    .into(),
+            );
+        }
         let _ = store.enqueue_action(account_id, ActionType::Archive, &server_folder, uid, None);
     }
     store.archive(id)
