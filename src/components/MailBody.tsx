@@ -1,6 +1,7 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { MessageDetail } from "../lib/ipc/MessageDetail";
+import { openMailto } from "../lib/compose";
 import { inlineAttachmentPaths } from "../lib/tauri";
 import { useDark } from "../lib/theme";
 import "./MailBody.css";
@@ -155,7 +156,18 @@ export function MailBody(props: MailBodyProps) {
       if (event.source !== frameEl()?.contentWindow) return; // only our iframe
       if (msg.type === "height") setFrameHeight(Number(msg.height) || 120);
       else if (msg.type === "open") props.onOpenLink(String(msg.url));
-      // "mailto" opens the composer in Epic 13.
+      else if (msg.type === "mailto") {
+        try {
+          const url = new URL(String(msg.url));
+          void openMailto({
+            to: decodeURIComponent(url.pathname),
+            subject: url.searchParams.get("subject") || "",
+            body: url.searchParams.get("body") || "",
+          });
+        } catch {
+          // Malformed mailto links are inert rather than opening an arbitrary URL.
+        }
+      }
     };
     window.addEventListener("message", onMessage);
     onCleanup(() => window.removeEventListener("message", onMessage));

@@ -305,7 +305,7 @@ provider.
 - [ ] A golden-render corpus of ~30 real-world newsletters, receipts, and notifications (GitHub,
       Stripe, Amazon, Substack, calendar invites) compared against reference screenshots in CI.
 - [ ] Linkify plain-text mail; collapse quoted text and signatures in both paths.
-- [ ] `mailto:` links open the composer.
+- [x] `mailto:` links open the composer.
 - [ ] A body-fetch or auth failure shows an error with Retry, not an empty body.
 
 > **Blockers:** The render corpus requires rights-cleared message fixtures, reference screenshots,
