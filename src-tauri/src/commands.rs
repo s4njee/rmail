@@ -406,11 +406,43 @@ pub fn archive(store: State<'_, SqliteStore>, id: MessageId) -> Result<(), Strin
 
 #[tauri::command]
 pub fn delete(store: State<'_, SqliteStore>, id: MessageId) -> Result<(), String> {
-    if let Some((account_id, _local_folder, Some(server_folder), uid)) =
+    if let Some((account_id, local_folder, Some(server_folder), uid)) =
         store.get_message_location(id)
     {
+        if local_folder.eq_ignore_ascii_case("Trash")
+            || local_folder.eq_ignore_ascii_case("Junk")
+            || local_folder.eq_ignore_ascii_case("Spam")
+        {
+            return Err("permanent deletion requires explicit confirmation".into());
+        }
         let _ = store.enqueue_action(account_id, ActionType::Delete, &server_folder, uid, None);
     }
+    store.delete(id)
+}
+
+/// Permanently delete a message only after the caller has confirmed and only
+/// when it is already in Trash/Junk/Spam. The replay path uses UID EXPUNGE for
+/// this one message, never a mailbox-wide EXPUNGE.
+#[tauri::command]
+pub fn delete_permanently(
+    store: State<'_, SqliteStore>,
+    id: MessageId,
+    confirmed: bool,
+) -> Result<(), String> {
+    if !confirmed {
+        return Err("permanent deletion requires explicit confirmation".into());
+    }
+    let Some((account_id, local_folder, Some(server_folder), uid)) = store.get_message_location(id)
+    else {
+        return Err("no such message".into());
+    };
+    if !matches!(
+        local_folder.to_ascii_lowercase().as_str(),
+        "trash" | "junk" | "spam"
+    ) {
+        return Err("permanent deletion is only available in Trash or Spam".into());
+    }
+    let _ = store.enqueue_action(account_id, ActionType::Delete, &server_folder, uid, None);
     store.delete(id)
 }
 
@@ -454,7 +486,32 @@ pub fn restore_message(store: State<'_, SqliteStore>, id: MessageId) -> Result<(
     if let Some((account_id, _local_folder, Some(server_folder), uid)) =
         store.get_message_location(id)
     {
-        let _ = store.cancel_pending_actions(account_id, &server_folder, uid);
+        let cancelled = store
+            .cancel_pending_actions(account_id, &server_folder, uid)
+            .unwrap_or(0);
+        // If Delete already replayed, the server copy is now in Trash and may
+        // have a new UID. Re-resolve it there by Message-ID before moving it
+        // back to the original mailbox; a still-pending Delete is simply
+        // cancelled above.
+        if cancelled == 0 {
+            if let (Some(trash), Some(message_id)) = (
+                store.trash_folder_name(account_id),
+                store.message_id_header(id),
+            ) {
+                let payload = serde_json::json!({
+                    "restore_to": server_folder,
+                    "message_id": message_id,
+                })
+                .to_string();
+                let _ = store.enqueue_action(
+                    account_id,
+                    ActionType::Move,
+                    &trash,
+                    None,
+                    Some(&payload),
+                );
+            }
+        }
     }
     store.restore_message(id)
 }

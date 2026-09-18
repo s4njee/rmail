@@ -91,11 +91,11 @@ a regression test; the protocol ones need the fake-server harness from C3.2.
 
 ### C0.3 Delete means Trash
 
-- [ ] Delete = move to the account's Trash (RFC 6154 `\Trash`; `[Gmail]/Trash` on Gmail) using
+- [x] Delete = move to the account's Trash (RFC 6154 `\Trash`; `[Gmail]/Trash` on Gmail) using
       `MOVE`, or `COPY` + `\Deleted` + `UID EXPUNGE` of that UID only when `MOVE` is missing.
-- [ ] Never issue a bare `EXPUNGE`. Permanent delete exists only in Trash/Spam, requires
+- [x] Never issue a bare `EXPUNGE`. Permanent delete exists only in Trash/Spam, requires
       confirmation, and uses `UID EXPUNGE` (UIDPLUS) scoped to the selected UIDs.
-- [ ] Undo restores from Trash if the server move already happened.
+- [x] Undo restores from Trash if the server move already happened.
 
 ### C0.4 Archive and Junk land in real folders
 

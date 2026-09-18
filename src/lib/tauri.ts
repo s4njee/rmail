@@ -574,6 +574,14 @@ export const deleteMessage = async (id: number): Promise<void> => {
   if (isTauri()) return invoke<void>("delete", { id });
 };
 
+export const deleteMessagePermanently = async (
+  id: number,
+  confirmed: boolean,
+): Promise<void> => {
+  if (isTauri())
+    return invoke<void>("delete_permanently", { id, confirmed });
+};
+
 // P1.1: bulk triage + undo-delete
 export const bulkAction = async (
   accountId: number,

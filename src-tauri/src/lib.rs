@@ -126,6 +126,7 @@ pub fn run() {
             commands::mark_forwarded,
             commands::archive,
             commands::delete,
+            commands::delete_permanently,
             commands::bulk_action,
             commands::restore_message,
             commands::set_snoozed,

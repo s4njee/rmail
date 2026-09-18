@@ -323,6 +323,7 @@ pub async fn discover_folders(
             fallback_folder("Drafts", FolderKind::Drafts),
             fallback_folder("Sent", FolderKind::Sent),
             fallback_folder("Archive", FolderKind::Archive),
+            fallback_folder("Trash", FolderKind::Trash),
         ];
     }
 
@@ -382,6 +383,7 @@ pub async fn sync_account(
             fallback_folder("Drafts", FolderKind::Drafts),
             fallback_folder("Sent", FolderKind::Sent),
             fallback_folder("Archive", FolderKind::Archive),
+            fallback_folder("Trash", FolderKind::Trash),
         ],
     };
 
@@ -1001,7 +1003,7 @@ pub async fn replay_pending_actions(
                         .archive_folder_name(account.id)
                         .unwrap_or_else(|| "Archive".to_string());
                     match session.uid_copy(format!("{uid}"), &archive_folder).await {
-                        Ok(_) => set_deleted(session, uid).await,
+                        Ok(_) => expunge_uid(session, uid).await,
                         Err(e) => Err(format!("archive copy to {archive_folder}: {e}")),
                     }
                 } else {
@@ -1010,17 +1012,49 @@ pub async fn replay_pending_actions(
             }
             ActionType::Delete => {
                 if let Some(uid) = action.uid {
-                    set_deleted(session, uid).await
+                    let trash_folder = store
+                        .trash_folder_name(account.id)
+                        .unwrap_or_else(|| "Trash".to_string());
+                    if action.folder == trash_folder || is_spam_mailbox(&action.folder) {
+                        // Deleting from Trash is the explicit permanent-delete
+                        // path; scope UID EXPUNGE to this one UID.
+                        expunge_uid(session, uid).await
+                    } else {
+                        move_uid_to_mailbox(session, uid, &trash_folder).await
+                    }
                 } else {
                     Ok(())
                 }
             }
             ActionType::Move => {
-                if let (Some(uid), Some(ref dest)) = (action.uid, &action.payload) {
-                    match session.uid_copy(format!("{uid}"), dest).await {
-                        Ok(_) => set_deleted(session, uid).await,
-                        Err(e) => Err(format!("move copy to {dest}: {e}")),
-                    }
+                if let Some(ref payload) = action.payload {
+                    let (dest, uid) = if let Ok(restore) =
+                        serde_json::from_str::<serde_json::Value>(payload)
+                    {
+                        let Some(dest) = restore.get("restore_to").and_then(|v| v.as_str()) else {
+                            return Err("restore action missing destination".into());
+                        };
+                        let message_id = restore
+                            .get("message_id")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| "restore action missing Message-ID".to_string())?;
+                        let query =
+                            format!("HEADER Message-ID \"{}\"", message_id.replace('"', ""));
+                        let mut matches = session
+                            .uid_search(query)
+                            .await
+                            .map_err(|e| format!("find message in Trash: {e}"))?;
+                        let uid = matches
+                            .drain()
+                            .next()
+                            .ok_or_else(|| "message no longer exists in Trash".to_string())?;
+                        (dest.to_string(), uid)
+                    } else if let Some(uid) = action.uid {
+                        (payload.clone(), uid)
+                    } else {
+                        return Ok(());
+                    };
+                    move_uid_to_mailbox(session, uid, &dest).await
                 } else {
                     Ok(())
                 }
@@ -1046,7 +1080,7 @@ pub async fn replay_pending_actions(
                         .await;
                     let junk_folder = "Junk";
                     match session.uid_copy(format!("{uid}"), junk_folder).await {
-                        Ok(_) => set_deleted(session, uid).await,
+                        Ok(_) => expunge_uid(session, uid).await,
                         Err(_) => Ok(()),
                     }
                 } else {
@@ -1063,7 +1097,7 @@ pub async fn replay_pending_actions(
                         .await;
                     let inbox_folder = "INBOX";
                     match session.uid_copy(format!("{uid}"), inbox_folder).await {
-                        Ok(_) => set_deleted(session, uid).await,
+                        Ok(_) => expunge_uid(session, uid).await,
                         Err(_) => Ok(()),
                     }
                 } else {
@@ -1443,7 +1477,38 @@ pub async fn set_forwarded(
     Ok(())
 }
 
-pub async fn set_deleted(
+/// Move a UID to a destination mailbox. RFC 6851 MOVE is preferred; when the
+/// server lacks it, COPY + UID EXPUNGE provides the same no-bare-expunge
+/// semantics while scoping removal to this UID.
+pub async fn move_uid_to_mailbox(
+    session: &mut async_imap::Session<Stream>,
+    uid: u32,
+    destination: &str,
+) -> Result<(), String> {
+    match session.uid_mv(uid.to_string(), destination).await {
+        Ok(()) => Ok(()),
+        Err(move_error) => {
+            session
+                .uid_copy(uid.to_string(), destination)
+                .await
+                .map_err(|copy_error| {
+                    format!(
+                        "MOVE to {destination} failed ({move_error}); COPY fallback failed: {copy_error}"
+                    )
+                })?;
+            expunge_uid(session, uid).await
+        }
+    }
+}
+
+fn is_spam_mailbox(folder: &str) -> bool {
+    let lower = folder.to_ascii_lowercase();
+    lower.contains("spam") || lower.contains("junk")
+}
+
+/// Permanently remove exactly one UID. This is only used for messages already
+/// in Trash (or for COPY fallbacks), never as a mailbox-wide EXPUNGE.
+pub async fn expunge_uid(
     session: &mut async_imap::Session<Stream>,
     uid: u32,
 ) -> Result<(), String> {
@@ -1454,7 +1519,13 @@ pub async fn set_deleted(
         .try_collect::<Vec<_>>()
         .await
         .map_err(|e| format!("store deleted: {e}"))?;
-    let _ = session.expunge().await;
+    session
+        .uid_expunge(uid.to_string())
+        .await
+        .map_err(|e| format!("UID EXPUNGE {uid}: {e}"))?
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(|e| format!("UID EXPUNGE {uid}: {e}"))?;
     Ok(())
 }
 

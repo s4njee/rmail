@@ -16,6 +16,11 @@ use std::sync::Mutex;
 
 const PARAGRAPH_SEP: &str = "\n\n";
 
+fn is_permanent_mailbox(folder: &str) -> bool {
+    let lower = folder.to_ascii_lowercase();
+    lower.contains("trash") || lower.contains("junk") || lower.contains("spam")
+}
+
 type MessageWithThreadHeaders = (MessageRow, Option<String>, Option<String>, Option<String>);
 type StoredDraftRow = (i64, i64, String, Option<String>, Option<String>);
 
@@ -1531,9 +1536,9 @@ impl SqliteStore {
     }
 
     /// Soft-delete (P1.1): hide the row from every view but keep it so Delete
-    /// can be undone and the queued server Delete can replay. Hard cleanup
-    /// happens once the server delete lands (the sync reconcile removes rows
-    /// whose UID is gone) or via retention pruning.
+    /// can be undone and the queued server Delete can replay. The server
+    /// action moves the message to Trash; rows remain locally until sync
+    /// reconciles the resulting mailbox state.
     pub fn delete(&self, id: MessageId) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
         let affected = conn
@@ -1759,6 +1764,19 @@ impl SqliteStore {
 
     pub fn bulk_delete(&self, ids: &[MessageId]) -> (u32, Vec<String>) {
         Self::apply_each(ids, |id| {
+            let local_folder = {
+                let conn = self.conn.lock().unwrap();
+                conn.query_row(
+                    "SELECT folder FROM messages WHERE id = ?1 AND deleted_at_ms IS NULL",
+                    params![id],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+            };
+            if local_folder.as_deref().is_some_and(is_permanent_mailbox) {
+                return Err("permanent deletion requires explicit confirmation".into());
+            }
             let Some((account_id, server_folder, uid)) = self.message_location(id) else {
                 return Err("no such message".into());
             };
@@ -4013,6 +4031,20 @@ impl SqliteStore {
         .flatten()
     }
 
+    /// Stable RFC Message-ID used to re-resolve a message after a server-side
+    /// MOVE assigned it a new UID in the destination mailbox.
+    pub fn message_id_header(&self, id: MessageId) -> Option<String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT message_id_header FROM messages WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+    }
+
     /// The server mailbox name used for archiving an account's mail, derived
     /// from the first message mapped to the display Archive folder. Callers
     /// fall back to "Archive" when nothing is known.
@@ -4027,6 +4059,28 @@ impl SqliteStore {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT server_folder FROM messages WHERE account_id = ?1 AND folder = 'Archive' \
+             AND server_folder IS NOT NULL AND server_folder != '' LIMIT 1",
+            params![account_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+    }
+
+    /// The server mailbox used for Trash, resolved from RFC 6154 special-use
+    /// discovery and falling back to a previously synced Trash row.
+    pub fn trash_folder_name(&self, account_id: AccountId) -> Option<String> {
+        if let Some(f) = self
+            .account_folders()
+            .into_iter()
+            .find(|f| f.account_id == Some(account_id) && f.kind == FolderKind::Trash)
+        {
+            return f.server_name;
+        }
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT server_folder FROM messages WHERE account_id = ?1 AND folder = 'Trash' \
              AND server_folder IS NOT NULL AND server_folder != '' LIMIT 1",
             params![account_id],
             |r| r.get(0),
@@ -4692,7 +4746,8 @@ impl SqliteStore {
         let conn = self.conn.lock().unwrap();
         if keep_uids.is_empty() {
             conn.execute(
-                "DELETE FROM messages WHERE account_id = ?1 AND folder = ?2",
+                "DELETE FROM messages WHERE account_id = ?1 AND folder = ?2 \
+                 AND deleted_at_ms IS NULL",
                 params![account_id, folder],
             )
             .map_err(|e| e.to_string())?;
@@ -4700,7 +4755,7 @@ impl SqliteStore {
             let placeholders = keep_uids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
             let sql = format!(
                 "DELETE FROM messages WHERE account_id = ?1 AND folder = ?2 AND uid IS NOT NULL \
-                 AND uid NOT IN ({placeholders})"
+                 AND deleted_at_ms IS NULL AND uid NOT IN ({placeholders})"
             );
             let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
             let mut params: Vec<rusqlite::types::Value> = vec![
@@ -5750,6 +5805,32 @@ mod tests {
         assert!(!inbox.enabled, "upsert must not flip enabled=false back on");
         let archive = rows.iter().find(|f| f.server_name == "Archive").unwrap();
         assert!(archive.enabled);
+    }
+
+    #[test]
+    fn trash_folder_name_prefers_special_use_mailbox() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let acc = test_account(&store);
+        assert_eq!(store.trash_folder_name(acc.id), None);
+        store
+            .reconcile_folders(
+                acc.id,
+                &[DiscoveredMailbox {
+                    server_name: "[Gmail]/Trash".into(),
+                    local_name: "Trash".into(),
+                    display_name: "Trash".into(),
+                    kind: FolderKind::Trash,
+                    delimiter: "/".into(),
+                    subscribed: true,
+                    selectable: true,
+                    namespace: "[Gmail]/".into(),
+                }],
+            )
+            .unwrap();
+        assert_eq!(
+            store.trash_folder_name(acc.id).as_deref(),
+            Some("[Gmail]/Trash")
+        );
     }
 
     fn test_account(store: &SqliteStore) -> Account {
