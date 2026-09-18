@@ -274,8 +274,10 @@ provider.
 - [ ] Wire the existing sound, quiet-hours, and per-account settings, or remove them.
 - [ ] Unread count on the dock badge (exists) and the tray.
 
-> **Blockers:** Notification permission, click routing, dock, and tray behavior require macOS
-> end-to-end validation on a signed app; the backend coalescing can be developed locally.
+> **Blockers:** New-mail sync does not yet invoke the notification settings/coalescer, and the
+> current macOS-only AppleScript notification command must be replaced with
+> `tauri-plugin-notification` before cross-platform permission and click routing can be verified.
+> Dock and tray behavior still require macOS end-to-end validation on a signed app.
 
 ### C1.8 Drafts that roam
 
