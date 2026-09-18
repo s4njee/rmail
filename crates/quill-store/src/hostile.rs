@@ -8,7 +8,7 @@
 /// event handlers, URL schemes, CSS exfiltration, SVG, forms, tracking pixels,
 /// CID confusion, malformed markup, entity obfuscation, and oversized content.
 pub fn hostile_mail() -> Vec<(&'static str, String)> {
-    let mut cases: Vec<(&'static str, String)> = vec![
+    let cases: Vec<(&'static str, String)> = vec![
         ("inline script", r#"<p>hi</p><script>alert(1)</script>"#.into()),
         ("external script", r#"<script src="https://evil.example/x.js"></script><p>hi</p>"#.into()),
         ("event handler onclick", r#"<p onclick="alert(1)">hi</p>"#.into()),

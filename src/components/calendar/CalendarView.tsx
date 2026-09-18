@@ -13,6 +13,8 @@ import {
   AgendaView,
   DayView,
   EditScope,
+  EditorAlert,
+  EditorAttendee,
   Event,
   EventDraft,
   EventEditorModal,
@@ -292,6 +294,8 @@ export function CalendarView() {
 
   const handleSaveModal = async (
     draft: EventDraft,
+    _alerts: EditorAlert[],
+    _invitees: EditorAttendee[],
     id?: string,
     scope?: EditScope,
     targetDate?: string,

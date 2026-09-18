@@ -262,7 +262,7 @@ fn extract_xml_tag_content(xml: &str, tag_name: &str) -> Option<String> {
             None => break,
         };
         let found_tag = &rest[..tag_name_end];
-        let base_found = found_tag.split(':').last().unwrap_or(found_tag);
+        let base_found = found_tag.split(':').next_back().unwrap_or(found_tag);
 
         if base_found == lower_tag {
             // Find end of opening tag '>'
@@ -285,7 +285,7 @@ fn extract_xml_tag_content(xml: &str, tag_name: &str) -> Option<String> {
                 let c_rest = &lower_xml[actual_c + 2..];
                 if let Some(c_end) = c_rest.find('>') {
                     let c_tag = &c_rest[..c_end];
-                    let c_base = c_tag.split(':').last().unwrap_or(c_tag);
+                    let c_base = c_tag.split(':').next_back().unwrap_or(c_tag);
                     if c_base == lower_tag {
                         return Some(xml[content_start..actual_c].trim().to_string());
                     }
@@ -328,7 +328,7 @@ pub fn parse_multistatus_calendars(xml: &str, base: &str) -> Vec<CalDavCollectio
 
         let display_name = unescape_xml(
             &extract_xml_tag_content(chunk, "displayname").unwrap_or_else(|| {
-                href.trim_matches('/').split('/').last().unwrap_or("Calendar").to_string()
+                href.trim_matches('/').split('/').next_back().unwrap_or("Calendar").to_string()
             }),
         );
 

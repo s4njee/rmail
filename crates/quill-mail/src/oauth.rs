@@ -441,11 +441,9 @@ mod tests {
                 .await
                 .unwrap();
             s.write_all(
-                format!(
-                    "GET /?code=test-code-123&state=test-state HTTP/1.1\r\n\
-                     Host: 127.0.0.1\r\nConnection: close\r\n\r\n"
-                )
-                .as_bytes(),
+                "GET /?code=test-code-123&state=test-state HTTP/1.1\r\n\
+                 Host: 127.0.0.1\r\nConnection: close\r\n\r\n"
+                    .as_bytes(),
             )
             .await
             .unwrap();

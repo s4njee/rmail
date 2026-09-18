@@ -236,9 +236,9 @@ mod tests {
 
     #[test]
     fn unknown_kind_string_is_custom() {
-        assert_eq!(FolderKind::from_str("custom"), FolderKind::Custom);
-        assert_eq!(FolderKind::from_str("projects"), FolderKind::Custom);
-        assert_eq!(FolderKind::from_str("inbox"), FolderKind::Inbox);
+        assert_eq!(FolderKind::from_key("custom"), FolderKind::Custom);
+        assert_eq!(FolderKind::from_key("projects"), FolderKind::Custom);
+        assert_eq!(FolderKind::from_key("inbox"), FolderKind::Inbox);
         assert_eq!(FolderKind::Custom.as_str(), "custom");
     }
 }

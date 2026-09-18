@@ -38,8 +38,8 @@ pub fn parse_vtodo_tasks(ics_text: &str, default_account_id: u32) -> Vec<Calenda
                 if let Some(pos) = trimmed.find(':') {
                     due_at_ms = parse_iso_or_utc(&trimmed[pos + 1..]);
                 }
-            } else if trimmed.starts_with("COMPLETED:") {
-                completed_at_ms = parse_iso_or_utc(&trimmed[10..]);
+            } else if let Some(val) = trimmed.strip_prefix("COMPLETED:") {
+                completed_at_ms = parse_iso_or_utc(val);
             } else if let Some(val) = trimmed.strip_prefix("PRIORITY:") {
                 priority = val.parse().ok();
             } else if let Some(val) = trimmed.strip_prefix("STATUS:") {

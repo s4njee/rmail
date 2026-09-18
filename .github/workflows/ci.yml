@@ -65,3 +65,17 @@ jobs:
           git diff --exit-code -- src/lib/ipc
       - name: Domain-crate isolation (no tauri in quill-store/mail/cal)
         run: ./scripts/check-domain-isolation.sh
+
+  rust-macos:
+    name: Rust tests (macOS)
+    runs-on: macos-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      - name: Test workspace on the supported desktop platform
+        run: cargo test --workspace

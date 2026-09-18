@@ -1332,7 +1332,7 @@ fn envelope_row(
         flagged,
         answered,
         forwarded,
-        has_attachments: parsed.as_ref().map_or(false, |p| !p.attachments.is_empty()),
+        has_attachments: parsed.as_ref().is_some_and(|p| !p.attachments.is_empty()),
         thread_id: None,
         thread_count: 1,
     };

@@ -16,6 +16,14 @@ use std::sync::Mutex;
 
 const PARAGRAPH_SEP: &str = "\n\n";
 
+type MessageWithThreadHeaders = (
+    MessageRow,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+type StoredDraftRow = (i64, i64, String, Option<String>, Option<String>);
+
 // -- P1.3 search-operator parsing ---------------------------------------
 //
 // `search` splits the raw query into full-text terms (FTS MATCH) and
@@ -990,7 +998,7 @@ impl SqliteStore {
                     .get(&(account_id, local_name.clone()))
                     .copied()
                     .unwrap_or((0, 0));
-                let kind = FolderKind::from_str(&r.get::<_, String>(6)?);
+                let kind = FolderKind::from_key(&r.get::<_, String>(6)?);
                 Ok(Folder {
                     id: r.get::<_, i64>(0)? as FolderId,
                     account_id: Some(account_id),
@@ -1208,7 +1216,7 @@ impl SqliteStore {
 
     pub fn get_message(&self, id: MessageId) -> Option<MessageDetail> {
         let conn = self.conn.lock().unwrap();
-        let query_res: Option<(MessageRow, Option<String>, Option<String>, Option<String>)> = conn
+        let query_res: Option<MessageWithThreadHeaders> = conn
             .query_row(
                 "SELECT id, account_id, folder, sender_name, sender_address, subject, snippet, \
                  received_at_ms, unread, flagged, answered, forwarded, has_attachments, thread_id, 1 as thread_count, \
@@ -2299,12 +2307,10 @@ impl SqliteStore {
             };
             let row = detail.row;
             if row.folder != p.folder_before {
-                if let Some((acct, _local, server_folder, uid)) =
+                if let Some((acct, _local, Some(server_folder), uid)) =
                     self.get_message_location(p.message_id)
                 {
-                    if let Some(f) = server_folder {
-                        let _ = self.cancel_pending_actions(acct, &f, uid);
-                    }
+                    let _ = self.cancel_pending_actions(acct, &server_folder, uid);
                 }
                 let _ = self.move_message(p.message_id, &p.folder_before);
                 reverted += 1;
@@ -2367,7 +2373,7 @@ impl SqliteStore {
         let fts_query = fts_match_query(&terms);
         let has_fts = !fts_query.is_empty();
         let mut results = Vec::new();
-        let limit = query.limit.max(1).min(100);
+        let limit = query.limit.clamp(1, 100);
 
         // Build the message-side WHERE clauses from operators. `m.`-prefixed
         // because the FTS join aliases messages as `m` (the operators-only
@@ -2863,7 +2869,7 @@ impl SqliteStore {
             .into_iter()
             .find(|e| e.id == id)
             .ok_or("no such event")?;
-        let mut clone = CalendarEvent {
+        let clone = CalendarEvent {
             id: 0,
             account_id: src.account_id,
             title: format!("{} (copy)", src.title),
@@ -3311,7 +3317,7 @@ impl SqliteStore {
                     account_id: r.get(0)?,
                     server_name: r.get(1)?,
                     local_name: r.get(2)?,
-                    kind: FolderKind::from_str(&r.get::<_, String>(3)?),
+                    kind: FolderKind::from_key(&r.get::<_, String>(3)?),
                     enabled: r.get::<_, i64>(4)? != 0,
                 })
             })
@@ -3506,7 +3512,7 @@ impl SqliteStore {
                     continue;
                 }
                 let server = server_folder.unwrap_or_else(|| folder.clone());
-                let delim = if server.contains('/') { "/" } else { "/" };
+                let delim = "/";
                 discovered.push(DiscoveredMailbox {
                     server_name: server.clone(),
                     local_name: folder,
@@ -3732,7 +3738,7 @@ impl SqliteStore {
             .map_err(|e| e.to_string())?;
         for (id, server, local) in rows {
             let new_server = crate::folders::rewrite_prefix(&server, from, to, delimiter);
-            let kind = FolderKind::from_str(
+            let kind = FolderKind::from_key(
                 &conn
                     .query_row("SELECT kind FROM folders WHERE id = ?1", params![id], |r| {
                         r.get::<_, String>(0)
@@ -4068,6 +4074,7 @@ impl SqliteStore {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_message_flags_by_uid(
         &self,
         account_id: AccountId,
@@ -4096,6 +4103,7 @@ impl SqliteStore {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn save_message_body_and_attachments(
         &self,
         id: MessageId,
@@ -4935,6 +4943,7 @@ impl SqliteStore {
     /// Dedups by Message-ID — returns `Ok(false)` when the account already has
     /// that header. The sender is mirrored to both name+address columns (as
     /// `save_draft` does) and the thread id is derived from the subject.
+    #[allow(clippy::too_many_arguments)]
     pub fn import_message(
         &self,
         account_id: AccountId,
@@ -5009,7 +5018,7 @@ impl SqliteStore {
         let rows = stmt
             .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?)))
             .map_err(|_| ());
-        let rows: Vec<(i64, i64, String, Option<String>, Option<String>)> =
+        let rows: Vec<StoredDraftRow> =
             match rows { Ok(r) => r.flatten().collect(), Err(_) => return Vec::new() };
         rows.into_iter()
             .filter_map(|(id, account_id, subject, in_reply_to, references)| {
@@ -5615,8 +5624,8 @@ mod tests {
 
     #[test]
     fn folder_kind_unknown_is_custom() {
-        assert_eq!(FolderKind::from_str("projects"), FolderKind::Custom);
-        assert_eq!(FolderKind::from_str("custom"), FolderKind::Custom);
+        assert_eq!(FolderKind::from_key("projects"), FolderKind::Custom);
+        assert_eq!(FolderKind::from_key("custom"), FolderKind::Custom);
         assert_eq!(FolderKind::Custom.as_str(), "custom");
         assert!(FolderKind::Custom.is_mailbox());
         assert!(!FolderKind::Starred.is_mailbox());
@@ -6071,7 +6080,7 @@ mod tests {
         };
         let target = store.page_messages(&inbox).items[0].id;
 
-        let wake = now_ms() + 3600_000;
+        let wake = now_ms() + 3_600_000;
         store.set_snoozed(&[target], wake).unwrap();
         assert!(
             !store.page_messages(&inbox).items.iter().any(|r| r.id == target),
@@ -7261,7 +7270,7 @@ mod tests {
         assert_eq!(preview.affected, 1);
         assert_eq!(preview.previews[0].message_id, 1);
         assert_eq!(preview.previews[0].folder_before, "Inbox");
-        assert_eq!(preview.previews[0].unread_before, true);
+        assert!(preview.previews[0].unread_before);
         assert_eq!(preview.previews[0].matched[0].rule_name, "Alice mail");
         assert_eq!(
             preview.previews[0].matched[0].actions,
@@ -7279,7 +7288,7 @@ mod tests {
         let reverted = store.revert_rules(acc.id, &preview.previews).unwrap();
         assert_eq!(reverted, 1);
         assert_eq!(store.get_message(1).unwrap().row.folder, "Inbox");
-        assert_eq!(store.get_message(1).unwrap().row.unread, true);
+        assert!(store.get_message(1).unwrap().row.unread);
     }
 
     #[test]

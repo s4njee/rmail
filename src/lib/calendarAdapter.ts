@@ -1,12 +1,19 @@
 import type {
   Account,
   AccountKind,
+  Attendee,
+  AttendeeDraft,
+  AvailableSlot,
   Calendar,
   CalendarDataSource,
+  DefaultAlerts,
   EditScope,
   Event,
   EventDraft,
+  IdentitySettings,
   OccurrenceItem,
+  Reminder,
+  ReminderDraft,
   SearchResults,
   Task,
 } from "@rcalendar/ui";
@@ -19,6 +26,9 @@ import {
   listCalendars,
   listEvents,
   listTasks as listTasksCmd,
+  queryFreeBusy,
+  removeAccount,
+  removeCalendarSource,
   toggleTask as toggleTaskCmd,
   updateEvent,
 } from "./tauri";
@@ -305,6 +315,18 @@ export class QuillCalendarDataSource implements CalendarDataSource {
     setDisabledCalendarId(calendarId, !enabled);
   }
 
+  async deleteAccount(accountId: string): Promise<void> {
+    await removeAccount(Number(accountId));
+  }
+
+  async deleteCalendar(calendarId: string): Promise<void> {
+    const { accountId, source } = parseCalendarId(calendarId);
+    if (!source) {
+      throw new Error("Remove the owning mail account to delete this calendar");
+    }
+    await removeCalendarSource(accountId, source);
+  }
+
   async listOccurrences(
     from: string,
     to: string,
@@ -408,6 +430,110 @@ export class QuillCalendarDataSource implements CalendarDataSource {
   async toggleTask(id: string): Promise<Task> {
     const t = await toggleTaskCmd(Number(id));
     return quillTaskToDomain(t);
+  }
+
+  async listReminders(eventId: string): Promise<Reminder[]> {
+    const minutes = await this.alarmMinutesFor(Number(eventId));
+    return minutes == null
+      ? []
+      : [
+          {
+            id: `quill-alarm-${eventId}`,
+            eventId,
+            offsetMinutes: -minutes,
+            absoluteAt: null,
+          },
+        ];
+  }
+
+  async saveReminder(_draft: ReminderDraft): Promise<Reminder> {
+    throw new Error("Multiple calendar reminders are not supported by Quill yet");
+  }
+
+  async deleteReminder(_id: string): Promise<void> {
+    throw new Error("Calendar reminder deletion is not supported by Quill yet");
+  }
+
+  async snoozeReminder(_id: string, _minutes: number): Promise<void> {
+    throw new Error("Calendar reminder snoozing is not supported by Quill yet");
+  }
+
+  async listAttendees(_eventId: string): Promise<Attendee[]> {
+    return [];
+  }
+
+  async saveAttendee(_draft: AttendeeDraft): Promise<Attendee> {
+    throw new Error("Calendar attendees are not supported by Quill yet");
+  }
+
+  async deleteAttendee(_id: string): Promise<void> {
+    throw new Error("Calendar attendees are not supported by Quill yet");
+  }
+
+  async suggestAttendees(_query: string): Promise<Attendee[]> {
+    return [];
+  }
+
+  async findAvailableSlots(
+    date: string,
+    durationMinutes: number,
+    _calendarIds?: string[],
+  ): Promise<AvailableSlot[]> {
+    const start = new Date(`${date}T00:00:00`);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    const slots = await queryFreeBusy(
+      start.getTime(),
+      end.getTime(),
+      durationMinutes,
+    );
+    return slots
+      .filter((slot) => !slot.busy)
+      .map((slot) => ({
+        start: new Date(slot.startMs).toISOString(),
+        end: new Date(slot.endMs).toISOString(),
+      }));
+  }
+
+  async sendInvitations(_eventId: string): Promise<{
+    subject: string;
+    recipients: string[];
+    outboxPath?: string | null;
+  }> {
+    throw new Error("Calendar invitations are not supported by Quill yet");
+  }
+
+  async applyItip(
+    calendarId: string,
+    icsContent: string,
+  ): Promise<{ method: string; uid: string; message: string }> {
+    const method = icsContent.match(/^METHOD:([^\r\n]+)/im)?.[1] ?? "PUBLISH";
+    const uid = icsContent.match(/^UID:([^\r\n]+)/im)?.[1] ?? "";
+    const imported = await this.importIcs(calendarId, icsContent);
+    return {
+      method,
+      uid,
+      message: `Imported ${imported.length} calendar event(s)`,
+    };
+  }
+
+  async getIdentity(): Promise<IdentitySettings> {
+    return {
+      selfEmail: useAccounts()()[0]?.address ?? null,
+      showDeclined: true,
+    };
+  }
+
+  async setIdentity(_identity: IdentitySettings): Promise<void> {
+    throw new Error("Calendar identity is managed by the owning mail account");
+  }
+
+  async getDefaultAlerts(): Promise<DefaultAlerts> {
+    return { event: -15, allDay: null };
+  }
+
+  async setDefaultAlerts(_alerts: DefaultAlerts): Promise<void> {
+    throw new Error("Default calendar alerts are not configurable in Quill yet");
   }
 
   async search(query: string): Promise<SearchResults> {

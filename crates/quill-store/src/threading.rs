@@ -60,7 +60,7 @@ pub fn compute_thread_id(
     // Fallback: Normalized subject hash
     let norm = normalize_subject(subject);
     if norm.is_empty() {
-        format!("th_subj_empty")
+        "th_subj_empty".to_string()
     } else {
         format!("th_subj_{}", norm.to_ascii_lowercase())
     }

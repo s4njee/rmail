@@ -114,8 +114,8 @@ mod tests {
             id: 1,
             account_id: 1,
             title: "Morning Sync".into(),
-            start_ms: 3600_000 * 9,  // 09:00
-            end_ms: 3600_000 * 10,   // 10:00
+            start_ms: 3_600_000 * 9,  // 09:00
+            end_ms: 3_600_000 * 10,   // 10:00
             all_day: false,
             location: None,
             notes: None,
@@ -131,9 +131,9 @@ mod tests {
         // Query 08:00 to 11:00 in 30-min slots
         let slots = compute_free_busy_slots(
             &events,
-            3600_000 * 8,
-            3600_000 * 11,
-            1800_000,
+            3_600_000 * 8,
+            3_600_000 * 11,
+            1_800_000,
         );
 
         assert_eq!(slots.len(), 6);

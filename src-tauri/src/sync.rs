@@ -351,7 +351,7 @@ pub async fn flush_due_scheduled(app: &AppHandle) {
 }
 
 async fn sync_one(app: &AppHandle, account: &Account, replay_actions: bool) {
-    let Ok(credential) = quill_mail::auth::resolve_credential(&account) else {
+    let Ok(credential) = quill_mail::auth::resolve_credential(account) else {
         return; // no credential stored — nothing to sync
     };
     let _ = app.emit(

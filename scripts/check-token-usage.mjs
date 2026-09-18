@@ -15,7 +15,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 // (e.g. a row sets `--account-color` inline from account data) rather than in
 // tokens.css. The guard ignores these; it exists to catch *theme* tokens that
 // a third treatment would break.
-const COMPONENT_LOCAL = new Set(["--account-color"]);
+const COMPONENT_LOCAL = new Set(["--account-color", "--tree-depth"]);
 
 function walk(dir, out) {
   for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {

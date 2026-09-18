@@ -40,7 +40,7 @@ pub async fn test_connection(
     // and negotiates TLS, so one reachability check with a clear error is all
     // the user needs (the CalDAV client does its own PROPFIND auth later).
     if service == Service::CalDav {
-        return test_caldav_reachability(&settings).await;
+        return test_caldav_reachability(settings).await;
     }
 
     // 1. DNS resolve — done explicitly so a resolution failure is reported as
@@ -100,8 +100,8 @@ pub async fn test_connection(
 
     // 4. Protocol greeting, then auth when a password was supplied.
     match service {
-        Service::Imap => test_imap(&settings, &server, stream, password, &mut issues).await,
-        Service::Smtp => test_smtp(&settings, &server, stream, password, &mut issues).await,
+        Service::Imap => test_imap(settings, &server, stream, password, &mut issues).await,
+        Service::Smtp => test_smtp(settings, &server, stream, password, &mut issues).await,
         Service::CalDav => unreachable!(), // handled above
     }
 }

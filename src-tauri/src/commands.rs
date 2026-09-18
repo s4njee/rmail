@@ -463,12 +463,10 @@ pub fn restore_message(
     store: State<'_, SqliteStore>,
     id: MessageId,
 ) -> Result<(), String> {
-    if let Some((account_id, _local_folder, server_folder, uid)) =
+    if let Some((account_id, _local_folder, Some(server_folder), uid)) =
         store.get_message_location(id)
     {
-        if let Some(folder) = server_folder {
-            let _ = store.cancel_pending_actions(account_id, &folder, uid);
-        }
+        let _ = store.cancel_pending_actions(account_id, &server_folder, uid);
     }
     store.restore_message(id)
 }
@@ -855,11 +853,10 @@ pub fn add_account(
     quill_mail::credentials::set_credential(&info.address, &password)?;
     let palette = ["#3b5bdb", "#0f766e", "#b4451f"];
     let color = palette[store.accounts().len() % palette.len()].to_string();
-    store.create_account(&info, color).map_err(|e| {
+    store.create_account(&info, color).inspect_err(|_e| {
         // Roll back the keychain write so a failed insert (e.g. a duplicate
         // address) doesn't leave an orphaned credential behind.
         let _ = quill_mail::credentials::delete_credential(&info.address);
-        e
     })
 }
 
@@ -960,7 +957,7 @@ pub async fn test_connection_settings(
         .any(|i| i.kind == ErrorKind::Auth)
     {
         let domain = settings.email.rsplit('@').next().unwrap_or(&settings.email);
-        if let Some(preset) = quill_mail::provider::preset_for_domain(&domain) {
+        if let Some(preset) = quill_mail::provider::preset_for_domain(domain) {
             for issue in report.issues.iter_mut() {
                 if issue.kind == ErrorKind::Auth && issue.help.is_none() {
                     issue.help = Some(preset.help.clone());
@@ -1359,6 +1356,7 @@ pub async fn wait_oauth_code(redirect_uri: String, state: String) -> OAuthWaitRe
 /// and client config for the account's address. Local mail/calendar data is
 /// untouched.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn reauthorize_account(
     store: State<'_, SqliteStore>,
     account_id: AccountId,
@@ -1752,4 +1750,3 @@ pub fn query_free_busy(
 ) -> Vec<quill_store::FreeBusySlot> {
     quill_cal::query_store_free_busy(&store, start_ms, end_ms, slot_duration_minutes.unwrap_or(30))
 }
-

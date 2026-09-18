@@ -397,7 +397,7 @@ impl FolderKind {
         }
     }
 
-    pub fn from_str(kind: &str) -> Self {
+    pub fn from_key(kind: &str) -> Self {
         match kind {
             "inbox" => Self::Inbox,
             "starred" => Self::Starred,

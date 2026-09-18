@@ -59,7 +59,7 @@ pub fn evaluate_condition(
         }
         RuleField::HasAttachment => {
             let has = row.has_attachments
-                || detail.map_or(false, |d| !d.attachments.is_empty());
+                || detail.is_some_and(|d| !d.attachments.is_empty());
             let want = cond.value.trim().eq_ignore_ascii_case("true")
                 || cond.value.trim().eq_ignore_ascii_case("yes")
                 || cond.value.trim() == "1";
@@ -354,7 +354,7 @@ fn parse_sieve_block(
     let mut conditions = Vec::new();
 
     // Look for header matches in cond_text
-    for part in cond_text.split(|c| c == ',' || c == '(' || c == ')') {
+    for part in cond_text.split([',', '(', ')']) {
         let trimmed = part.trim();
         if trimmed.is_empty() || trimmed == "allof" || trimmed == "anyof" {
             continue;

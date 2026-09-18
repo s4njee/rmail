@@ -352,6 +352,7 @@ fn parse_graph_datetime(dt_str: &str, tz: &str) -> Option<i64> {
     naive.and_local_timezone(tz).earliest().map(|d| d.timestamp_millis())
 }
 
+#[cfg(test)]
 fn parse_google_datetime(
     start: &Option<calendar_core::sync::google_model::GoogleEventDateTime>,
     end: &Option<calendar_core::sync::google_model::GoogleEventDateTime>,
