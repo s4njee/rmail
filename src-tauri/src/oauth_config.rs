@@ -1,9 +1,9 @@
-//! Dev/test OAuth credentials loaded from a gitignored `oauth-config.json`.
+//! OAuth client configuration.
 //!
-//! The client ID and secret for testing are read from a file instead of being
-//! re-typed into the Add Account form on every `tauri dev` reload. The file is
-//! gitignored — this is a local convenience for development, not a place for
-//! production secrets (those belong in the OS keychain).
+//! Release builds take their provider client IDs from build-time environment
+//! variables. A gitignored `oauth-config.json` remains available for debug
+//! builds, so developer credentials cannot accidentally become a release
+//! fallback.
 //!
 //! Lookup order:
 //! 1. `$QUILL_OAUTH_CONFIG` — explicit path.
@@ -64,12 +64,48 @@ fn find_config_path() -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
-/// Load the config for a provider, or `None` when the file is absent, the
-/// provider has no entry, or the entry has no client ID.
-pub fn load(provider: &str) -> Option<OAuthClientConfig> {
+/// Load debug-only credentials from the local config file. Production builds
+/// must use the build-time configuration returned by [`configured`].
+#[cfg(debug_assertions)]
+fn local_config(provider: &str) -> Option<OAuthClientConfig> {
     let path = find_config_path()?;
     let raw = std::fs::read_to_string(&path).ok()?;
     parse_config(&raw, provider)
+}
+
+/// OAuth config embedded at compile time for signed builds. Desktop OAuth
+/// clients are public clients; the optional Google secret is provider metadata,
+/// not a user credential.
+fn build_config(provider: &str) -> Option<OAuthClientConfig> {
+    let (client_id, client_secret) = match provider_key(provider)? {
+        "google" => (
+            option_env!("QUILL_GOOGLE_OAUTH_CLIENT_ID"),
+            option_env!("QUILL_GOOGLE_OAUTH_CLIENT_SECRET"),
+        ),
+        "microsoft" => (option_env!("QUILL_MICROSOFT_OAUTH_CLIENT_ID"), None),
+        _ => return None,
+    };
+    let client_id = client_id?.trim();
+    if client_id.is_empty() {
+        return None;
+    }
+    Some(OAuthClientConfig {
+        client_id: Some(client_id.to_string()),
+        client_secret: client_secret
+            .map(str::trim)
+            .filter(|secret| !secret.is_empty())
+            .map(str::to_string),
+    })
+}
+
+/// Return the configured OAuth client for a provider. Debug builds prefer the
+/// local, gitignored file; release builds only accept build-time values.
+pub fn configured(provider: &str) -> Option<OAuthClientConfig> {
+    #[cfg(debug_assertions)]
+    if let Some(config) = local_config(provider) {
+        return Some(config);
+    }
+    build_config(provider)
 }
 
 fn parse_config(raw: &str, provider: &str) -> Option<OAuthClientConfig> {

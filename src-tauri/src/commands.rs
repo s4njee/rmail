@@ -1398,19 +1398,18 @@ pub fn get_oauth_init(
     let r_uri = redirect_uri.unwrap_or_else(|| {
         quill_mail::oauth::bind_loopback().unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
     });
-    // Dev/test creds from `oauth-config.json` (gitignored) when the form
-    // doesn't supply them, so they only need entering once.
-    let file_config = crate::oauth_config::load(&provider_str);
+    // A caller-supplied ID is an Advanced escape hatch. Normal sign-in uses
+    // the production client embedded by the release build (or debug config).
     let c_id = client_id
-        .or_else(|| file_config.as_ref().and_then(|c| c.client_id.clone()))
-        .unwrap_or_else(|| match provider {
-            quill_mail::oauth::OAuthProvider::Google => {
-                "quill-desktop-google.apps.googleusercontent.com".into()
-            }
-            quill_mail::oauth::OAuthProvider::Microsoft365 => {
-                "quill-desktop-ms365-client-id".into()
-            }
-        });
+        .or_else(|| {
+            crate::oauth_config::configured(&provider_str)
+                .and_then(|config| config.client_id)
+        })
+        .ok_or_else(|| {
+            format!(
+                "no OAuth client is configured for {provider_str}; build with the corresponding QUILL_*_OAUTH_CLIENT_ID"
+            )
+        })?;
 
     let state = uuid::Uuid::new_v4().to_string();
     let auth_url = quill_mail::oauth::build_auth_url(provider, &c_id, &r_uri, &challenge, &state)?;
@@ -1441,21 +1440,18 @@ pub async fn exchange_oauth_code(
         other => return Err(format!("unsupported OAuth provider: {other}")),
     };
 
-    let file_config = crate::oauth_config::load(&provider_str);
+    let configured_client = crate::oauth_config::configured(&provider_str);
     let c_id = client_id
-        .or_else(|| file_config.as_ref().and_then(|c| c.client_id.clone()))
-        .unwrap_or_else(|| match provider {
-            quill_mail::oauth::OAuthProvider::Google => {
-                "quill-desktop-google.apps.googleusercontent.com".into()
-            }
-            quill_mail::oauth::OAuthProvider::Microsoft365 => {
-                "quill-desktop-ms365-client-id".into()
-            }
-        });
-    // The secret may come from the form or the config file; persist whichever
-    // was actually used so token refresh has it later.
+        .or_else(|| configured_client.as_ref().and_then(|config| config.client_id.clone()))
+        .ok_or_else(|| {
+            format!(
+                "no OAuth client is configured for {provider_str}; build with the corresponding QUILL_*_OAUTH_CLIENT_ID"
+            )
+        })?;
+    // The secret may come from the Advanced form or configured client; persist
+    // whichever was actually used so token refresh has it later.
     let secret =
-        client_secret.or_else(|| file_config.as_ref().and_then(|c| c.client_secret.clone()));
+        client_secret.or_else(|| configured_client.and_then(|config| config.client_secret));
 
     let tokens = quill_mail::oauth::exchange_code_for_tokens(
         provider,
@@ -1552,19 +1548,16 @@ pub async fn reauthorize_account(
         other => return Err(format!("unsupported OAuth provider: {other}")),
     };
 
-    let file_config = crate::oauth_config::load(&provider_str);
+    let configured_client = crate::oauth_config::configured(&provider_str);
     let c_id = client_id
-        .or_else(|| file_config.as_ref().and_then(|c| c.client_id.clone()))
-        .unwrap_or_else(|| match provider {
-            quill_mail::oauth::OAuthProvider::Google => {
-                "quill-desktop-google.apps.googleusercontent.com".into()
-            }
-            quill_mail::oauth::OAuthProvider::Microsoft365 => {
-                "quill-desktop-ms365-client-id".into()
-            }
-        });
+        .or_else(|| configured_client.as_ref().and_then(|config| config.client_id.clone()))
+        .ok_or_else(|| {
+            format!(
+                "no OAuth client is configured for {provider_str}; build with the corresponding QUILL_*_OAUTH_CLIENT_ID"
+            )
+        })?;
     let secret =
-        client_secret.or_else(|| file_config.as_ref().and_then(|c| c.client_secret.clone()));
+        client_secret.or_else(|| configured_client.and_then(|config| config.client_secret));
 
     let tokens = quill_mail::oauth::exchange_code_for_tokens(
         provider,

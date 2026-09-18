@@ -188,9 +188,14 @@ provider.
 - [ ] Start Google's restricted-scope verification for `https://mail.google.com/` now — it has a
       multi-week lead time; confirm whether a local-only client is exempt from the third-party
       security assessment.
-- [ ] Until verification lands, make the Gmail app-password path first-class in onboarding.
-- [ ] Hide client-ID/secret fields under "Advanced".
-- [ ] Guard token refresh against concurrent refreshes.
+- [x] Until verification lands, make the Gmail app-password path first-class in onboarding.
+- [x] Hide client-ID/secret fields under "Advanced".
+- [x] Guard token refresh against concurrent refreshes.
+
+> **Blockers:** Registering production clients and initiating Google's verification require access
+> to the project's Google Cloud and Microsoft Entra tenants, plus a product/legal owner to confirm
+> the restricted-scope assessment. The build-time configuration is ready, but no production IDs or
+> verification case can be created from this checkout.
 
 ### C1.2 Gmail as Gmail
 
@@ -200,6 +205,9 @@ provider.
 - [ ] Map actions to label operations: archive, move, apply/remove label, star (`\Starred`), spam.
 - [ ] One body download per message, regardless of label count.
 - [ ] Use `X-GM-RAW` for server search fallback (C2.2).
+
+> **Blockers:** Safe completion needs a Gmail account and extension-capable protocol harness for
+> `X-GM-*` behavior; C3.2 does not exist yet. The non-Gmail data model can proceed independently.
 
 ### C1.3 Sync that is quick and quiet
 
@@ -214,12 +222,19 @@ provider.
 - [ ] Correct `docs/provider-quirks.md`, which currently claims connection limits and throttling
       backoff that don't exist.
 
+> **Blockers:** CONDSTORE/QRESYNC and IDLE timing need protocol-harness coverage and real Gmail,
+> Microsoft 365, and standards-IMAP accounts before their behavior or performance budgets can be
+> claimed.
+
 ### C1.4 Real conversations
 
 - [ ] Compute thread IDs from `References`/`In-Reply-To` at insert (and `X-GM-THRID` on Gmail);
       subject only as a fallback, bounded by time and participants.
 - [ ] Conversations include your Sent replies and exclude deleted messages.
 - [ ] In conversation mode, `e` / `#` / `s` / mark-read act on the whole thread, as in Gmail.
+
+> **Blockers:** No external blocker for standard threading. Gmail's `X-GM-THRID` branch depends on
+> the C1.2 extension support and its test fixture.
 
 ### C1.5 Data layer that stays fast at 250k messages
 
@@ -238,6 +253,9 @@ provider.
 - [ ] Add a CI benchmark on a synthetic 250k-message store: page < 20 ms, mark-read < 5 ms, counts <
       10 ms, search p95 < 100 ms.
 
+> **Blockers:** No implementation blocker, but the final budget needs a stable CI runner and a
+> checked-in synthetic-store benchmark; neither exists yet.
+
 ### C1.6 A message list you can scroll to the end
 
 - [ ] Keyset pagination with windowed fetch on scroll; remove the 500-row cap.
@@ -245,6 +263,8 @@ provider.
 - [ ] Show star, attachment, and account-colour markers on rows.
 - [ ] Add a compact density (single-line rows, ~36 px) next to the current 80 px rows.
 - [ ] Quick filters: Unread, Starred, Has attachment (the small version of T0.5).
+
+> **Blockers:** No external blocker identified.
 
 ### C1.7 New-mail notifications
 
@@ -254,6 +274,9 @@ provider.
 - [ ] Wire the existing sound, quiet-hours, and per-account settings, or remove them.
 - [ ] Unread count on the dock badge (exists) and the tray.
 
+> **Blockers:** Notification permission, click routing, dock, and tray behavior require macOS
+> end-to-end validation on a signed app; the backend coalescing can be developed locally.
+
 ### C1.8 Drafts that roam
 
 - [ ] Clicking a message in Drafts opens it in the composer.
@@ -262,11 +285,17 @@ provider.
       phone and web.
 - [ ] Stop auto-opening the newest draft on launch; show a quiet "1 draft" affordance instead.
 
+> **Blockers:** Replacing server drafts safely needs real-provider validation of UID/ETag behavior
+> and conflict handling; use the C3.2 harness plus Gmail and non-Gmail test accounts.
+
 ### C1.9 Replies that go to the right people
 
 - [ ] Honour `Reply-To`; reply-all excludes every identity and alias, not just the primary address.
 - [ ] Forward uses a standard forwarded-message header block.
 - [ ] For mailing lists, offer reply-to-list vs reply-to-sender (`List-Post`).
+
+> **Blockers:** The mailing-list branch needs representative `List-Post` fixtures and provider
+> validation. Reply-To and forwarding can proceed without an external dependency.
 
 ### C1.10 Mail that renders like it does in Gmail
 
@@ -278,12 +307,18 @@ provider.
 - [ ] `mailto:` links open the composer.
 - [ ] A body-fetch or auth failure shows an error with Retry, not an empty body.
 
+> **Blockers:** The render corpus requires rights-cleared message fixtures, reference screenshots,
+> and a deterministic visual-CI environment. The sanitizer and failure UX can proceed locally.
+
 ### C1.11 Errors a person can act on
 
 - [ ] Per-account status in the sidebar: syncing (with progress), up to date (with time), needs
       sign-in, server unreachable — using the classifier in `quill-mail/src/error.rs`.
 - [ ] An auth failure stops retrying and shows a "Reconnect" banner.
 - [ ] A startup failure shows a recovery screen with Retry and Open logs, not a blank window.
+
+> **Blockers:** No external blocker identified; fault-injection coverage is needed before claiming
+> recovery behavior complete.
 
 ---
 

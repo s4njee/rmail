@@ -93,6 +93,7 @@ export function Onboarding(props: { onDone: () => void }) {
   );
   const [oauthCode, setOauthCode] = createSignal("");
   const [showPaste, setShowPaste] = createSignal(false);
+  const [usingGmailAppPassword, setUsingGmailAppPassword] = createSignal(false);
 
   // Created account + what to sync
   const [account, setAccount] = createSignal<Account | null>(null);
@@ -140,6 +141,9 @@ export function Onboarding(props: { onDone: () => void }) {
       // The loopback listener captures the redirect automatically; the 90s
       // wait falls back to the paste-the-code box.
       const result = await waitOAuthCode(init.redirect_uri, init.state);
+      // The user may have chosen the Gmail app-password route while the
+      // browser sign-in was open. Do not let a late redirect reopen OAuth.
+      if (oauthSession()?.state !== init.state) return;
       if (result.ok && result.code) {
         await finishOAuthCode(result.code);
       } else {
@@ -184,6 +188,7 @@ export function Onboarding(props: { onDone: () => void }) {
 
   const choosePreset = (p: ProviderPreset) => {
     setPreset(p);
+    setUsingGmailAppPassword(false);
     setError("");
     if (p.auth === "oauth") {
       void startOAuth(
@@ -199,6 +204,22 @@ export function Onboarding(props: { onDone: () => void }) {
 
   const chooseOther = () => {
     setPreset(null);
+    setUsingGmailAppPassword(false);
+    setError("");
+    setStep("connect");
+  };
+
+  const useGmailAppPassword = () => {
+    // Clearing the session also cancels the late-result check in startOAuth.
+    setOauthSession(null);
+    setShowPaste(false);
+    setBusy(false);
+    setPreset(null);
+    setUsingGmailAppPassword(true);
+    setServer("imap.gmail.com");
+    setPort(993);
+    setTls(true);
+    setServerTouched(false);
     setError("");
     setStep("connect");
   };
@@ -541,9 +562,11 @@ export function Onboarding(props: { onDone: () => void }) {
             <h1 class="onboarding__title">
               {oauthSession()
                 ? `Sign in with ${oauthSession()!.provider === "google" ? "Google" : "Microsoft 365"}`
-                : preset()
-                  ? `Connect ${preset()!.name}`
-                  : "Connect your account"}
+                : usingGmailAppPassword()
+                  ? "Connect Gmail with an app password"
+                  : preset()
+                    ? `Connect ${preset()!.name}`
+                    : "Connect your account"}
             </h1>
           </div>
 
@@ -578,12 +601,35 @@ export function Onboarding(props: { onDone: () => void }) {
                 </button>
               </div>
             </Show>
+            <Show when={oauthSession()!.provider === "google"}>
+              <div class="onboarding__help">
+                <p>
+                  Need to use an app password instead? Enable 2-Step
+                  Verification, create one in Google Account → Security → App
+                  passwords, then use it only in Quill.
+                </p>
+                <button
+                  type="button"
+                  class="btn btn--secondary"
+                  onClick={useGmailAppPassword}
+                >
+                  Use a Gmail app password
+                </button>
+              </div>
+            </Show>
           </Show>
 
           {/* Password / manual flow */}
           <Show when={!oauthSession()}>
             <Show when={preset() && preset()!.auth === "app_password"}>
               <p class="onboarding__help">{preset()!.help}</p>
+            </Show>
+            <Show when={usingGmailAppPassword()}>
+              <p class="onboarding__help">
+                Enable 2-Step Verification, then create a Gmail app password in
+                Google Account → Security → App passwords. Do not enter your
+                normal Google password here.
+              </p>
             </Show>
             <label class="add-field">
               <span>Email address</span>
@@ -602,7 +648,8 @@ export function Onboarding(props: { onDone: () => void }) {
             </label>
             <label class="add-field">
               <span>
-                {preset() && preset()!.auth === "app_password"
+                {usingGmailAppPassword() ||
+                (preset() && preset()!.auth === "app_password")
                   ? "App-specific password"
                   : "Password"}
               </span>
@@ -612,7 +659,8 @@ export function Onboarding(props: { onDone: () => void }) {
                 onInput={(e) => setPassword(e.currentTarget.value)}
                 autocomplete="current-password"
                 placeholder={
-                  preset() && preset()!.auth === "app_password"
+                  usingGmailAppPassword() ||
+                  (preset() && preset()!.auth === "app_password")
                     ? "xxxx xxxx xxxx xxxx"
                     : ""
                 }

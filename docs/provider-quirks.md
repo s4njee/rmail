@@ -95,15 +95,16 @@ the point of failure (auth error → "create an app-specific password at …").
   (`http://127.0.0.1:<port>`, RFC 8252) automatically, with a paste-the-code
   fallback. The preferred port 8080 is registerable in provider consoles; an
   ephemeral port is used if it's busy.
-- **Release credentials are still placeholders.** The default client IDs are
-  `quill-desktop-google.apps.googleusercontent.com` /
-  `quill-desktop-ms365-client-id` (see `commands.rs`). Before a public beta,
-  register real Google "Desktop app" and Microsoft public-client OAuth apps,
-  add `http://127.0.0.1:8080` to their redirect URIs, and either ship the
-  client IDs/secrets via the gitignored `oauth-config.json` mechanism or the
-  build-time env pipeline. Microsoft public clients work with PKCE and no
-  secret; Google still expects its (public) client secret at the token
-  endpoint — it is not a per-user credential.
+- **Production client registration is required before beta.** Signed builds
+  read `QUILL_GOOGLE_OAUTH_CLIENT_ID`,
+  `QUILL_GOOGLE_OAUTH_CLIENT_SECRET` (if required), and
+  `QUILL_MICROSOFT_OAUTH_CLIENT_ID` at compile time. Register a Google
+  "Desktop app" and a Microsoft public-client OAuth app, add
+  `http://127.0.0.1:8080` to their redirect URIs, and set those build secrets
+  in release CI. `oauth-config.json` is debug-only and is never a release
+  fallback. Microsoft public clients work with PKCE and no secret; Google may
+  require its public client secret at the token endpoint — it is not a
+  per-user credential.
 - Re-authorizing an expired/revoked OAuth account ("Reconnect sign-in" in
   Settings → account edit) re-runs the flow and updates the stored tokens
   without touching local mail/calendar data.

@@ -119,6 +119,7 @@ export function AddAccountForm(props: {
   const [oauthAuthUrl, setOauthAuthUrl] = createSignal("");
   const [oauthClientId, setOauthClientId] = createSignal("");
   const [oauthClientSecret, setOauthClientSecret] = createSignal("");
+  const [showOauthAdvanced, setShowOauthAdvanced] = createSignal(false);
   const [oauthClientIdUsed, setOauthClientIdUsed] = createSignal("");
   const [oauthWaiting, setOauthWaiting] = createSignal(false);
 
@@ -376,34 +377,43 @@ export function AddAccountForm(props: {
                     Sign in with Microsoft 365
                   </button>
                 </div>
-                <label class="add-field add-oauth-client-id">
-                  <span>OAuth Client ID (optional)</span>
-                  <input
-                    type="text"
-                    value={oauthClientId()}
-                    onInput={(e) => setOauthClientId(e.currentTarget.value)}
-                    placeholder="your-client-id.apps.googleusercontent.com"
-                    autocomplete="off"
-                    spellcheck={false}
-                  />
-                </label>
-                <label class="add-field">
-                  <span>OAuth Client Secret (optional)</span>
-                  <input
-                    type="password"
-                    value={oauthClientSecret()}
-                    onInput={(e) => setOauthClientSecret(e.currentTarget.value)}
-                    placeholder="GOCSPX-…"
-                    autocomplete="off"
-                  />
-                </label>
-                <p class="add-oauth-hint">
-                  Leave blank to use the test credentials from{" "}
-                  <code>oauth-config.json</code> at the project root (gitignored
-                  — see <code>oauth-config.example.json</code>). Or paste a
-                  Google <b>Desktop app</b> OAuth client's ID and secret here to
-                  override them.
-                </p>
+                <button
+                  type="button"
+                  class="btn btn--secondary"
+                  aria-expanded={showOauthAdvanced()}
+                  onClick={() => setShowOauthAdvanced((shown) => !shown)}
+                >
+                  Advanced OAuth options
+                </button>
+                <Show when={showOauthAdvanced()}>
+                  <label class="add-field add-oauth-client-id">
+                    <span>OAuth Client ID (optional)</span>
+                    <input
+                      type="text"
+                      value={oauthClientId()}
+                      onInput={(e) => setOauthClientId(e.currentTarget.value)}
+                      placeholder="your-client-id.apps.googleusercontent.com"
+                      autocomplete="off"
+                      spellcheck={false}
+                    />
+                  </label>
+                  <label class="add-field">
+                    <span>OAuth Client Secret (optional)</span>
+                    <input
+                      type="password"
+                      value={oauthClientSecret()}
+                      onInput={(e) =>
+                        setOauthClientSecret(e.currentTarget.value)
+                      }
+                      placeholder="GOCSPX-…"
+                      autocomplete="off"
+                    />
+                  </label>
+                  <p class="add-oauth-hint">
+                    Override Quill's configured OAuth client for development or
+                    an organisation-managed app.
+                  </p>
+                </Show>
               </div>
             </Show>
             <div class="add-divider">
