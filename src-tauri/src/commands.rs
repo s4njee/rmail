@@ -582,10 +582,16 @@ pub fn set_snoozed(
 #[tauri::command]
 pub fn schedule_send(
     store: State<'_, SqliteStore>,
-    outgoing: OutgoingMessage,
+    mut outgoing: OutgoingMessage,
     send_at_ms: i64,
     draft: String,
 ) -> Result<i64, String> {
+    let account = store
+        .accounts()
+        .into_iter()
+        .find(|account| account.id == outgoing.account_id)
+        .ok_or("no such account")?;
+    quill_mail::smtp::ensure_message_id(&account, &mut outgoing)?;
     let payload = serde_json::to_string(&outgoing).map_err(|e| e.to_string())?;
     store.schedule_message(outgoing.account_id, send_at_ms, &payload, &draft)
 }
@@ -811,12 +817,16 @@ pub fn restore_backup(
 /// (password or OAuth bearer). If sending fails due to network/server
 /// unavailability, it is queued for retry.
 #[tauri::command]
-pub async fn send(store: State<'_, SqliteStore>, outgoing: OutgoingMessage) -> Result<(), String> {
+pub async fn send(
+    store: State<'_, SqliteStore>,
+    mut outgoing: OutgoingMessage,
+) -> Result<(), String> {
     let account = store
         .accounts()
         .into_iter()
         .find(|a| a.id == outgoing.account_id)
         .ok_or("no such account")?;
+    quill_mail::smtp::ensure_message_id(&account, &mut outgoing)?;
     let credential = quill_mail::auth::resolve_credential(&account)?;
     match quill_mail::smtp::send_email(&account, &outgoing, &credential).await {
         Ok(()) => {

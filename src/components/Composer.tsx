@@ -370,6 +370,7 @@ export function Composer() {
     }
   });
   let fileInputRef: HTMLInputElement | undefined;
+  let bodyRef: HTMLTextAreaElement | undefined;
 
   createEffect(() => {
     if (open()) {
@@ -416,6 +417,13 @@ export function Composer() {
     }
     setShowMissingAttachmentPrompt(false);
     void sendComposer();
+  };
+
+  const handleComposerKeyDown = (event: KeyboardEvent) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      handleSubmit(event);
+    }
   };
 
   const handlePasteInBody = async (e: ClipboardEvent) => {
@@ -482,6 +490,7 @@ export function Composer() {
           class="composer"
           classList={{ "composer--dragging": isDragging() }}
           onSubmit={handleSubmit}
+          onKeyDown={handleComposerKeyDown}
           onDragOver={(event) => {
             event.preventDefault();
             setIsDragging(true);
@@ -611,11 +620,18 @@ export function Composer() {
               type="text"
               value={d()!.subject}
               onInput={(e) => updateDraft({ subject: e.currentTarget.value })}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.metaKey && !event.ctrlKey) {
+                  event.preventDefault();
+                  bodyRef?.focus();
+                }
+              }}
               placeholder="Subject"
             />
           </label>
 
           <textarea
+            ref={bodyRef}
             class="composer__body"
             value={d()!.body}
             onInput={(e) => updateDraft({ body: e.currentTarget.value })}

@@ -663,12 +663,26 @@ pub struct OutgoingMessage {
     pub bcc: Vec<String>,
     pub subject: String,
     pub body: String,
+    /// Reserved for clients that submit a complete rich-text body. The
+    /// composer deliberately leaves this empty: SMTP renders HTML from the
+    /// current plain-text body at send time.
     pub body_html: Option<String>,
+    /// The account's trusted rich HTML signature, appended/prepended while
+    /// rendering the current plain-text composer body.
+    pub html_signature: Option<String>,
+    /// The plain-text counterpart already present in `body`; it is removed
+    /// from the generated HTML to avoid duplicating an HTML signature.
+    pub plain_signature: Option<String>,
+    /// `"above_quote"` or `"bottom"`, used when placing `html_signature`.
+    pub signature_placement: Option<String>,
     pub in_reply_to: Option<String>,
     pub references: Option<String>,
     pub attachments: Vec<OutgoingAttachment>,
     pub original_message_id: Option<MessageId>,
     pub is_forward: Option<bool>,
+    /// Assigned by the backend before a send is queued or submitted, so
+    /// retries and the synced Sent copy retain one stable RFC 5322 identity.
+    pub message_id: Option<String>,
 }
 
 /// A signature configuration for an account / identity (Roadmap 3.5).

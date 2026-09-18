@@ -43,7 +43,9 @@ export type ComposerDraft = {
   bcc: string[];
   subject: string;
   body: string;
-  bodyHtml: string | null;
+  htmlSignature: string | null;
+  plainSignature: string | null;
+  signaturePlacement: "above_quote" | "bottom" | null;
   inReplyTo: string | null;
   references: string | null;
   originalMessageId: number | null;
@@ -121,15 +123,20 @@ export async function openNewComposer(
   const identity = resolveIdentity(settings, accountId);
 
   let initialBody = "";
-  let initialBodyHtml: string | null = null;
+  let htmlSignature: string | null = null;
+  let plainSignature: string | null = null;
+  let signaturePlacement: "above_quote" | "bottom" | null = null;
 
   if (identity?.signature && identity.signature.includeInNewMail) {
     if (identity.signature.plainText) {
       initialBody = `\n\n${identity.signature.plainText}`;
+      plainSignature = identity.signature.plainText;
     }
     if (identity.signature.html) {
-      initialBodyHtml = `<p><br></p>${identity.signature.html}`;
+      htmlSignature = identity.signature.html;
     }
+    signaturePlacement =
+      identity.signature.replyPlacement === "bottom" ? "bottom" : "above_quote";
   }
 
   setDraft({
@@ -144,7 +151,9 @@ export async function openNewComposer(
     bcc: [],
     subject: "",
     body: initialBody,
-    bodyHtml: initialBodyHtml,
+    htmlSignature,
+    plainSignature,
+    signaturePlacement,
     inReplyTo: null,
     references: null,
     originalMessageId: null,
@@ -254,11 +263,16 @@ export async function openComposer(
 
   const quote = quotedBody(detail);
   let body = `\n\n${quote}`;
-  let bodyHtml: string | null = null;
+  let htmlSignature: string | null = null;
+  let plainSignature: string | null = null;
+  let signaturePlacement: "above_quote" | "bottom" | null = null;
 
   if (identity?.signature && identity.signature.includeInReplies) {
     const sig = identity.signature;
+    signaturePlacement =
+      sig.replyPlacement === "bottom" ? "bottom" : "above_quote";
     if (sig.plainText) {
+      plainSignature = sig.plainText;
       if (sig.replyPlacement === "bottom") {
         body = `\n\n${quote}\n\n${sig.plainText}`;
       } else {
@@ -266,11 +280,7 @@ export async function openComposer(
       }
     }
     if (sig.html) {
-      if (sig.replyPlacement === "bottom") {
-        bodyHtml = `<p><br></p><blockquote>${quote}</blockquote><br>${sig.html}`;
-      } else {
-        bodyHtml = `<p><br></p>${sig.html}<br><blockquote>${quote}</blockquote>`;
-      }
+      htmlSignature = sig.html;
     }
   }
 
@@ -286,7 +296,9 @@ export async function openComposer(
     bcc: [],
     subject,
     body,
-    bodyHtml,
+    htmlSignature,
+    plainSignature,
+    signaturePlacement,
     inReplyTo,
     references,
     originalMessageId: original.id,
@@ -399,7 +411,10 @@ export async function sendComposer(): Promise<void> {
       bcc: d.bcc,
       subject: d.subject,
       body: d.body,
-      body_html: d.bodyHtml,
+      body_html: null,
+      html_signature: d.htmlSignature,
+      plain_signature: d.plainSignature,
+      signature_placement: d.signaturePlacement,
       in_reply_to: d.inReplyTo,
       references: d.references,
       attachments: attachments().map((a) => ({
@@ -409,6 +424,7 @@ export async function sendComposer(): Promise<void> {
       })),
       original_message_id: d.originalMessageId,
       is_forward: d.isForward,
+      message_id: null,
     };
 
     const currentDraftId = draftId();
@@ -476,7 +492,10 @@ function currentOutgoing(): OutgoingMessage | null {
     bcc: d.bcc,
     subject: d.subject,
     body: d.body,
-    body_html: d.bodyHtml,
+    body_html: null,
+    html_signature: d.htmlSignature,
+    plain_signature: d.plainSignature,
+    signature_placement: d.signaturePlacement,
     in_reply_to: d.inReplyTo,
     references: d.references,
     attachments: attachments().map((a) => ({
@@ -486,6 +505,7 @@ function currentOutgoing(): OutgoingMessage | null {
     })),
     original_message_id: d.originalMessageId,
     is_forward: d.isForward,
+    message_id: null,
   };
 }
 
@@ -513,7 +533,9 @@ export function openDraftMessage(d: Draft): void {
     bcc: d.bcc,
     subject: d.subject,
     body: d.body,
-    bodyHtml: null,
+    htmlSignature: null,
+    plainSignature: null,
+    signaturePlacement: null,
     inReplyTo: d.in_reply_to,
     references: d.references,
     originalMessageId: null,
@@ -563,7 +585,14 @@ export async function resumeDraft(): Promise<void> {
 export function reopenComposerFromSnapshot(snapshot: string): void {
   try {
     const parsed = JSON.parse(snapshot);
-    if (parsed.draft) setDraft(parsed.draft);
+    if (parsed.draft) {
+      setDraft({
+        ...parsed.draft,
+        htmlSignature: parsed.draft.htmlSignature ?? null,
+        plainSignature: parsed.draft.plainSignature ?? null,
+        signaturePlacement: parsed.draft.signaturePlacement ?? null,
+      });
+    }
     setDraftId(parsed.draftId ?? null);
     setAttachments(Array.isArray(parsed.attachments) ? parsed.attachments : []);
     setSendError("");

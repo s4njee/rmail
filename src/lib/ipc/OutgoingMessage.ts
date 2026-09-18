@@ -4,4 +4,42 @@ import type { OutgoingAttachment } from "./OutgoingAttachment";
 /**
  * Outgoing mail. The transport lands in Epic 12/13; the contract is fixed here.
  */
-export type OutgoingMessage = { account_id: number, from_name: string | null, from_address: string | null, reply_to: string | null, to: Array<string>, cc: Array<string>, bcc: Array<string>, subject: string, body: string, body_html: string | null, in_reply_to: string | null, references: string | null, attachments: Array<OutgoingAttachment>, original_message_id: number | null, is_forward: boolean | null, };
+export type OutgoingMessage = {
+  account_id: number;
+  from_name: string | null;
+  from_address: string | null;
+  reply_to: string | null;
+  to: Array<string>;
+  cc: Array<string>;
+  bcc: Array<string>;
+  subject: string;
+  body: string;
+  /**
+   * Reserved for clients that submit a complete rich-text body. The
+   * composer deliberately leaves this empty: SMTP renders HTML from the
+   * current plain-text body at send time.
+   */
+  body_html: string | null;
+  /**
+   * The account's trusted rich HTML signature, appended/prepended while
+   * rendering the current plain-text composer body.
+   */
+  html_signature: string | null;
+  /**
+   * The plain-text counterpart already present in `body`; it is removed
+   * from the generated HTML to avoid duplicating an HTML signature.
+   */
+  plain_signature: string | null;
+  /** `"above_quote"` or `"bottom"`, used when placing `html_signature`. */
+  signature_placement: string | null;
+  in_reply_to: string | null;
+  references: string | null;
+  attachments: Array<OutgoingAttachment>;
+  original_message_id: number | null;
+  is_forward: boolean | null;
+  /**
+   * Assigned by the backend before a send is queued or submitted, so
+   * retries and the synced Sent copy retain one stable RFC 5322 identity.
+   */
+  message_id: string | null;
+};

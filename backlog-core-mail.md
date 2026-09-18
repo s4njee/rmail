@@ -135,13 +135,13 @@ a regression test; the protocol ones need the fake-server harness from C3.2.
 
 ### C0.7 The recipient gets what you typed
 
-- [ ] Build the HTML part at send time from the current body (escaped, linkified) plus signature
+- [x] Build the HTML part at send time from the current body (escaped, linkified) plus signature
       and quote — or send `text/plain` only when there is no HTML content. Never send an HTML part
       built at compose-open time.
-- [ ] HTML-escape quoted text before inserting it into the HTML part (`compose.ts:244`).
-- [ ] Set a `Message-ID` (right-hand side from the sending domain) and store it so the sent copy
+- [x] HTML-escape quoted text before inserting it into the HTML part (`compose.ts:244`).
+- [x] Set a `Message-ID` (right-hand side from the sending domain) and store it so the sent copy
       threads with replies.
-- [ ] Enter in Subject moves focus to the body; ⌘/Ctrl+Enter sends; Esc or a backdrop click on a
+- [x] Enter in Subject moves focus to the body; ⌘/Ctrl+Enter sends; Esc or a backdrop click on a
       non-empty composer saves the draft and closes, never discards.
 
 ### C0.8 Send exactly once
@@ -389,9 +389,9 @@ Snooze, send later, bulk selection, and undo exist.
 
 ## Remaining
 
-C0.1–C0.6 are complete. The remaining work is the mail-safety and everyday-use queue:
+C0.1–C0.7 are complete. The remaining work is the mail-safety and everyday-use queue:
 
-- **C0.7–C0.10:** make sending exactly-once and threaded, finish
+- **C0.8–C0.10:** make sending exactly-once and threaded, finish
   Gmail/OAuth onboarding, improve threading and scale, enable notifications, and make drafts roam.
 - **C1:** close the provider and release-trust gaps: labels, quick filters, accessibility, signing,
   connection limits, and recovery drills.
