@@ -264,7 +264,9 @@ provider.
 - [ ] Add a compact density (single-line rows, ~36 px) next to the current 80 px rows.
 - [ ] Quick filters: Unread, Starred, Has attachment (the small version of T0.5).
 
-> **Blockers:** No external blocker identified.
+> **Blockers:** No external blocker identified. The current row component already carries an
+> account-colour rail, but it does not render the stored `flagged` or `has_attachments` markers;
+> those UI fields need to be added as part of this story.
 
 ### C1.7 New-mail notifications
 
