@@ -89,6 +89,24 @@ export function MessageRow(props: MessageRowProps) {
             )}
           </span>
           <span class="list-row__time tabular">
+            {props.row.flagged && (
+              <span
+                class="list-row__marker"
+                title="Starred"
+                aria-label="Starred"
+              >
+                ★
+              </span>
+            )}
+            {props.row.has_attachments && (
+              <span
+                class="list-row__marker"
+                title="Has attachment"
+                aria-label="Has attachment"
+              >
+                📎
+              </span>
+            )}
             {formatRelativeTime(props.row.received_at_ms)}
           </span>
         </span>

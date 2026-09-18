@@ -260,7 +260,7 @@ provider.
 
 - [ ] Keyset pagination with windowed fetch on scroll; remove the 500-row cap.
 - [ ] Optimistic row updates instead of re-querying 500 rows plus settings after every action.
-- [ ] Show star, attachment, and account-colour markers on rows.
+- [x] Show star, attachment, and account-colour markers on rows.
 - [ ] Add a compact density (single-line rows, ~36 px) next to the current 80 px rows.
 - [ ] Quick filters: Unread, Starred, Has attachment (the small version of T0.5).
 

@@ -119,6 +119,12 @@
   user-select: none;
 }
 
+.list-row__marker {
+  color: var(--color-text-muted);
+  font-size: var(--fs-12px);
+  margin-right: var(--space-4px);
+}
+
 .list-row__sender {
   font-size: var(--fs-14px);
   font-weight: 400;
