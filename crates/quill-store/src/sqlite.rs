@@ -259,7 +259,7 @@ fn rollup_folder_counts(folders: &mut [Folder]) {
 }
 
 /// Forward-only migrations, indexed by target `user_version`.
-const MIGRATIONS: [&str; 30] = [
+const MIGRATIONS: [&str; 31] = [
     r#"
 CREATE TABLE accounts (
   id INTEGER PRIMARY KEY,
@@ -627,6 +627,14 @@ SET imap_security = CASE WHEN tls = 1 THEN 'ssl' ELSE 'plain' END,
     smtp_port = CASE WHEN port = 465 THEN 465 ELSE 587 END,
     smtp_username = address
 WHERE smtp_server = '';
+"#,
+    // C1.5: hot relationship and server-identity lookups must not scan a
+    // mailbox-sized table on every sync, action replay, or message view.
+    r#"
+CREATE INDEX IF NOT EXISTS idx_recipients_message_id ON recipients(message_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_message_id ON attachments(message_id);
+CREATE INDEX IF NOT EXISTS idx_messages_account_folder_uid ON messages(account_id, folder, uid);
+CREATE INDEX IF NOT EXISTS idx_messages_message_id_header ON messages(message_id_header);
 "#,
 ];
 
