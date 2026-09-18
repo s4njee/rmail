@@ -318,7 +318,9 @@ provider.
 - [ ] An auth failure stops retrying and shows a "Reconnect" banner.
 - [ ] A startup failure shows a recovery screen with Retry and Open logs, not a blank window.
 
-> **Blockers:** No external blocker identified; fault-injection coverage is needed before claiming
+> **Blockers:** No external blocker identified. The current IPC connectivity update is global and
+> lacks account id, progress, and per-account last-sync time; add that contract before the sidebar
+> can truthfully show each requested state. Fault-injection coverage is also needed before claiming
 > recovery behavior complete.
 
 ---
