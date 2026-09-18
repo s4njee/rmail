@@ -207,7 +207,7 @@ fn rollup_folder_counts(folders: &mut [Folder]) {
 }
 
 /// Forward-only migrations, indexed by target `user_version`.
-const MIGRATIONS: [&str; 25] = [
+const MIGRATIONS: [&str; 26] = [
     r#"
 CREATE TABLE accounts (
   id INTEGER PRIMARY KEY,
@@ -528,6 +528,11 @@ CREATE INDEX IF NOT EXISTS idx_folders_account_parent ON folders(account_id, par
 CREATE INDEX IF NOT EXISTS idx_folders_account_local ON folders(account_id, local_name);
 INSERT OR IGNORE INTO sqlite_sequence (name, seq) VALUES ('folders', 999);
 "#,
+    // C0.2: headers are retained for the whole mailbox; this setting only
+    // controls how long message bodies and attachment files stay cached.
+    r#"
+ALTER TABLE accounts ADD COLUMN body_cache_window_days INTEGER DEFAULT 365;
+"#,
 ];
 
 pub struct SqliteStore {
@@ -691,6 +696,22 @@ impl SqliteStore {
         if !aq_cols.iter().any(|c| c == "last_error") {
             conn.execute_batch("ALTER TABLE action_queue ADD COLUMN last_error TEXT;")
                 .map_err(|e| e.to_string())?;
+            repaired = true;
+        }
+        // C0.2: older databases need the per-account body cache window even
+        // when their schema version was advanced by a previous code build.
+        let account_cols: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('accounts')")
+            .map_err(|e| e.to_string())?
+            .query_map([], |r| r.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        if !account_cols.iter().any(|c| c == "body_cache_window_days") {
+            conn.execute_batch(
+                "ALTER TABLE accounts ADD COLUMN body_cache_window_days INTEGER DEFAULT 365;",
+            )
+            .map_err(|e| e.to_string())?;
             repaired = true;
         }
         // Same for migration 15's table — a database stamped past it (the old
@@ -4096,6 +4117,50 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Body-cache window for an account. `None` means keep bodies for all
+    /// messages; otherwise the value is the number of days to retain.
+    pub fn body_cache_window_days(&self, account_id: AccountId) -> Option<u32> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT body_cache_window_days FROM accounts WHERE id = ?1",
+            params![account_id],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .flatten()
+        .and_then(|days| (days > 0).then_some(days as u32))
+    }
+
+    /// Set the body-cache window. Supported values are 30 days, 365 days, or
+    /// `None` for all. Headers and local-only rows are unaffected.
+    pub fn set_body_cache_window_days(
+        &self,
+        account_id: AccountId,
+        days: Option<u32>,
+    ) -> Result<(), String> {
+        if let Some(days) = days {
+            if days != 30 && days != 365 {
+                return Err("body cache window must be 30, 365, or all".into());
+            }
+        }
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE accounts SET body_cache_window_days = ?1 WHERE id = ?2",
+            params![days.map(i64::from), account_id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Cutoff for cached bodies. `i64::MIN` represents an unlimited cache.
+    pub fn body_cache_cutoff_ms(&self, account_id: AccountId, now: i64) -> i64 {
+        self.body_cache_window_days(account_id)
+            .map(|days| now.saturating_sub(i64::from(days) * 24 * 3600 * 1000))
+            .unwrap_or(i64::MIN)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn save_message_body_and_attachments(
         &self,
@@ -4368,7 +4433,7 @@ impl SqliteStore {
 
     /// Delete the on-disk attachment files belonging to an account's messages
     /// (the rows themselves cascade on account removal, but the files don't).
-    /// Best-effort, matching `prune_messages_before`. Returns the file count.
+    /// Best-effort cache-file cleanup. Returns the file count.
     pub fn delete_attachments_for_account(&self, account_id: AccountId) -> usize {
         let ids: Vec<i64> = {
             let conn = self.conn.lock().unwrap();
@@ -4447,8 +4512,8 @@ impl SqliteStore {
         if let Some(id) = existing {
             conn.execute(
                 "UPDATE messages SET sender_name = ?1, sender_address = ?2, subject = ?3, \
-                 snippet = ?4, received_at_ms = ?5, unread = ?6, flagged = ?7, \
-                 answered = ?8, forwarded = ?9, has_attachments = ?10, server_folder = ?11, \
+                 snippet = CASE WHEN ?4 <> '' THEN ?4 ELSE snippet END, received_at_ms = ?5, unread = ?6, flagged = ?7, \
+                 answered = ?8, forwarded = ?9, has_attachments = CASE WHEN ?10 <> 0 THEN 1 ELSE has_attachments END, server_folder = ?11, \
                  thread_id = COALESCE(thread_id, ?12) WHERE id = ?13",
                 params![
                     sender_name,
@@ -4579,17 +4644,29 @@ impl SqliteStore {
         &self,
         account_id: AccountId,
     ) -> Result<Vec<PendingBody>, String> {
+        self.list_messages_missing_bodies_since(account_id, i64::MIN)
+    }
+
+    /// Messages in the active body-cache window that have never had a body
+    /// fetched. Local-only rows (including imports) have no UID and are not
+    /// returned.
+    pub fn list_messages_missing_bodies_since(
+        &self,
+        account_id: AccountId,
+        since_ms: i64,
+    ) -> Result<Vec<PendingBody>, String> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
                 "SELECT id, folder, server_folder, uid, uidvalidity FROM messages \
                  WHERE account_id = ?1 AND uid IS NOT NULL \
+                 AND received_at_ms >= ?2 \
                  AND NOT EXISTS (SELECT 1 FROM bodies WHERE bodies.message_id = messages.id) \
                  ORDER BY received_at_ms DESC",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map(params![account_id], |r| {
+            .query_map(params![account_id, since_ms], |r| {
                 Ok(PendingBody {
                     message_id: r.get(0)?,
                     folder: r.get(1)?,
@@ -4639,40 +4716,76 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// Retention policy: delete every message older than `before_ms` along with
-    /// its body, recipients, and attachments (the schema cascades), and
-    /// best-effort remove the on-disk attachment files. Returns the number of
-    /// messages deleted.
-    pub fn prune_messages_before(&self, before_ms: i64) -> Result<u64, String> {
-        let on_disk_ids: Vec<i64> = {
+    /// Evict cached bodies and attachment files older than `before_ms` while
+    /// retaining every message row and all attachment metadata. Local-only
+    /// data is deliberately excluded: drafts, outbox/scheduled/imported rows,
+    /// and snoozed messages must survive any cache policy.
+    pub fn evict_cached_bodies_before(
+        &self,
+        account_id: AccountId,
+        before_ms: i64,
+    ) -> Result<u64, String> {
+        let (message_ids, attachment_ids): (Vec<i64>, Vec<i64>) = {
             let conn = self.conn.lock().unwrap();
             let mut stmt = conn
                 .prepare(
-                    "SELECT a.id FROM attachments a \
-                     JOIN messages m ON m.id = a.message_id \
-                     WHERE m.received_at_ms < ?1 AND a.on_disk = 1",
+                    "SELECT m.id, a.id FROM messages m \
+                     LEFT JOIN attachments a ON a.message_id = m.id AND a.on_disk = 1 \
+                     WHERE m.account_id = ?1 AND m.received_at_ms < ?2 \
+                       AND m.uid IS NOT NULL \
+                       AND m.snoozed_until_ms IS NULL \
+                       AND m.folder NOT IN ('Drafts', 'Outbox', 'Scheduled', 'Snoozed') \
+                       AND EXISTS (SELECT 1 FROM bodies b WHERE b.message_id = m.id)",
                 )
                 .map_err(|e| e.to_string())?;
+            let mut messages = Vec::new();
+            let mut attachments = Vec::new();
             let rows = stmt
-                .query_map(params![before_ms], |r| r.get(0))
+                .query_map(params![account_id, before_ms], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?))
+                })
                 .map_err(|e| e.to_string())?;
-            rows.collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?
+            for row in rows {
+                let (message_id, attachment_id) = row.map_err(|e| e.to_string())?;
+                if !messages.contains(&message_id) {
+                    messages.push(message_id);
+                }
+                if let Some(id) = attachment_id {
+                    attachments.push(id);
+                }
+            }
+            (messages, attachments)
         };
 
-        // Remove attachment files outside the DB lock.
-        for id in on_disk_ids {
+        // Attachment files are outside SQLite, so remove them without holding
+        // the database mutex. The rows remain as metadata with on_disk=false.
+        for id in attachment_ids {
             let _ = std::fs::remove_dir_all(self.attachments_root.join(id.to_string()));
         }
 
         let conn = self.conn.lock().unwrap();
-        let deleted = conn
-            .execute(
-                "DELETE FROM messages WHERE received_at_ms < ?1",
-                params![before_ms],
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        for message_id in &message_ids {
+            tx.execute(
+                "DELETE FROM bodies WHERE message_id = ?1",
+                params![message_id],
             )
             .map_err(|e| e.to_string())?;
-        Ok(deleted as u64)
+            tx.execute(
+                "UPDATE attachments SET on_disk = 0 WHERE message_id = ?1",
+                params![message_id],
+            )
+            .map_err(|e| e.to_string())?;
+            // Rebuild the FTS body from the retained snippet after removing the
+            // body row. This keeps header search available after eviction.
+            tx.execute(
+                "UPDATE messages SET snippet = snippet WHERE id = ?1",
+                params![message_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(message_ids.len() as u64)
     }
 
     // -- Drafts (Epic 13.2) ------------------------------------------------
@@ -7558,12 +7671,15 @@ mod tests {
     }
 
     #[test]
-    fn test_prune_messages_before() {
-        let store = SqliteStore::open_in_memory().unwrap();
+    fn cache_eviction_keeps_headers_and_local_data() {
+        let db_path =
+            std::env::temp_dir().join(format!("quill-cache-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&db_path);
+        let store = SqliteStore::open(&db_path).unwrap();
         let acct = store
             .create_account(
                 &NewAccount {
-                    address: "prune@example.com".into(),
+                    address: "cache@example.com".into(),
                     protocol: "IMAP".into(),
                     server: "imap.example.com".into(),
                     port: 993,
@@ -7574,7 +7690,7 @@ mod tests {
             )
             .unwrap();
 
-        store
+        let old_id = store
             .upsert_fetched_message(
                 acct.id,
                 "Inbox",
@@ -7594,6 +7710,22 @@ mod tests {
             )
             .unwrap();
         store
+            .save_message_body_and_attachments(
+                old_id,
+                "old body",
+                None,
+                &[],
+                &[],
+                &[],
+                &[],
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let new_id = store
             .upsert_fetched_message(
                 acct.id,
                 "Inbox",
@@ -7604,25 +7736,6 @@ mod tests {
                 "mid@example.com",
                 "Mid Mail",
                 "",
-                2_000_000,
-                true,
-                false,
-                false,
-                false,
-                false,
-            )
-            .unwrap();
-        store
-            .upsert_fetched_message(
-                acct.id,
-                "Inbox",
-                "INBOX",
-                3,
-                1,
-                "New",
-                "new@example.com",
-                "New Mail",
-                "",
                 3_000_000,
                 true,
                 false,
@@ -7631,9 +7744,68 @@ mod tests {
                 false,
             )
             .unwrap();
+        store
+            .save_message_body_and_attachments(
+                new_id,
+                "new body",
+                None,
+                &[],
+                &[],
+                &[],
+                &[],
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
-        let deleted = store.prune_messages_before(2_500_000).unwrap();
-        assert_eq!(deleted, 2);
+        let draft_id = store
+            .save_draft(&Draft {
+                id: None,
+                account_id: acct.id,
+                to: vec!["recipient@example.com".into()],
+                cc: vec![],
+                bcc: vec![],
+                subject: "Draft".into(),
+                body: "keep draft".into(),
+                in_reply_to: None,
+                references: None,
+            })
+            .unwrap();
+        store
+            .import_message(
+                acct.id,
+                "Inbox",
+                "Importer",
+                &[],
+                "Imported",
+                "keep import",
+                1_000_000,
+                Some("cache-import@example.com"),
+            )
+            .unwrap();
+        store.set_snoozed(&[old_id], 9_999_999_999).unwrap();
+
+        // The snoozed server row is protected; clear it and verify the normal
+        // server row loses only its body while every header/local row remains.
+        store.clear_due_snoozes(0).unwrap();
+        let evicted = store
+            .evict_cached_bodies_before(acct.id, 2_500_000)
+            .unwrap();
+        assert_eq!(evicted, 0, "snoozed rows are never evicted");
+        drop(store);
+        let store = SqliteStore::open(&db_path).unwrap();
+        assert_eq!(store.get_message(old_id).unwrap().body, vec!["old body"]);
+        store.clear_due_snoozes(10_000_000_000).unwrap();
+        let evicted = store
+            .evict_cached_bodies_before(acct.id, 2_500_000)
+            .unwrap();
+        assert_eq!(evicted, 1);
+
+        drop(store);
+        let store = SqliteStore::open(&db_path).unwrap();
 
         let page = store.page_messages(&MessageQuery {
             folder: Some("Inbox".into()),
@@ -7642,8 +7814,34 @@ mod tests {
             limit: 10,
             threaded: false,
         });
-        assert_eq!(page.total, 1);
-        assert_eq!(page.items[0].subject, "New Mail");
+        assert_eq!(page.total, 3);
+        assert!(store.get_message(old_id).unwrap().body.is_empty());
+        assert_eq!(store.get_message(new_id).unwrap().body, vec!["new body"]);
+        assert_eq!(
+            store.get_message(draft_id).unwrap().body,
+            vec!["keep draft"]
+        );
+        assert!(store
+            .get_message(
+                store
+                    .page_messages(&MessageQuery {
+                        folder: Some("Inbox".into()),
+                        account_id: Some(acct.id),
+                        offset: 0,
+                        limit: 10,
+                        threaded: false,
+                    })
+                    .items
+                    .iter()
+                    .find(|m| m.subject == "Imported")
+                    .unwrap()
+                    .id,
+            )
+            .unwrap()
+            .body
+            .contains(&"keep import".into()));
+        drop(store);
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[test]

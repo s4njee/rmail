@@ -43,12 +43,6 @@ impl<T: futures::io::AsyncRead + futures::io::AsyncWrite + Unpin + Send + std::f
 
 pub type Stream = Box<dyn IoStream>;
 
-/// Retention window: keep only this many days of mail. Anything older is
-/// pruned after each sync and skipped by the initial refetch (a busy Gmail
-/// account can hold a million+ messages otherwise).
-const RETAIN_DAYS: i64 = 7;
-const RETAIN_DAYS_MS: i64 = RETAIN_DAYS * 24 * 3600 * 1000;
-
 /// SASL XOAUTH2 authenticator for `async_imap` — produces
 /// `user=…\x01auth=Bearer …\x01\x01`; async-imap base64-encodes it.
 struct Xoauth2Authenticator {
@@ -178,10 +172,9 @@ fn write_envelope(
         row.forwarded,
         row.has_attachments,
     )?;
-    // The full body came down with the envelope — persist it (plus its
-    // recipients/attachment metadata) so the reading pane, search index, and
-    // attachment icons have it without a second fetch. Bodies land together
-    // with the row that lists them.
+    // When a body was requested with this fetch, persist it (plus its
+    // recipients/attachment metadata). Header-only fetches still create or
+    // refresh the row without disturbing a body already cached locally.
     if let Some(p) = parsed {
         store.save_message_body_and_attachments(
             message_id,
@@ -348,31 +341,6 @@ fn fallback_folder(server_name: &str, kind: FolderKind) -> DiscoveredFolder {
     }
 }
 
-/// UID range for a full refetch, bounded to the retention window via
-/// `UID SEARCH SINCE`. `None` means the search succeeded but found nothing in
-/// the window (the folder was already wiped — fetch nothing). A search failure
-/// falls back to the full range so we never miss mail.
-async fn bounded_fetch_range(session: &mut async_imap::Session<Stream>) -> Option<String> {
-    let since = (chrono::Utc::now() - chrono::Duration::days(RETAIN_DAYS))
-        .format("%d-%b-%Y")
-        .to_string();
-    match session.uid_search(&format!("SINCE {since}")).await {
-        Ok(uids) if uids.is_empty() => None,
-        Ok(uids) => {
-            let mut sorted: Vec<u32> = uids.into_iter().collect();
-            sorted.sort_unstable();
-            Some(
-                sorted
-                    .iter()
-                    .map(|u| u.to_string())
-                    .collect::<Vec<_>>()
-                    .join(","),
-            )
-        }
-        Err(_) => Some("1:*".to_string()),
-    }
-}
-
 /// Sync every tracked folder for one account. Replays pending offline actions
 /// first, then incrementally synchronizes each folder.
 ///
@@ -480,9 +448,11 @@ pub async fn sync_account(
         }
     }
 
-    // Retention: keep only the last RETAIN_DAYS of mail.
-    if let Err(e) = store.prune_messages_before(now_ms() - RETAIN_DAYS_MS) {
-        log::warn!("prune account {}: {e}", account.id);
+    // Headers are retained for the entire mailbox. Only cached bodies and
+    // attachment files are evicted according to the account's cache window.
+    let cutoff = store.body_cache_cutoff_ms(account.id, now_ms());
+    if let Err(e) = store.evict_cached_bodies_before(account.id, cutoff) {
+        log::warn!("evict cached bodies for account {}: {e}", account.id);
     }
 
     let _ = session.logout().await;
@@ -521,32 +491,124 @@ pub async fn sync_folder(
         // reconciled against the refetched set below; no upfront wipe, so an
         // interrupted refetch leaves the previous rows in place.
         if mailbox.exists > 0 {
-            // Bound the refetch to the retention window so a huge mailbox
-            // isn't downloaded in full (older rows are pruned anyway).
-            match bounded_fetch_range(session).await {
-                Some(range) => {
-                    // 1. Reconcile flags and collect the server UID set across
-                    //    the whole window — a light (flags-only) fetch.
-                    let mut server_uids = Vec::new();
-                    match session.uid_fetch(&range, "(UID FLAGS)").await {
+            // Reconcile the complete mailbox using headers first. Body bytes
+            // are fetched only for new/missing messages inside the cache
+            // window, so old mail remains immediately usable as headers and is
+            // fetched on demand when opened.
+            let existing: HashSet<u32> = store
+                .folder_uids(account.id, local_folder)
+                .into_iter()
+                .collect();
+            let missing: HashSet<u32> = store
+                .list_messages_missing_bodies_since(
+                    account.id,
+                    store.body_cache_cutoff_ms(account.id, now_ms()),
+                )?
+                .into_iter()
+                .filter(|p| p.folder == local_folder)
+                .map(|p| p.uid)
+                .collect();
+            let cutoff = store.body_cache_cutoff_ms(account.id, now_ms());
+            let mut server_uids = Vec::new();
+            let mut body_uids = missing;
+            // SEARCH gives us a descending UID order so the first header
+            // batches are the newest mail. A search failure falls back to the
+            // standard full range and still retains every header.
+            let mut all_uids: Vec<u32> = session
+                .uid_search("ALL")
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            all_uids.sort_unstable_by(|a, b| b.cmp(a));
+            let header_ranges: Vec<String> = if all_uids.is_empty() {
+                vec!["1:*".to_string()]
+            } else {
+                all_uids
+                    .chunks(200)
+                    .map(|chunk| {
+                        chunk
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .collect()
+            };
+            for range in header_ranges {
+                match session
+                    .uid_fetch(&range, "(UID FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE)")
+                    .await
+                {
+                    Ok(mut fetches) => loop {
+                        match fetches.try_next().await {
+                            Ok(Some(fetch)) => {
+                                if let Some(uid) = fetch.uid {
+                                    server_uids.push(uid);
+                                    if !existing.contains(&uid)
+                                        && (cutoff == i64::MIN
+                                            || fetch
+                                                .internal_date()
+                                                .map(|d| d.timestamp_millis() >= cutoff)
+                                                .unwrap_or(true))
+                                    {
+                                        body_uids.insert(uid);
+                                    }
+                                    if write_envelope(
+                                        store,
+                                        account,
+                                        local_folder,
+                                        server_folder,
+                                        uidvalidity,
+                                        &fetch,
+                                        progress,
+                                    )?
+                                    .is_some()
+                                    {
+                                        fetched_count += 1;
+                                    }
+                                }
+                            }
+                            Ok(None) => break,
+                            Err(_) => {
+                                complete = false;
+                                break;
+                            }
+                        }
+                    },
+                    Err(_) => complete = false,
+                }
+                if !complete {
+                    break;
+                }
+            }
+
+            if complete && !body_uids.is_empty() {
+                let body_query = "(UID FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE BODY.PEEK[])";
+                let mut body_uids: Vec<u32> = body_uids.into_iter().collect();
+                body_uids.sort_unstable_by(|a, b| b.cmp(a));
+                for chunk in body_uids.chunks(200) {
+                    let body_range = chunk
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    match session.uid_fetch(&body_range, body_query).await {
                         Ok(mut fetches) => loop {
                             match fetches.try_next().await {
                                 Ok(Some(fetch)) => {
-                                    if let Some(uid) = fetch.uid {
-                                        server_uids.push(uid);
-                                        let unread =
-                                            !fetch.flags().any(|f| matches!(f, Flag::Seen));
-                                        let flagged =
-                                            fetch.flags().any(|f| matches!(f, Flag::Flagged));
-                                        let _ = store.update_message_flags_by_uid(
-                                            account.id,
-                                            local_folder,
-                                            uid,
-                                            unread,
-                                            flagged,
-                                            false,
-                                            false,
-                                        );
+                                    if write_envelope(
+                                        store,
+                                        account,
+                                        local_folder,
+                                        server_folder,
+                                        uidvalidity,
+                                        &fetch,
+                                        progress,
+                                    )?
+                                    .is_some()
+                                    {
+                                        fetched_count += 1;
                                     }
                                 }
                                 Ok(None) => break,
@@ -558,64 +620,16 @@ pub async fn sync_folder(
                         },
                         Err(_) => complete = false,
                     }
-
-                    // 2. Fetch bodies only for messages we don't already have.
-                    //    Re-downloading every existing body on each catch-up
-                    //    cycle is what stalled a busy Inbox before reaching new
-                    //    mail (and blocked the store lock the whole time).
-                    if complete {
-                        let existing = store.folder_uids(account.id, local_folder);
-                        let new_uids: Vec<u32> = server_uids
-                            .iter()
-                            .copied()
-                            .filter(|u| !existing.contains(u))
-                            .collect();
-                        if !new_uids.is_empty() {
-                            let new_range = new_uids
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect::<Vec<_>>()
-                                .join(",");
-                            let body_query = "(UID FLAGS INTERNALDATE ENVELOPE BODY.PEEK[])";
-                            match session.uid_fetch(&new_range, body_query).await {
-                                Ok(mut fetches) => loop {
-                                    match fetches.try_next().await {
-                                        Ok(Some(fetch)) => {
-                                            if let Some(_uid) = write_envelope(
-                                                store,
-                                                account,
-                                                local_folder,
-                                                server_folder,
-                                                uidvalidity,
-                                                &fetch,
-                                                progress,
-                                            )? {
-                                                fetched_count += 1;
-                                            }
-                                        }
-                                        Ok(None) => break,
-                                        Err(_) => {
-                                            complete = false;
-                                            break;
-                                        }
-                                    }
-                                },
-                                Err(_) => complete = false,
-                            }
-                        }
-                    }
-
-                    // Only prune locally-stored messages when the whole refetch
-                    // completed cleanly; on a mid-stream error keep what we have.
-                    if complete {
-                        store.delete_messages_not_in(account.id, local_folder, &server_uids)?;
+                    if !complete {
+                        break;
                     }
                 }
-                None => {
-                    // The search found nothing in the retention window: the
-                    // folder is effectively empty, so drop stale local rows.
-                    store.delete_messages_not_in(account.id, local_folder, &[])?;
-                }
+            }
+
+            // Only reconcile expunges when the complete header stream arrived;
+            // a partial stream must never delete unseen rows.
+            if complete {
+                store.delete_messages_not_in(account.id, local_folder, &server_uids)?;
             }
         } else {
             store.delete_messages_not_in(account.id, local_folder, &[])?;
@@ -626,7 +640,7 @@ pub async fn sync_folder(
         if uidnext > last_next as u32 && last_next > 0 {
             let start = last_next as u32;
             let range = format!("{start}:*");
-            let query = "(UID FLAGS INTERNALDATE ENVELOPE BODY.PEEK[])";
+            let query = "(UID FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE BODY.PEEK[])";
             match session.uid_fetch(&range, query).await {
                 Ok(mut fetches) => loop {
                     match fetches.try_next().await {
@@ -833,17 +847,19 @@ async fn fetch_body_chunked(
     Ok(body)
 }
 
-/// Backfill stored bodies — and therefore real snippets — for messages that
-/// were synced before the sync fetched full bodies. Runs once per account at
-/// startup; idempotent (only messages with no stored body are fetched, so an
-/// interrupted run resumes where it left off).
+/// Backfill stored bodies — and therefore real snippets — for recent messages
+/// that were synced before the sync fetched full bodies. Runs once per account
+/// at startup; older bodies remain on-demand and an interrupted run resumes.
 pub async fn backfill_account_bodies(
     store: &SqliteStore,
     account: &Account,
     credential: &Credential,
     progress: &Option<SyncProgress>,
 ) -> Result<usize, String> {
-    let pending = store.list_messages_missing_bodies(account.id)?;
+    let pending = store.list_messages_missing_bodies_since(
+        account.id,
+        store.body_cache_cutoff_ms(account.id, now_ms()),
+    )?;
     if pending.is_empty() {
         return Ok(0);
     }
@@ -879,7 +895,7 @@ pub async fn backfill_account_bodies(
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join(",");
-        let query = "(UID FLAGS INTERNALDATE ENVELOPE BODY.PEEK[])";
+        let query = "(UID FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE BODY.PEEK[])";
         let mut fetches = session
             .uid_fetch(range, &query)
             .await
@@ -1308,9 +1324,8 @@ fn envelope_row(
         }
         _ => false,
     });
-    // The sync now fetches the full message (`BODY.PEEK[]`), so the snippet
-    // comes from the parsed plain-text body — not a raw MIME/HTML fragment —
-    // and the parsed body itself is persisted in `write_envelope`.
+    // Body fetches use the parsed plain-text body; header-only fetches leave
+    // the snippet empty so the store preserves any previously cached snippet.
     let snippet = match &parsed {
         Some(p) => snippet_from_bodies(&p.plain_body, p.html_body.as_deref()),
         None => fetch

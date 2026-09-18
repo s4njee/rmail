@@ -23,11 +23,6 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// Retention window: keep only this many days of mail. Mirrors the sync
-/// engine's own constant so the driver can prune at startup too.
-const RETAIN_DAYS: i64 = 7;
-const RETAIN_DAYS_MS: i64 = RETAIN_DAYS * 24 * 3600 * 1000;
-
 /// Start the per-account sync and push loops. Call once at startup.
 pub fn spawn_sync_loops(app: AppHandle) {
     let runtime = tokio::runtime::Runtime::new().expect("sync runtime");
@@ -36,23 +31,22 @@ pub fn spawn_sync_loops(app: AppHandle) {
             let active_idle_tasks: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(HashSet::new()));
             let mut last_sync: HashMap<u32, u64> = HashMap::new();
 
-            // Retention: shrink a store that already holds more than the window
-            // before the first sync finishes (a busy Gmail account can hold a
-            // million+ rows).
-            let cutoff = now_ms() - RETAIN_DAYS_MS;
-            let deleted = app
-                .state::<SqliteStore>()
-                .prune_messages_before(cutoff)
-                .unwrap_or(0);
-            if deleted > 0 {
-                log::info!("pruned {deleted} messages older than {RETAIN_DAYS} days");
+            // Evict only cached bodies/files at startup. Header rows and all
+            // local-only data remain available regardless of the cache window.
+            for account in app.state::<SqliteStore>().accounts() {
+                let cutoff = app
+                    .state::<SqliteStore>()
+                    .body_cache_cutoff_ms(account.id, now_ms());
+                if let Err(e) = app
+                    .state::<SqliteStore>()
+                    .evict_cached_bodies_before(account.id, cutoff)
+                {
+                    log::warn!("cache eviction for account {} failed: {e}", account.id);
+                }
             }
 
-            // Backfill: rows synced before the sync fetched full bodies have no
-            // stored body, so their snippets are raw MIME/HTML fragments. Fetch
-            // and parse them once so every previously-downloaded message gets a
-            // real snippet and body. Idempotent — only missing bodies are
-            // fetched, so an interrupted run resumes next launch.
+            // Backfill recent rows synced before the header/body split. Older
+            // bodies stay uncached and are fetched on demand when opened.
             let accounts = app.state::<SqliteStore>().accounts();
             for account in accounts {
                 if account.sync_mode == "manual" {
