@@ -310,8 +310,10 @@ provider.
 - [x] `mailto:` links open the composer.
 - [ ] A body-fetch or auth failure shows an error with Retry, not an empty body.
 
-> **Blockers:** The render corpus requires rights-cleared message fixtures, reference screenshots,
-> and a deterministic visual-CI environment. The sanitizer and failure UX can proceed locally.
+> **Blockers:** The current sanitizer strips the `<style>`, `class`, and layout attributes this
+> story needs, so its allowlist/CSS `url()` policy must be redesigned before rendering can be
+> compared safely. The render corpus also requires rights-cleared message fixtures, reference
+> screenshots, and a deterministic visual-CI environment.
 
 ### C1.11 Errors a person can act on
 
