@@ -24,7 +24,7 @@ use quill_store::sanitize::snippet_from_bodies;
 use quill_store::sqlite::SqliteStore;
 use quill_store::types::{
     Account, ActionType, AttachmentData, DiscoveredMailbox, FolderKind, MessageId,
-    MessageProgressUpdate, MessageRow, OutgoingMessage, Recipient,
+    MessageProgressUpdate, MessageRow, Recipient,
 };
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
@@ -987,7 +987,7 @@ pub async fn replay_pending_actions(
     store: &SqliteStore,
     account: &Account,
     session: &mut async_imap::Session<Stream>,
-    credential: &Credential,
+    _credential: &Credential,
 ) -> Result<(), String> {
     let actions = store.peek_pending_actions(account.id)?;
     let mut current_folder = String::new();
@@ -1254,15 +1254,9 @@ pub async fn replay_pending_actions(
                         Ok(())
                     }
                 }
-                ActionType::Send => {
-                    if let Some(ref payload) = action.payload {
-                        let outgoing = serde_json::from_str::<OutgoingMessage>(payload)
-                            .map_err(|e| format!("invalid queued send payload: {e}"))?;
-                        crate::smtp::send_email(account, &outgoing, credential).await
-                    } else {
-                        Err("queued send is missing its payload".into())
-                    }
-                }
+                ActionType::Send => Err(
+                    "legacy action-queue sends are never replayed; use the durable Outbox".into(),
+                ),
                 ActionType::CreateFolder => match session.create(&action.folder).await {
                     Ok(()) => {
                         let _ = session.subscribe(&action.folder).await;

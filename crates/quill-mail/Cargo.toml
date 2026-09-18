@@ -12,7 +12,7 @@ async-native-tls = "0.5"
 chrono = "0.4"
 mail-parser = "0.9"
 base64 = "0.22"
-lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "rustls-tls"] }
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls"] }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "net", "io-util", "macros"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 futures = "0.3"

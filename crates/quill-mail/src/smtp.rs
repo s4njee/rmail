@@ -9,7 +9,7 @@ use lettre::message::header::{ContentType, InReplyTo, References};
 use lettre::message::{MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 use lettre::transport::smtp::client::{Tls, TlsParameters};
-use lettre::{Message, SmtpTransport, Transport};
+use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use quill_store::types::{Account, OutgoingMessage};
 
 use crate::auth::Credential;
@@ -275,18 +275,18 @@ pub async fn send_email(
             let creds = Credentials::new(account.address.clone(), password.clone());
             let smtp_host = smtp_host_for(&account.server);
             let mailer = if account.tls {
-                SmtpTransport::relay(&smtp_host)
+                AsyncSmtpTransport::<Tokio1Executor>::relay(&smtp_host)
                     .map_err(|e| format!("smtp relay {smtp_host}: {e}"))?
                     .port(465)
             } else {
-                SmtpTransport::starttls_relay(&smtp_host)
+                AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&smtp_host)
                     .map_err(|e| format!("smtp relay {smtp_host}: {e}"))?
                     .port(587)
             }
             .credentials(creds)
             .build();
 
-            mailer.send(&message).map_err(|e| e.to_string())?;
+            mailer.send(message).await.map_err(|e| e.to_string())?;
             Ok(())
         }
         Credential::OAuth { address, provider } => {
@@ -294,7 +294,7 @@ pub async fn send_email(
             // OAuth accounts store the IMAP host in `account.server`; submission
             // goes to the provider's dedicated SMTP host on 587 (STARTTLS).
             let smtp_host = provider.default_smtp_host();
-            let mailer = SmtpTransport::builder_dangerous(smtp_host)
+            let mailer = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(smtp_host)
                 .port(587)
                 .tls(Tls::Required(
                     TlsParameters::new(smtp_host.to_string())
@@ -304,16 +304,81 @@ pub async fn send_email(
                 .credentials(Credentials::new(address.clone(), access_token))
                 .build();
 
-            mailer.send(&message).map_err(|e| e.to_string())?;
+            mailer.send(message).await.map_err(|e| e.to_string())?;
             Ok(())
         }
     }
+}
+
+/// SMTP responses in the 5xx class are permanent until the user edits the
+/// message/account. Lettre's transport error is intentionally stringified at
+/// this boundary, so recognize an RFC response code without treating a random
+/// digit sequence as permanent.
+pub fn is_permanent_smtp_failure(error: &str) -> bool {
+    let bytes = error.as_bytes();
+    bytes.windows(3).enumerate().any(|(index, code)| {
+        code[0] == b'5'
+            && code[1].is_ascii_digit()
+            && code[2].is_ascii_digit()
+            && (index == 0 || !bytes[index - 1].is_ascii_digit())
+            && (index + 3 == bytes.len() || !bytes[index + 3].is_ascii_digit())
+    })
+}
+
+/// Gmail and Microsoft 365 create their own Sent copy. Other providers need
+/// an explicit IMAP APPEND after SMTP accepts the message.
+pub fn provider_auto_saves_sent_copy(account: &Account) -> bool {
+    let address = account.address.to_ascii_lowercase();
+    let server = account.server.to_ascii_lowercase();
+    address.ends_with("@gmail.com")
+        || address.ends_with("@googlemail.com")
+        || address.ends_with("@outlook.com")
+        || address.ends_with("@hotmail.com")
+        || address.ends_with("@live.com")
+        || server.contains("gmail")
+        || server.contains("office365")
+        || server.contains("outlook")
+}
+
+/// Append the exact submitted RFC 5322 message with `\\Seen` when the
+/// provider does not maintain Sent automatically. SMTP success remains final
+/// if APPEND fails: retrying SMTP after an unknown append result could deliver
+/// a duplicate.
+pub async fn append_sent_copy(
+    account: &Account,
+    credential: &Credential,
+    outgoing: &OutgoingMessage,
+    sent_folder: &str,
+) -> Result<(), String> {
+    if provider_auto_saves_sent_copy(account) {
+        return Ok(());
+    }
+    let raw = build_message(account, outgoing)
+        .map_err(|e| format!("build sent copy: {e}"))?
+        .formatted();
+    let mut session = crate::sync::connect(account, credential).await?;
+    session
+        .append(sent_folder, Some("(\\Seen)"), None, raw)
+        .await
+        .map_err(|e| format!("append sent copy: {e}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use quill_store::types::OutgoingAttachment;
+
+    #[test]
+    fn classifies_only_smtp_5xx_as_permanent() {
+        assert!(is_permanent_smtp_failure(
+            "smtp error: 550 mailbox unavailable"
+        ));
+        assert!(is_permanent_smtp_failure("554 invalid recipient"));
+        assert!(!is_permanent_smtp_failure(
+            "smtp error: 421 service unavailable"
+        ));
+        assert!(!is_permanent_smtp_failure("retry 5000 milliseconds"));
+    }
 
     #[test]
     fn test_build_message_with_threading_and_attachments() {

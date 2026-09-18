@@ -146,16 +146,16 @@ a regression test; the protocol ones need the fake-server harness from C3.2.
 
 ### C0.8 Send exactly once
 
-- [ ] Durable outbox state machine: `queued → sending (leased) → sent | failed`, with one sender
+- [x] Durable outbox state machine: `queued → sending (leased) → sent | failed`, with one sender
       task per account; mark `sending` before SMTP and reconcile on restart instead of blindly
       re-sending.
-- [ ] Remove the race between `sync_account_now` and the periodic loop both replaying sends.
-- [ ] Permanent SMTP failures (5xx) → `failed` with Edit / Retry / Discard in the Outbox.
-- [ ] Undo-send is an outbox row with `send_after`, not a JS timer; quitting during the countdown
+- [x] Remove the race between `sync_account_now` and the periodic loop both replaying sends.
+- [x] Permanent SMTP failures (5xx) → `failed` with Edit / Retry / Discard in the Outbox.
+- [x] Undo-send is an outbox row with `send_after`, not a JS timer; quitting during the countdown
       keeps the message (send on next launch, and say so).
-- [ ] `APPEND` the sent message to Sent for servers that don't auto-save (everything except Gmail
+- [x] `APPEND` the sent message to Sent for servers that don't auto-save (everything except Gmail
       and M365), with `\Seen`.
-- [ ] Switch to lettre's async transport.
+- [x] Switch to lettre's async transport.
 
 ### C0.9 Correct outgoing and connection settings
 
@@ -389,10 +389,10 @@ Snooze, send later, bulk selection, and undo exist.
 
 ## Remaining
 
-C0.1–C0.7 are complete. The remaining work is the mail-safety and everyday-use queue:
+C0.1–C0.8 are complete. The remaining work is the mail-safety and everyday-use queue:
 
-- **C0.8–C0.10:** make sending exactly-once and threaded, finish
-  Gmail/OAuth onboarding, improve threading and scale, enable notifications, and make drafts roam.
+- **C0.9–C0.10:** correct SMTP/IMAP connection settings, improve threading and scale, enable
+  notifications, and make drafts roam.
 - **C1:** close the provider and release-trust gaps: labels, quick filters, accessibility, signing,
   connection limits, and recovery drills.
 - **C2:** make the core loop fast and private: keyboard triage, all-mail offline search, tracker

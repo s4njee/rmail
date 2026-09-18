@@ -10,8 +10,10 @@ import {
   getSettings,
   latestDraft,
   loadAttachmentForForward,
+  cancelScheduled,
   saveDraft,
   scheduleSend,
+  sendOutboxNow,
   sendMessage,
 } from "./tauri";
 
@@ -57,6 +59,7 @@ export type ComposerDraft = {
 
 export type PendingSend = {
   id: string;
+  outboxId: number;
   outgoing: OutgoingMessage;
   draftSnapshot: {
     draft: ComposerDraft;
@@ -381,9 +384,10 @@ export async function persistDraft(): Promise<void> {
 async function executeSend(
   outgoing: OutgoingMessage,
   draftIdToRemove: number | null,
+  snapshot: string,
 ): Promise<void> {
   try {
-    await sendMessage(outgoing);
+    await sendMessage(outgoing, snapshot);
     if (draftIdToRemove != null) {
       await deleteMessage(draftIdToRemove);
     }
@@ -439,12 +443,19 @@ export async function sendComposer(): Promise<void> {
     const delaySec = Math.max(0, settings.undoSendDelaySec ?? 0);
 
     if (delaySec > 0) {
-      // Close composer UI immediately and start Undo countdown
+      // Persist first. The countdown is only a UI affordance: the Outbox row
+      // owns the send-after time, so quitting cannot lose a message.
+      const outboxId = await scheduleSend(
+        outgoing,
+        Date.now() + delaySec * 1000,
+        composerSnapshot(),
+      );
       closeComposer();
 
       const sendId = `send_${Date.now()}`;
       setPendingSend({
         id: sendId,
+        outboxId,
         outgoing,
         draftSnapshot,
         secondsRemaining: delaySec,
@@ -461,7 +472,9 @@ export async function sendComposer(): Promise<void> {
         if (ps.secondsRemaining <= 1) {
           clearInterval(pendingSendInterval);
           setPendingSend(null);
-          void executeSend(ps.outgoing, ps.draftSnapshot.draftId);
+          // This asks the durable worker to check a row that is already due;
+          // it never sends from the browser timer itself.
+          void sendOutboxNow(ps.outboxId);
         } else {
           setPendingSend({
             ...ps,
@@ -471,7 +484,7 @@ export async function sendComposer(): Promise<void> {
       }, 1000);
     } else {
       closeComposer();
-      await executeSend(outgoing, currentDraftId);
+      await executeSend(outgoing, currentDraftId, composerSnapshot());
     }
   } catch (error) {
     setSendError(String(error));
@@ -620,9 +633,15 @@ export async function scheduleComposer(sendAtMs: number): Promise<void> {
   }
 }
 
-export function undoPendingSend(): void {
+export async function undoPendingSend(): Promise<void> {
   const ps = pendingSend();
   if (!ps) return;
+  try {
+    await cancelScheduled(ps.outboxId);
+  } catch (error) {
+    setSendError(String(error));
+    return;
+  }
   if (pendingSendInterval) clearInterval(pendingSendInterval);
   setPendingSend(null);
 
@@ -634,12 +653,20 @@ export function undoPendingSend(): void {
   setOpen(true);
 }
 
-export function sendPendingNow(): void {
+export async function sendPendingNow(): Promise<void> {
   const ps = pendingSend();
   if (!ps) return;
   if (pendingSendInterval) clearInterval(pendingSendInterval);
   setPendingSend(null);
-  void executeSend(ps.outgoing, ps.draftSnapshot.draftId);
+  try {
+    await sendOutboxNow(ps.outboxId);
+    if (ps.draftSnapshot.draftId != null) {
+      await deleteMessage(ps.draftSnapshot.draftId);
+    }
+    await refreshMail();
+  } catch (error) {
+    setSendError(String(error));
+  }
 }
 
 export async function discardComposer(): Promise<void> {

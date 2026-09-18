@@ -12,9 +12,15 @@ use quill_store::sqlite::SqliteStore;
 use quill_store::types::{Account, ConnectivityUpdate, MailChangedUpdate, StoreEvent};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
+
+/// A single SMTP worker per account. The database lease is the cross-trigger
+/// authority; this guard also prevents one account's due rows from being sent
+/// concurrently by manual refresh and the periodic housekeeping loop.
+static ACTIVE_OUTBOX_SENDERS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -44,6 +50,12 @@ pub fn spawn_sync_loops(app: AppHandle) {
                     log::warn!("cache eviction for account {} failed: {e}", account.id);
                 }
             }
+
+            // Send any already-due durable Outbox rows before potentially long
+            // body backfill work. This is what makes an Undo-send countdown
+            // survive quitting the app: the row, not a browser timer, wakes on
+            // the next launch.
+            flush_due_scheduled(&app).await;
 
             // Backfill recent rows synced before the header/body split. Older
             // bodies stay uncached and are fetched on demand when opened.
@@ -301,44 +313,101 @@ pub async fn sync_account_now(app: &AppHandle, account_id: u32) {
     }
 }
 
-/// P1.1: flush due send-later messages through the SMTP path (the durable
-/// Outbox). Runs on the housekeeping cadence; failures are kept for the next
-/// pass. Requires the app to be running — the Scheduled view states this.
+/// Flush all due Outbox rows. A scheduled send and an immediate send use this
+/// exact same path, so no JavaScript timer or IMAP replay can submit SMTP.
 pub async fn flush_due_scheduled(app: &AppHandle) {
-    let store = app.state::<SqliteStore>();
-    let due = store.due_scheduled(now_ms());
-    if due.is_empty() {
-        return;
-    }
-    for (id, account_id, _send_at, payload) in due {
-        let Some(account) = store.accounts().into_iter().find(|a| a.id == account_id) else {
-            let _ = store.cancel_scheduled(id);
-            continue;
-        };
-        let outgoing: Result<quill_store::types::OutgoingMessage, _> =
-            serde_json::from_str(&payload);
-        let Ok(outgoing) = outgoing else {
-            // A corrupt payload can never send — drop it rather than retry forever.
-            let _ = store.cancel_scheduled(id);
-            continue;
-        };
-        match quill_mail::auth::resolve_credential(&account) {
-            Ok(credential) => {
-                match quill_mail::smtp::send_email(&account, &outgoing, &credential).await {
-                    Ok(()) => {
-                        let _ = store.cancel_scheduled(id);
-                        // Account id, never the address (never-log-PII rule).
-                        log::info!("sent scheduled message {id} for account {}", account.id);
-                    }
-                    Err(e) => {
-                        // Keep the row; the next housekeeping pass retries.
-                        log::warn!("scheduled message {id} not sent yet: {e}");
-                    }
-                }
-            }
-            Err(e) => log::warn!("scheduled message {id}: no credential: {e}"),
+    let account_ids: Vec<u32> = app
+        .state::<SqliteStore>()
+        .accounts()
+        .into_iter()
+        .map(|account| account.id)
+        .collect();
+    for account_id in account_ids {
+        if let Err(error) = flush_outbox_for_account(app, account_id).await {
+            log::warn!("outbox account {account_id}: {error}");
         }
     }
+}
+
+/// Send due rows for one account through the sole durable Outbox lifecycle.
+/// A `sending` lease is written before SMTP. Restart reconciliation turns any
+/// unresolved lease into `failed`, deliberately requiring user review rather
+/// than resubmitting a message whose server outcome is unknown.
+pub async fn flush_outbox_for_account(app: &AppHandle, account_id: u32) -> Result<(), String> {
+    let active = ACTIVE_OUTBOX_SENDERS.get_or_init(|| Mutex::new(HashSet::new()));
+    {
+        let mut senders = active.lock().await;
+        if !senders.insert(account_id) {
+            return Ok(());
+        }
+    }
+
+    let result = async {
+        let store = app.state::<SqliteStore>();
+        let account = store
+            .accounts()
+            .into_iter()
+            .find(|account| account.id == account_id)
+            .ok_or("no such account")?;
+        let credential = quill_mail::auth::resolve_credential(&account)?;
+
+        loop {
+            let Some((id, payload)) = store.claim_next_outbox_send(account_id, now_ms())? else {
+                return Ok(());
+            };
+            let outgoing =
+                match serde_json::from_str::<quill_store::types::OutgoingMessage>(&payload) {
+                    Ok(outgoing) => outgoing,
+                    Err(error) => {
+                        store.record_outbox_failure(
+                            id,
+                            &format!("invalid Outbox payload: {error}"),
+                            true,
+                        )?;
+                        continue;
+                    }
+                };
+
+            match quill_mail::smtp::send_email(&account, &outgoing, &credential).await {
+                Ok(()) => {
+                    let sent_folder = store.sent_folder_name(account_id);
+                    if let Err(error) = quill_mail::smtp::append_sent_copy(
+                        &account,
+                        &credential,
+                        &outgoing,
+                        &sent_folder,
+                    )
+                    .await
+                    {
+                        // SMTP was already accepted, so the state remains sent;
+                        // another submission would risk a duplicate delivery.
+                        log::warn!("append Sent copy for Outbox row {id}: {error}");
+                    }
+                    store.mark_outbox_sent(id)?;
+                    log::info!("sent Outbox row {id} for account {account_id}");
+                }
+                Err(error) => {
+                    let permanent = quill_mail::smtp::is_permanent_smtp_failure(&error);
+                    store.record_outbox_failure(id, &error, permanent)?;
+                    if permanent {
+                        return Err(format!("Outbox row {id} failed permanently: {error}"));
+                    }
+                    // Backoff is stored in send_at_ms. Stop this account until
+                    // the next due time instead of hammering a dead transport.
+                    return Ok(());
+                }
+            }
+        }
+    }
+    .await;
+
+    ACTIVE_OUTBOX_SENDERS
+        .get()
+        .expect("outbox sender lock initialized")
+        .lock()
+        .await
+        .remove(&account_id);
+    result
 }
 
 async fn sync_one(app: &AppHandle, account: &Account, replay_actions: bool) {

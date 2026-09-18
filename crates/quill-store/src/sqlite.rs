@@ -259,7 +259,7 @@ fn rollup_folder_counts(folders: &mut [Folder]) {
 }
 
 /// Forward-only migrations, indexed by target `user_version`.
-const MIGRATIONS: [&str; 28] = [
+const MIGRATIONS: [&str; 29] = [
     r#"
 CREATE TABLE accounts (
   id INTEGER PRIMARY KEY,
@@ -601,6 +601,20 @@ ALTER TABLE attachments ADD COLUMN content_type TEXT NOT NULL DEFAULT 'applicati
 ALTER TABLE attachments ADD COLUMN content_id TEXT;
 ALTER TABLE attachments ADD COLUMN is_inline INTEGER NOT NULL DEFAULT 0;
 "#,
+    // C0.8: scheduled sends become the sole durable Outbox. A lease records
+    // that SMTP has started, so an interrupted submission is surfaced for
+    // review instead of being blindly submitted again on restart.
+    r#"
+ALTER TABLE scheduled_messages ADD COLUMN status TEXT NOT NULL DEFAULT 'queued';
+ALTER TABLE scheduled_messages ADD COLUMN lease_expires_at_ms INTEGER;
+ALTER TABLE scheduled_messages ADD COLUMN last_error TEXT;
+ALTER TABLE scheduled_messages ADD COLUMN retries INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE scheduled_messages ADD COLUMN sent_at_ms INTEGER;
+CREATE INDEX IF NOT EXISTS idx_outbox_due ON scheduled_messages(account_id, status, send_at_ms);
+UPDATE action_queue
+SET status = 'failed', last_error = 'Legacy queued send was not resubmitted automatically; review and resend it.'
+WHERE action_type = 'send' AND status IN ('pending', 'running');
+"#,
 ];
 
 pub struct SqliteStore {
@@ -862,6 +876,41 @@ impl SqliteStore {
               draft TEXT NOT NULL DEFAULT '',
               created_at_ms INTEGER NOT NULL
             );",
+        )
+        .map_err(|e| e.to_string())?;
+        let outbox_cols: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('scheduled_messages')")
+            .map_err(|e| e.to_string())?
+            .query_map([], |r| r.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        for (col, definition) in [
+            ("status", "TEXT NOT NULL DEFAULT 'queued'"),
+            ("lease_expires_at_ms", "INTEGER"),
+            ("last_error", "TEXT"),
+            ("retries", "INTEGER NOT NULL DEFAULT 0"),
+            ("sent_at_ms", "INTEGER"),
+        ] {
+            if !outbox_cols.iter().any(|existing| existing == col) {
+                conn.execute_batch(&format!(
+                    "ALTER TABLE scheduled_messages ADD COLUMN {col} {definition};"
+                ))
+                .map_err(|e| e.to_string())?;
+                repaired = true;
+            }
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_outbox_due \
+             ON scheduled_messages(account_id, status, send_at_ms); \
+             UPDATE scheduled_messages \
+             SET status = 'failed', lease_expires_at_ms = NULL, \
+                 last_error = 'Send interrupted before outcome was known; review and retry if needed.' \
+             WHERE status = 'sending'; \
+             UPDATE action_queue \
+             SET status = 'failed', \
+                 last_error = 'Legacy queued send was not resubmitted automatically; review and resend it.' \
+             WHERE action_type = 'send' AND status IN ('pending', 'running');",
         )
         .map_err(|e| e.to_string())?;
         // Migrations 20–21 (P1.2) — recipient autocomplete + contact groups.
@@ -2054,11 +2103,11 @@ impl SqliteStore {
         Ok(affected as u32)
     }
 
-    // -- P1.1 durable send-later (Outbox) ---------------------------------
+    // -- C0.8 durable Outbox -----------------------------------------------
 
-    /// Queue a message to send at `send_at_ms`. `payload` is the serialized
-    /// OutgoingMessage (only the flusher reads it back); `draft` is the
-    /// composer snapshot for Edit. Returns the row id.
+    /// Queue a message to send no earlier than `send_at_ms`. `payload` is the
+    /// serialized OutgoingMessage (only the sender reads it back); `draft` is
+    /// the composer snapshot for Edit. Returns the durable Outbox row id.
     pub fn schedule_message(
         &self,
         account_id: AccountId,
@@ -2068,21 +2117,25 @@ impl SqliteStore {
     ) -> Result<i64, String> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO scheduled_messages (account_id, send_at_ms, payload, draft, created_at_ms) \
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO scheduled_messages \
+             (account_id, send_at_ms, payload, draft, created_at_ms, status, retries) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 'queued', 0)",
             params![account_id, send_at_ms, payload, draft, now_ms()],
         )
         .map_err(|e| e.to_string())?;
         Ok(conn.last_insert_rowid())
     }
 
-    /// All scheduled messages, soonest first — the Scheduled view's rows.
+    /// All durable Outbox rows, newest state first. The payload body is never
+    /// returned across IPC.
     /// The payload body is deliberately not returned across IPC.
     pub fn list_scheduled(&self) -> Vec<ScheduledMessage> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = match conn.prepare(
-            "SELECT id, account_id, send_at_ms, payload, draft, created_at_ms \
-             FROM scheduled_messages ORDER BY send_at_ms ASC",
+            "SELECT id, account_id, send_at_ms, payload, draft, created_at_ms, \
+             status, retries, last_error, sent_at_ms FROM scheduled_messages \
+             ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'sending' THEN 1 \
+                                  WHEN 'failed' THEN 2 ELSE 3 END, send_at_ms ASC",
         ) {
             Ok(s) => s,
             Err(_) => return Vec::new(),
@@ -2097,6 +2150,10 @@ impl SqliteStore {
                     subject,
                     to,
                     created_at_ms: r.get(5)?,
+                    status: r.get(6)?,
+                    retries: r.get::<_, i64>(7)? as u32,
+                    last_error: r.get(8)?,
+                    sent_at_ms: r.get(9)?,
                     draft: r.get(4)?,
                 })
             })
@@ -2107,30 +2164,142 @@ impl SqliteStore {
         }
     }
 
-    /// Due scheduled messages as raw (id, account_id, send_at_ms, payload)
-    /// rows for the flusher — the payload stays inside this crate.
-    pub fn due_scheduled(&self, now: i64) -> Vec<(i64, AccountId, i64, String)> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = match conn.prepare(
-            "SELECT id, account_id, send_at_ms, payload FROM scheduled_messages \
-             WHERE send_at_ms <= ?1 ORDER BY send_at_ms ASC",
-        ) {
-            Ok(s) => s,
-            Err(_) => return Vec::new(),
+    /// Atomically lease one due message for an account. Only the worker that
+    /// receives this row may start SMTP; a crash leaves it `sending` and it is
+    /// reconciled as an explicit unknown outcome at next startup.
+    pub fn claim_next_outbox_send(
+        &self,
+        account_id: AccountId,
+        now: i64,
+    ) -> Result<Option<(i64, String)>, String> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let row = tx
+            .query_row(
+                "SELECT id, payload FROM scheduled_messages \
+                 WHERE account_id = ?1 AND status = 'queued' AND send_at_ms <= ?2 \
+                 ORDER BY send_at_ms ASC, id ASC LIMIT 1",
+                params![account_id, now],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        let Some((id, payload)) = row else {
+            tx.commit().map_err(|e| e.to_string())?;
+            return Ok(None);
         };
-        let rows = stmt.query_map(params![now], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-        });
-        match rows {
-            Ok(rows) => rows.flatten().collect(),
-            Err(_) => Vec::new(),
+        let changed = tx
+            .execute(
+                "UPDATE scheduled_messages SET status = 'sending', \
+                 lease_expires_at_ms = ?1, last_error = NULL WHERE id = ?2 AND status = 'queued'",
+                params![now.saturating_add(120_000), id],
+            )
+            .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok((changed == 1).then_some((id, payload)))
+    }
+
+    pub fn mark_outbox_sent(&self, id: i64) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE scheduled_messages SET status = 'sent', sent_at_ms = ?1, \
+             lease_expires_at_ms = NULL, last_error = NULL WHERE id = ?2 AND status = 'sending'",
+            params![now_ms(), id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn record_outbox_failure(
+        &self,
+        id: i64,
+        error: &str,
+        permanent: bool,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        let retries: i64 = conn
+            .query_row(
+                "SELECT retries FROM scheduled_messages WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let next_retries = retries.saturating_add(1);
+        let delay_secs = 5_i64.saturating_mul(1_i64 << (retries as u32).min(6));
+        conn.execute(
+            "UPDATE scheduled_messages SET status = ?1, retries = ?2, last_error = ?3, \
+             lease_expires_at_ms = NULL, send_at_ms = ?4 WHERE id = ?5 AND status = 'sending'",
+            params![
+                if permanent { "failed" } else { "queued" },
+                next_retries,
+                error,
+                if permanent {
+                    now_ms()
+                } else {
+                    now_ms().saturating_add(delay_secs.min(300) * 1000)
+                },
+                id
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn retry_outbox_message(&self, id: i64) -> Result<Option<AccountId>, String> {
+        let conn = self.conn.lock().unwrap();
+        let account_id = conn
+            .query_row(
+                "SELECT account_id FROM scheduled_messages WHERE id = ?1 AND status = 'failed'",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if account_id.is_none() {
+            return Ok(None);
         }
+        conn.execute(
+            "UPDATE scheduled_messages SET status = 'queued', retries = 0, last_error = NULL, \
+             lease_expires_at_ms = NULL, send_at_ms = ?1 WHERE id = ?2 AND status = 'failed'",
+            params![now_ms(), id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(account_id)
+    }
+
+    pub fn send_outbox_now(&self, id: i64) -> Result<Option<AccountId>, String> {
+        let conn = self.conn.lock().unwrap();
+        let account_id = conn
+            .query_row(
+                "SELECT account_id FROM scheduled_messages WHERE id = ?1 \
+                 AND status IN ('queued', 'failed')",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if account_id.is_some() {
+            conn.execute(
+                "UPDATE scheduled_messages SET status = 'queued', retries = 0, last_error = NULL, \
+                 send_at_ms = ?1 WHERE id = ?2",
+                params![now_ms(), id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(account_id)
     }
 
     pub fn cancel_scheduled(&self, id: i64) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM scheduled_messages WHERE id = ?1", params![id])
+        let changed = conn
+            .execute(
+                "DELETE FROM scheduled_messages WHERE id = ?1 AND status IN ('queued', 'failed')",
+                params![id],
+            )
             .map_err(|e| e.to_string())?;
+        if changed != 1 {
+            return Err("Outbox message is already sending or has been sent".into());
+        }
         Ok(())
     }
 
@@ -4461,6 +4630,17 @@ impl SqliteStore {
         Some("INBOX".into())
     }
 
+    /// The server mailbox used for an explicit Sent APPEND. Gmail/M365 skip
+    /// this path because they auto-save; other providers use RFC 6154
+    /// discovery when available and the conventional `Sent` fallback.
+    pub fn sent_folder_name(&self, account_id: AccountId) -> String {
+        self.account_folders()
+            .into_iter()
+            .find(|folder| folder.account_id == Some(account_id) && folder.kind == FolderKind::Sent)
+            .and_then(|folder| folder.server_name)
+            .unwrap_or_else(|| "Sent".into())
+    }
+
     /// The server mailbox used for Trash, resolved from RFC 6154 special-use
     /// discovery and falling back to a previously synced Trash row.
     pub fn trash_folder_name(&self, account_id: AccountId) -> Option<String> {
@@ -4835,7 +5015,8 @@ impl SqliteStore {
 
     pub fn peek_pending_actions(&self, account_id: AccountId) -> Result<Vec<QueuedAction>, String> {
         self.query_queued_actions(
-            "WHERE account_id = ?1 AND status = 'pending' AND next_attempt_at_ms <= ?2",
+            "WHERE account_id = ?1 AND action_type <> 'send' \
+             AND status = 'pending' AND next_attempt_at_ms <= ?2",
             &[
                 Value::Integer(i64::from(account_id)),
                 Value::Integer(now_ms()),
@@ -7177,8 +7358,8 @@ mod tests {
         );
     }
 
-    /// P1.1 send-later: schedule, list (display fields only), due rows for the
-    /// flusher, and cancel.
+    /// C0.8: a due row is leased before SMTP, cannot be leased twice, and a
+    /// permanent result remains user-recoverable in the Outbox.
     #[test]
     fn scheduled_send_crud() {
         let store = SqliteStore::open_in_memory().unwrap();
@@ -7208,13 +7389,31 @@ mod tests {
         assert_eq!(listed[0].to, vec!["b@example.com"]);
         assert!(listed[0].draft.contains("draft"));
 
-        // Not due yet.
-        assert!(store.due_scheduled(now_ms()).is_empty());
-        // Due once the time passes.
-        let due = store.due_scheduled(now_ms() + 60001);
-        assert_eq!(due.len(), 1);
-        assert_eq!(due[0].1, acc.id);
-        assert!(due[0].3.contains("Later"), "flusher must read the payload");
+        // Not due yet, then atomically lease it once it is due.
+        assert!(store
+            .claim_next_outbox_send(acc.id, now_ms())
+            .unwrap()
+            .is_none());
+        let claimed = store
+            .claim_next_outbox_send(acc.id, now_ms() + 60001)
+            .unwrap()
+            .expect("due Outbox row");
+        assert_eq!(claimed.0, id);
+        assert!(claimed.1.contains("Later"), "sender reads the payload");
+        assert!(
+            store
+                .claim_next_outbox_send(acc.id, now_ms() + 60001)
+                .unwrap()
+                .is_none(),
+            "a sending lease cannot be claimed twice"
+        );
+
+        store
+            .record_outbox_failure(id, "550 recipient rejected", true)
+            .unwrap();
+        assert_eq!(store.list_scheduled()[0].status, "failed");
+        assert_eq!(store.retry_outbox_message(id).unwrap(), Some(acc.id));
+        assert_eq!(store.list_scheduled()[0].status, "queued");
 
         store.cancel_scheduled(id).unwrap();
         assert!(store.list_scheduled().is_empty());
@@ -8037,13 +8236,18 @@ mod tests {
 
         store.retry_queued_action(id).unwrap();
         let action = store
-            .peek_pending_actions(1)
+            .list_queued_actions(Some(1))
             .unwrap()
             .into_iter()
             .find(|action| action.id == id)
             .unwrap();
         assert_eq!(action.status, "pending");
         assert_eq!(action.retries, 0);
+        assert!(store
+            .peek_pending_actions(1)
+            .unwrap()
+            .iter()
+            .all(|action| action.id != id));
     }
 
     #[test]

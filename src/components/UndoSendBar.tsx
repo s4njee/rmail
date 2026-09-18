@@ -56,14 +56,14 @@ export function UndoSendBar() {
             <button
               type="button"
               class="undo-send-bar__btn undo-send-bar__btn--undo"
-              onClick={undoPendingSend}
+              onClick={() => void undoPendingSend()}
             >
               Undo
             </button>
             <button
               type="button"
               class="undo-send-bar__btn undo-send-bar__btn--now"
-              onClick={sendPendingNow}
+              onClick={() => void sendPendingNow()}
             >
               Send now
             </button>

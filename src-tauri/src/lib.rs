@@ -135,6 +135,8 @@ pub fn run() {
             commands::schedule_send,
             commands::list_scheduled,
             commands::cancel_scheduled,
+            commands::retry_outbox_message,
+            commands::send_outbox_now,
             commands::suggest_recipients,
             commands::recent_recipients,
             commands::hide_recipient,

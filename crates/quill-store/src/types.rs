@@ -201,9 +201,9 @@ pub struct BulkActionResult {
     pub errors: Vec<String>,
 }
 
-/// A send-later message waiting in the durable Outbox (P1.1). The full
-/// outgoing payload never crosses IPC — it lives in the store and is read only
-/// by the flusher; the UI sees the display fields + the composer snapshot.
+/// A durable Outbox row. The full outgoing payload never crosses IPC — it
+/// lives in the store and is read only by the sender; the UI sees display
+/// fields, lifecycle state, and the composer snapshot for Edit.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -217,6 +217,13 @@ pub struct ScheduledMessage {
     pub to: Vec<String>,
     #[ts(type = "number")]
     pub created_at_ms: i64,
+    /// `queued`, `sending`, `sent`, or `failed`.
+    pub status: String,
+    #[ts(type = "number")]
+    pub retries: u32,
+    pub last_error: Option<String>,
+    #[ts(type = "number", optional)]
+    pub sent_at_ms: Option<i64>,
     /// Serialized composer snapshot so Edit can reopen the composer.
     pub draft: String,
 }

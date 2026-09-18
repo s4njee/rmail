@@ -633,6 +633,14 @@ export const cancelScheduled = async (id: number): Promise<void> => {
   if (isTauri()) return invoke<void>("cancel_scheduled", { id });
 };
 
+export const retryOutboxMessage = async (id: number): Promise<void> => {
+  if (isTauri()) return invoke<void>("retry_outbox_message", { id });
+};
+
+export const sendOutboxNow = async (id: number): Promise<void> => {
+  if (isTauri()) return invoke<void>("send_outbox_now", { id });
+};
+
 // P1.2 recipient suggestions + contact groups
 export const suggestRecipients = async (
   query: string,
@@ -725,8 +733,11 @@ export const suggestGroups = async (
   return [];
 };
 
-export const sendMessage = async (outgoing: OutgoingMessage): Promise<void> => {
-  if (isTauri()) return invoke<void>("send", { outgoing });
+export const sendMessage = async (
+  outgoing: OutgoingMessage,
+  draft?: string,
+): Promise<void> => {
+  if (isTauri()) return invoke<void>("send", { outgoing, draft });
 };
 
 export const attachmentPath = async (id: number): Promise<string | null> => {

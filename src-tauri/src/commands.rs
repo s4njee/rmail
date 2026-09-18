@@ -217,14 +217,36 @@ pub fn rsvp_invite(
             comment.as_deref(),
         );
 
-        let payload = serde_json::json!({
-            "to": [invite.organizer_email],
-            "subject": format!("{}: {}", partstat, invite.title),
-            "body": format!("RSVP: {} has responded {} to '{}'.", account.address, partstat, invite.title),
-            "ics": reply_body
-        }).to_string();
-
-        let _ = store.enqueue_action(account_id, ActionType::Send, "Sent", None, Some(&payload));
+        // An RSVP is mail too. Put it through the same durable Outbox as the
+        // composer instead of the legacy IMAP action queue, which must never
+        // replay SMTP submissions.
+        let mut outgoing = OutgoingMessage {
+            account_id,
+            from_name: None,
+            from_address: None,
+            reply_to: None,
+            to: vec![invite.organizer_email.clone()],
+            cc: Vec::new(),
+            bcc: Vec::new(),
+            subject: format!("{}: {}", partstat, invite.title),
+            body: format!(
+                "RSVP: {} has responded {} to '{}'.\n\n{}",
+                account.address, partstat, invite.title, reply_body
+            ),
+            body_html: None,
+            html_signature: None,
+            plain_signature: None,
+            signature_placement: None,
+            in_reply_to: None,
+            references: None,
+            attachments: Vec::new(),
+            original_message_id: Some(message_id),
+            is_forward: None,
+            message_id: None,
+        };
+        quill_mail::smtp::ensure_message_id(&account, &mut outgoing)?;
+        let payload = serde_json::to_string(&outgoing).map_err(|e| e.to_string())?;
+        store.schedule_message(account_id, 0, &payload, "")?;
 
         if partstat.eq_ignore_ascii_case("ACCEPTED") || partstat.eq_ignore_ascii_case("TENTATIVE") {
             let _ = store.create_event(CalendarEvent {
@@ -608,6 +630,34 @@ pub fn cancel_scheduled(store: State<'_, SqliteStore>, id: i64) -> Result<(), St
     store.cancel_scheduled(id)
 }
 
+/// Retry a message whose SMTP submission failed permanently. Retrying makes
+/// the durable row due immediately, then wakes its one account sender.
+#[tauri::command]
+pub async fn retry_outbox_message(
+    app: AppHandle,
+    store: State<'_, SqliteStore>,
+    id: i64,
+) -> Result<(), String> {
+    let Some(account_id) = store.retry_outbox_message(id)? else {
+        return Err("Outbox message is not available to retry".into());
+    };
+    crate::sync::flush_outbox_for_account(&app, account_id).await
+}
+
+/// Submit an Undo-send row immediately. It remains a durable row even if the
+/// sender is already busy, so a later worker pass will finish it exactly once.
+#[tauri::command]
+pub async fn send_outbox_now(
+    app: AppHandle,
+    store: State<'_, SqliteStore>,
+    id: i64,
+) -> Result<(), String> {
+    let Some(account_id) = store.send_outbox_now(id)? else {
+        return Err("Outbox message is no longer available to send".into());
+    };
+    crate::sync::flush_outbox_for_account(&app, account_id).await
+}
+
 /// Recipient suggestions for the composer (P1.2) — offline, from mail history.
 #[tauri::command]
 pub fn suggest_recipients(
@@ -813,13 +863,14 @@ pub fn restore_backup(
     Ok(())
 }
 
-/// Outgoing mail via SMTP (Epic 12.3 & 13), with the account's credential
-/// (password or OAuth bearer). If sending fails due to network/server
-/// unavailability, it is queued for retry.
+/// Submit outgoing mail to the durable Outbox. SMTP is only ever performed by
+/// its per-account worker, which marks a lease before the network call.
 #[tauri::command]
 pub async fn send(
+    app: AppHandle,
     store: State<'_, SqliteStore>,
     mut outgoing: OutgoingMessage,
+    draft: Option<String>,
 ) -> Result<(), String> {
     let account = store
         .accounts()
@@ -827,30 +878,14 @@ pub async fn send(
         .find(|a| a.id == outgoing.account_id)
         .ok_or("no such account")?;
     quill_mail::smtp::ensure_message_id(&account, &mut outgoing)?;
-    let credential = quill_mail::auth::resolve_credential(&account)?;
-    match quill_mail::smtp::send_email(&account, &outgoing, &credential).await {
-        Ok(()) => {
-            if let Some(orig_id) = outgoing.original_message_id {
-                if outgoing.is_forward.unwrap_or(false) {
-                    let _ = mark_forwarded(store.clone(), orig_id, true);
-                } else {
-                    let _ = mark_answered(store.clone(), orig_id, true);
-                }
-            }
-            Ok(())
-        }
-        Err(e) => {
-            let payload = serde_json::to_string(&outgoing).map_err(|e| e.to_string())?;
-            let _ = store.enqueue_action(
-                outgoing.account_id,
-                ActionType::Send,
-                "Outbox",
-                None,
-                Some(&payload),
-            );
-            Err(format!("Send failed (queued in Outbox for retry): {e}"))
-        }
-    }
+    let payload = serde_json::to_string(&outgoing).map_err(|e| e.to_string())?;
+    store.schedule_message(
+        outgoing.account_id,
+        0,
+        &payload,
+        draft.as_deref().unwrap_or(""),
+    )?;
+    crate::sync::flush_outbox_for_account(&app, account.id).await
 }
 
 #[tauri::command]
