@@ -240,7 +240,7 @@ provider.
 
 - [ ] External-content FTS keyed by rowid; re-index only when subject/sender/recipients/body change
       (not on flag changes).
-- [ ] Add indexes on `recipients(message_id)`, `attachments(message_id)`,
+- [x] Add indexes on `recipients(message_id)`, `attachments(message_id)`,
       `messages(account_id, folder, uid)`, `messages(message_id_header)`.
 - [ ] WAL, `synchronous=NORMAL`, `busy_timeout`; separate read connection(s) from the single
       writer so sync never blocks the list.
