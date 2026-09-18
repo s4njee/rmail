@@ -259,7 +259,7 @@ fn rollup_folder_counts(folders: &mut [Folder]) {
 }
 
 /// Forward-only migrations, indexed by target `user_version`.
-const MIGRATIONS: [&str; 29] = [
+const MIGRATIONS: [&str; 30] = [
     r#"
 CREATE TABLE accounts (
   id INTEGER PRIMARY KEY,
@@ -611,9 +611,22 @@ ALTER TABLE scheduled_messages ADD COLUMN last_error TEXT;
 ALTER TABLE scheduled_messages ADD COLUMN retries INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE scheduled_messages ADD COLUMN sent_at_ms INTEGER;
 CREATE INDEX IF NOT EXISTS idx_outbox_due ON scheduled_messages(account_id, status, send_at_ms);
-UPDATE action_queue
-SET status = 'failed', last_error = 'Legacy queued send was not resubmitted automatically; review and resend it.'
-WHERE action_type = 'send' AND status IN ('pending', 'running');
+"#,
+    // C0.9: submission and IMAP security are account settings, never inferred
+    // at send time. Existing rows receive safe compatibility defaults once.
+    r#"
+ALTER TABLE accounts ADD COLUMN imap_security TEXT NOT NULL DEFAULT 'ssl';
+ALTER TABLE accounts ADD COLUMN allow_plaintext_login INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN smtp_server TEXT NOT NULL DEFAULT '';
+ALTER TABLE accounts ADD COLUMN smtp_port INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN smtp_security TEXT NOT NULL DEFAULT 'starttls';
+ALTER TABLE accounts ADD COLUMN smtp_username TEXT NOT NULL DEFAULT '';
+UPDATE accounts
+SET imap_security = CASE WHEN tls = 1 THEN 'ssl' ELSE 'plain' END,
+    smtp_server = server,
+    smtp_port = CASE WHEN port = 465 THEN 465 ELSE 587 END,
+    smtp_username = address
+WHERE smtp_server = '';
 "#,
 ];
 
@@ -1023,6 +1036,12 @@ impl SqliteStore {
             tls: row.get::<_, i64>(9)? != 0,
             folder_count: row.get(10)?,
             last_error: row.get(11).ok(),
+            imap_security: row.get(12)?,
+            allow_plaintext_login: row.get::<_, i64>(13)? != 0,
+            smtp_server: row.get(14)?,
+            smtp_port: row.get(15)?,
+            smtp_security: row.get(16)?,
+            smtp_username: row.get(17)?,
         })
     }
 
@@ -1060,7 +1079,9 @@ impl SqliteStore {
                  + COALESCE((SELECT SUM(at.size_bytes) \
                              FROM attachments at JOIN messages m ON m.id = at.message_id \
                              WHERE m.account_id = a.id AND at.on_disk = 1), 0) AS local_bytes, \
-                 a.connected, a.server, a.port, a.tls, a.folder_count, a.last_error \
+                 a.connected, a.server, a.port, a.tls, a.folder_count, a.last_error, \
+                 a.imap_security, a.allow_plaintext_login, a.smtp_server, a.smtp_port, \
+                 a.smtp_security, a.smtp_username \
                  FROM accounts a ORDER BY a.id",
             )
             .expect("accounts query");
@@ -3730,6 +3751,12 @@ impl SqliteStore {
             tls: info.tls,
             folder_count: 0,
             last_error: None,
+            imap_security: if info.tls { "ssl" } else { "plain" }.into(),
+            allow_plaintext_login: false,
+            smtp_server: info.server.clone(),
+            smtp_port: 587,
+            smtp_security: "starttls".into(),
+            smtp_username: info.address.clone(),
         })
     }
 
@@ -3745,6 +3772,31 @@ impl SqliteStore {
             params![connected as i64, last_error, id],
         )
         .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Persist the explicitly discovered/entered SMTP submission endpoint.
+    /// This deliberately lives separately from `server`: SMTP must never be
+    /// re-derived from an IMAP hostname during delivery.
+    pub fn configure_smtp(
+        &self,
+        id: AccountId,
+        server: &str,
+        port: u16,
+        security: &str,
+        username: &str,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn
+            .execute(
+                "UPDATE accounts SET smtp_server = ?1, smtp_port = ?2, smtp_security = ?3, \
+                 smtp_username = ?4 WHERE id = ?5",
+                params![server, port, security, username, id],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed != 1 {
+            return Err("no such account".into());
+        }
         Ok(())
     }
 
@@ -4464,15 +4516,23 @@ impl SqliteStore {
         let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
-                "UPDATE accounts SET server = ?1, port = ?2, tls = ?3, sync_mode = ?4, color = ?5 \
-                 WHERE id = ?6",
+                "UPDATE accounts SET server = ?1, port = ?2, tls = ?3, imap_security = ?4, \
+                 allow_plaintext_login = ?5, smtp_server = ?6, smtp_port = ?7, \
+                 smtp_security = ?8, smtp_username = ?9, sync_mode = ?10, color = ?11 \
+                 WHERE id = ?12",
                 params![
                     edit.server,
                     edit.port,
                     edit.tls as i64,
+                    edit.imap_security,
+                    edit.allow_plaintext_login as i64,
+                    edit.smtp_server,
+                    edit.smtp_port,
+                    edit.smtp_security,
+                    edit.smtp_username,
                     edit.sync_mode,
                     edit.color,
-                    edit.id
+                    edit.id,
                 ],
             )
             .map_err(|e| e.to_string())?;

@@ -66,6 +66,25 @@ export function AddAccountForm(props: {
   const [server, setServer] = createSignal(initialAccount?.server ?? "");
   const [port, setPort] = createSignal(initialAccount?.port ?? 993);
   const [tls, setTls] = createSignal(initialAccount?.tls ?? true);
+  const [imapSecurity, setImapSecurity] = createSignal(
+    initialAccount?.imap_security ??
+      (initialAccount?.tls === false ? "plain" : "ssl"),
+  );
+  const [allowPlaintextLogin, setAllowPlaintextLogin] = createSignal(
+    initialAccount?.allow_plaintext_login ?? false,
+  );
+  const [smtpServer, setSmtpServer] = createSignal(
+    initialAccount?.smtp_server ?? "",
+  );
+  const [smtpPort, setSmtpPort] = createSignal(
+    initialAccount?.smtp_port ?? 587,
+  );
+  const [smtpSecurity, setSmtpSecurity] = createSignal(
+    initialAccount?.smtp_security ?? "starttls",
+  );
+  const [smtpUsername, setSmtpUsername] = createSignal(
+    initialAccount?.smtp_username ?? initialAccount?.address ?? "",
+  );
   const [syncMode, setSyncMode] = createSignal(
     initialAccount?.sync_mode ?? SYNC_MODES[0],
   );
@@ -76,6 +95,8 @@ export function AddAccountForm(props: {
   const [testReport, setTestReport] = createSignal<ConnectionTestReport | null>(
     null,
   );
+  const [smtpTestReport, setSmtpTestReport] =
+    createSignal<ConnectionTestReport | null>(null);
   const [saving, setSaving] = createSignal(false);
   const [saveError, setSaveError] = createSignal("");
 
@@ -113,6 +134,18 @@ export function AddAccountForm(props: {
         setServer(d.imap.host);
         setPort(d.imap.port);
         setTls(d.imap.tls);
+        setImapSecurity(d.imap.tls ? "ssl" : "plain");
+      }
+      if (d.smtp && !serverTouched()) {
+        setSmtpServer(d.smtp.host);
+        setSmtpPort(d.smtp.port);
+        setSmtpSecurity(
+          d.smtp.tls && d.smtp.port === 465
+            ? "ssl"
+            : d.smtp.tls
+              ? "starttls"
+              : "plain",
+        );
       }
       if (d.provider) {
         setProviderHelp(d.provider.help);
@@ -197,9 +230,11 @@ export function AddAccountForm(props: {
     } else if (next === "IMAP") {
       setPort(993);
       setTls(true);
+      setImapSecurity("ssl");
     } else {
       setPort(1143);
       setTls(false);
+      setImapSecurity("plain");
     }
   };
 
@@ -216,11 +251,25 @@ export function AddAccountForm(props: {
           server: server().trim(),
           port: port(),
           tls: tls(),
+          security: imapSecurity(),
         },
         password(),
       );
       setTesting(report.ok ? "ok" : "fail");
       setTestReport(report);
+      const smtpReport = await testConnectionSettings(
+        {
+          email: smtpUsername().trim() || address().trim(),
+          protocol: "smtp",
+          server: smtpServer().trim(),
+          port: smtpPort(),
+          tls: smtpSecurity() === "ssl",
+          security: smtpSecurity(),
+        },
+        password(),
+      );
+      setSmtpTestReport(smtpReport);
+      setTesting(report.ok && smtpReport.ok ? "ok" : "fail");
     } catch (error) {
       setTesting("fail");
       setTestReport({
@@ -252,6 +301,12 @@ export function AddAccountForm(props: {
             server: server(),
             port: port(),
             tls: tls(),
+            imapSecurity: imapSecurity(),
+            allowPlaintextLogin: allowPlaintextLogin(),
+            smtpServer: smtpServer(),
+            smtpPort: smtpPort(),
+            smtpSecurity: smtpSecurity(),
+            smtpUsername: smtpUsername(),
             syncMode: syncMode(),
             color: color(),
           },
@@ -268,6 +323,13 @@ export function AddAccountForm(props: {
             sync_mode: syncMode(),
           },
           password(), // straight into the keychain command
+          {
+            host: smtpServer(),
+            port: smtpPort(),
+            tls: smtpSecurity() !== "plain",
+          },
+          smtpSecurity(),
+          smtpUsername(),
         );
       }
       setPassword(""); // never linger in JS state
@@ -448,17 +510,76 @@ export function AddAccountForm(props: {
                 />
               </label>
               <label class="add-field add-field--check">
-                <span>TLS</span>
-                <input
-                  type="checkbox"
-                  checked={tls()}
+                <span>IMAP security</span>
+                <select
+                  value={imapSecurity()}
                   onChange={(e) => {
-                    setTls(e.currentTarget.checked);
+                    const security = e.currentTarget.value;
+                    setImapSecurity(security);
+                    setTls(security === "ssl");
                     setServerTouched(true);
                   }}
-                />
+                >
+                  <option value="ssl">SSL/TLS</option>
+                  <option value="starttls">STARTTLS</option>
+                  <option value="plain">Plain (localhost only)</option>
+                </select>
               </label>
             </div>
+            <Show when={imapSecurity() === "plain"}>
+              <label class="add-field add-field--check">
+                <span>Allow plaintext LOGIN for localhost bridge</span>
+                <input
+                  type="checkbox"
+                  checked={allowPlaintextLogin()}
+                  onChange={(e) =>
+                    setAllowPlaintextLogin(e.currentTarget.checked)
+                  }
+                />
+              </label>
+            </Show>
+            <div class="add-field--row">
+              <label class="add-field add-field--grow">
+                <span>SMTP server</span>
+                <input
+                  type="text"
+                  value={smtpServer()}
+                  onInput={(e) => setSmtpServer(e.currentTarget.value)}
+                  placeholder="smtp.example.com"
+                  required
+                />
+              </label>
+              <label class="add-field add-field--port">
+                <span>Port</span>
+                <input
+                  type="number"
+                  value={smtpPort()}
+                  onInput={(e) => setSmtpPort(Number(e.currentTarget.value))}
+                  required
+                />
+              </label>
+              <label class="add-field add-field--check">
+                <span>SMTP security</span>
+                <select
+                  value={smtpSecurity()}
+                  onChange={(e) => setSmtpSecurity(e.currentTarget.value)}
+                >
+                  <option value="ssl">SSL/TLS</option>
+                  <option value="starttls">STARTTLS</option>
+                  <option value="plain">Plain (localhost only)</option>
+                </select>
+              </label>
+            </div>
+            <label class="add-field">
+              <span>SMTP username</span>
+              <input
+                type="text"
+                value={smtpUsername()}
+                onInput={(e) => setSmtpUsername(e.currentTarget.value)}
+                placeholder="Usually your email address"
+                required
+              />
+            </label>
 
             <div class="add-account__actions">
               <button
@@ -471,7 +592,16 @@ export function AddAccountForm(props: {
               </button>
               <Show when={testing() === "ok" && testReport()?.ok}>
                 <span class="add-account__test add-account__test--ok">
-                  {testReport()?.detail || "Connection OK"}
+                  IMAP: {testReport()?.detail || "Connection OK"}
+                </span>
+              </Show>
+              <Show when={smtpTestReport()}>
+                <span
+                  class={`add-account__test ${smtpTestReport()!.ok ? "add-account__test--ok" : "add-account__test--fail"}`}
+                >
+                  SMTP:{" "}
+                  {smtpTestReport()!.detail ||
+                    smtpTestReport()!.issues.map(issueText).join(" ")}
                 </span>
               </Show>
               <Show when={testReport() && !testReport()?.ok}>

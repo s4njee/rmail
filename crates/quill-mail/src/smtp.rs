@@ -251,14 +251,11 @@ pub fn build_message(account: &Account, outgoing: &OutgoingMessage) -> Result<Me
     }
 }
 
-/// Map a common IMAP hostname to the provider's SMTP submission host. The
-/// account only records the IMAP host, so password accounts used it for SMTP
-/// too — which fails for every provider whose SMTP host differs (Gmail,
-/// Outlook, Yahoo, iCloud, AOL). Self-hosted setups serve both protocols on
-/// one host and are passed through unchanged. Single source of truth lives
-/// with the provider presets (`crate::provider::smtp_host_for`).
-fn smtp_host_for(imap_host: &str) -> String {
-    crate::provider::smtp_host_for(imap_host)
+fn is_localhost(host: &str) -> bool {
+    matches!(
+        host.trim().to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "::1"
+    )
 }
 
 /// Send an outgoing message via SMTP. The credential is resolved by the caller
@@ -272,16 +269,28 @@ pub async fn send_email(
 
     match credential {
         Credential::Password(password) => {
-            let creds = Credentials::new(account.address.clone(), password.clone());
-            let smtp_host = smtp_host_for(&account.server);
-            let mailer = if account.tls {
-                AsyncSmtpTransport::<Tokio1Executor>::relay(&smtp_host)
-                    .map_err(|e| format!("smtp relay {smtp_host}: {e}"))?
-                    .port(465)
+            if account.smtp_security == "plain" && !is_localhost(&account.smtp_server) {
+                return Err("refusing plaintext SMTP AUTH except for a localhost bridge".into());
+            }
+            let username = if account.smtp_username.trim().is_empty() {
+                &account.address
             } else {
-                AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&smtp_host)
+                &account.smtp_username
+            };
+            let creds = Credentials::new(username.clone(), password.clone());
+            let smtp_host = &account.smtp_server;
+            let mailer = match account.smtp_security.as_str() {
+                "ssl" => AsyncSmtpTransport::<Tokio1Executor>::relay(&smtp_host)
                     .map_err(|e| format!("smtp relay {smtp_host}: {e}"))?
-                    .port(587)
+                    .port(account.smtp_port),
+                "starttls" => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&smtp_host)
+                    .map_err(|e| format!("smtp relay {smtp_host}: {e}"))?
+                    .port(account.smtp_port),
+                "plain" => {
+                    AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(smtp_host.clone())
+                        .port(account.smtp_port)
+                }
+                mode => return Err(format!("unknown SMTP security mode {mode}")),
             }
             .credentials(creds)
             .build();
@@ -291,11 +300,12 @@ pub async fn send_email(
         }
         Credential::OAuth { address, provider } => {
             let access_token = get_valid_access_token(address, *provider).await?;
-            // OAuth accounts store the IMAP host in `account.server`; submission
-            // goes to the provider's dedicated SMTP host on 587 (STARTTLS).
-            let smtp_host = provider.default_smtp_host();
-            let mailer = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(smtp_host)
-                .port(587)
+            let smtp_host = &account.smtp_server;
+            if account.smtp_security != "starttls" {
+                return Err("OAuth SMTP requires STARTTLS submission".into());
+            }
+            let mailer = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(smtp_host.clone())
+                .port(account.smtp_port)
                 .tls(Tls::Required(
                     TlsParameters::new(smtp_host.to_string())
                         .map_err(|e| format!("smtp tls params: {e}"))?,
@@ -393,6 +403,12 @@ mod tests {
             server: "smtp.example.com".into(),
             port: 993,
             tls: true,
+            imap_security: "ssl".into(),
+            allow_plaintext_login: false,
+            smtp_server: "smtp.example.com".into(),
+            smtp_port: 587,
+            smtp_security: "starttls".into(),
+            smtp_username: "sender@example.com".into(),
             folder_count: 1,
             last_error: None,
         };
@@ -449,6 +465,12 @@ mod tests {
             server: "smtp.example.com".into(),
             port: 993,
             tls: true,
+            imap_security: "ssl".into(),
+            allow_plaintext_login: false,
+            smtp_server: "smtp.example.com".into(),
+            smtp_port: 587,
+            smtp_security: "starttls".into(),
+            smtp_username: "primary@example.com".into(),
             folder_count: 1,
             last_error: None,
         };
@@ -507,6 +529,12 @@ mod tests {
             server: "imap.example.com".into(),
             port: 993,
             tls: true,
+            imap_security: "ssl".into(),
+            allow_plaintext_login: false,
+            smtp_server: "smtp.example.com".into(),
+            smtp_port: 587,
+            smtp_security: "starttls".into(),
+            smtp_username: "sender@example.com".into(),
             folder_count: 0,
             last_error: None,
         };
@@ -555,6 +583,12 @@ mod tests {
             server: "imap.example.com".into(),
             port: 993,
             tls: true,
+            imap_security: "ssl".into(),
+            allow_plaintext_login: false,
+            smtp_server: "smtp.example.com".into(),
+            smtp_port: 587,
+            smtp_security: "starttls".into(),
+            smtp_username: "sender@example.com".into(),
             folder_count: 0,
             last_error: None,
         };

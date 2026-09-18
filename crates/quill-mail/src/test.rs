@@ -77,7 +77,12 @@ pub async fn test_connection(
         };
 
     // 3. TLS handshake when enabled.
-    let stream: BoxStream = if settings.tls {
+    let security = match settings.security.as_str() {
+        "ssl" | "starttls" | "plain" => settings.security.as_str(),
+        _ if settings.tls => "ssl",
+        _ => "plain",
+    };
+    let stream: BoxStream = if security == "ssl" {
         let tls = async_native_tls::TlsConnector::new();
         match tls.connect(&server, tcp.compat()).await {
             Ok(s) => Box::new(s),
@@ -96,8 +101,12 @@ pub async fn test_connection(
 
     // 4. Protocol greeting, then auth when a password was supplied.
     match service {
-        Service::Imap => test_imap(settings, &server, stream, password, &mut issues).await,
-        Service::Smtp => test_smtp(settings, &server, stream, password, &mut issues).await,
+        Service::Imap => {
+            test_imap(settings, &server, stream, password, &mut issues, security).await
+        }
+        Service::Smtp => {
+            test_smtp(settings, &server, stream, password, &mut issues, security).await
+        }
         Service::CalDav => unreachable!(), // handled above
     }
 }
@@ -121,6 +130,7 @@ async fn test_imap(
     stream: BoxStream,
     password: Option<&str>,
     issues: &mut Vec<ConnectionIssue>,
+    security: &str,
 ) -> ConnectionTestReport {
     let mut client = async_imap::Client::new(stream);
     if let Err(e) = client.read_response().await {
@@ -131,8 +141,39 @@ async fn test_imap(
         ));
         return report(true, false, issues.clone(), String::new());
     }
+    if security == "starttls" {
+        if let Err(e) = client.run_command_and_check_ok("STARTTLS", None).await {
+            issues.push(error::issue(
+                Service::Imap,
+                server,
+                &format!("STARTTLS upgrade failed: {e}"),
+            ));
+            return report(true, false, issues.clone(), String::new());
+        }
+        let tls = async_native_tls::TlsConnector::new();
+        let stream = match tls.connect(server, client.into_inner()).await {
+            Ok(stream) => stream,
+            Err(e) => {
+                issues.push(error::issue(
+                    Service::Imap,
+                    server,
+                    &format!("STARTTLS handshake failed: {e}"),
+                ));
+                return report(true, false, issues.clone(), String::new());
+            }
+        };
+        client = async_imap::Client::new(Box::new(stream));
+    }
     match password {
         Some(password) if !password.is_empty() => {
+            if security == "plain" && !matches!(server, "localhost" | "127.0.0.1" | "::1") {
+                issues.push(error::issue(
+                    Service::Imap,
+                    server,
+                    "refusing plaintext LOGIN except for a localhost bridge",
+                ));
+                return report(true, false, issues.clone(), String::new());
+            }
             match client.login(&settings.email, password).await {
                 Ok(_) => report(
                     true,
@@ -171,6 +212,7 @@ async fn test_smtp(
     stream: BoxStream,
     password: Option<&str>,
     issues: &mut Vec<ConnectionIssue>,
+    security: &str,
 ) -> ConnectionTestReport {
     let mut reader = BufReader::new(stream.compat());
     let mut line = String::new();
@@ -182,18 +224,88 @@ async fn test_smtp(
         ));
         return report(true, false, issues.clone(), String::new());
     }
+    if let Err(e) = reader.write_all(b"EHLO quill.local\r\n").await {
+        issues.push(error::issue(
+            Service::Smtp,
+            server,
+            &format!("couldn't send EHLO: {e}"),
+        ));
+        return report(true, false, issues.clone(), String::new());
+    }
+    let _ = reader.flush().await;
     let mut ehlo = String::new();
     let _ = reader.read_line(&mut ehlo).await.map_err(|e| e.to_string());
     // Consume the rest of a multiline 250 response.
-    while ehlo.trim_end().ends_with('-') {
+    while ehlo.as_bytes().get(3) == Some(&b'-') {
         ehlo.clear();
         if reader.read_line(&mut ehlo).await.is_err() {
             break;
         }
     }
 
+    if security == "starttls" {
+        if let Err(e) = reader.write_all(b"STARTTLS\r\n").await {
+            issues.push(error::issue(
+                Service::Smtp,
+                server,
+                &format!("couldn't request STARTTLS: {e}"),
+            ));
+            return report(true, false, issues.clone(), String::new());
+        }
+        let _ = reader.flush().await;
+        line.clear();
+        if reader.read_line(&mut line).await.is_err() || !line.starts_with("220") {
+            issues.push(error::issue(
+                Service::Smtp,
+                server,
+                "SMTP server rejected STARTTLS",
+            ));
+            return report(true, false, issues.clone(), String::new());
+        }
+        let plain = reader.into_inner().into_inner();
+        let tls = async_native_tls::TlsConnector::new();
+        let tls_stream = match tls.connect(server, plain).await {
+            Ok(stream) => stream,
+            Err(e) => {
+                issues.push(error::issue(
+                    Service::Smtp,
+                    server,
+                    &format!("STARTTLS handshake failed: {e}"),
+                ));
+                return report(true, false, issues.clone(), String::new());
+            }
+        };
+        let tls_stream: BoxStream = Box::new(tls_stream);
+        reader = BufReader::new(tls_stream.compat());
+        if let Err(e) = reader.write_all(b"EHLO quill.local\r\n").await {
+            issues.push(error::issue(
+                Service::Smtp,
+                server,
+                &format!("couldn't send EHLO after STARTTLS: {e}"),
+            ));
+            return report(true, false, issues.clone(), String::new());
+        }
+        let _ = reader.flush().await;
+        line.clear();
+        let _ = reader.read_line(&mut line).await;
+        while line.as_bytes().get(3) == Some(&b'-') {
+            line.clear();
+            if reader.read_line(&mut line).await.is_err() {
+                break;
+            }
+        }
+    }
+
     match password {
         Some(password) if !password.is_empty() => {
+            if security == "plain" && !matches!(server, "localhost" | "127.0.0.1" | "::1") {
+                issues.push(error::issue(
+                    Service::Smtp,
+                    server,
+                    "refusing plaintext SMTP AUTH except for a localhost bridge",
+                ));
+                return report(true, false, issues.clone(), String::new());
+            }
             let auth = format!(
                 "AUTH PLAIN {}\r\n",
                 base64::engine::general_purpose::STANDARD
@@ -323,6 +435,7 @@ mod tests {
                 server: "127.0.0.1".into(),
                 port,
                 tls: false,
+                security: "plain".into(),
             },
             None,
         )

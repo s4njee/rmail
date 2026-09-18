@@ -159,11 +159,11 @@ a regression test; the protocol ones need the fake-server harness from C3.2.
 
 ### C0.9 Correct outgoing and connection settings
 
-- [ ] SMTP host, port, security (SSL/STARTTLS), and username are real account fields, filled by
+- [x] SMTP host, port, security (SSL/STARTTLS), and username are real account fields, filled by
       the existing autodiscovery and editable; stop deriving them from the IMAP host.
-- [ ] Support STARTTLS for IMAP; refuse plaintext `LOGIN` unless the user explicitly allows it for
+- [x] Support STARTTLS for IMAP; refuse plaintext `LOGIN` unless the user explicitly allows it for
       a localhost bridge.
-- [ ] The connection test sends an SMTP `AUTH` and reports it separately.
+- [x] The connection test sends an SMTP `AUTH` and reports it separately.
 
 ### C0.10 No silent corruption at scale
 
@@ -389,10 +389,10 @@ Snooze, send later, bulk selection, and undo exist.
 
 ## Remaining
 
-C0.1–C0.8 are complete. The remaining work is the mail-safety and everyday-use queue:
+C0.1–C0.9 are complete. The remaining work is the mail-safety and everyday-use queue:
 
-- **C0.9–C0.10:** correct SMTP/IMAP connection settings, improve threading and scale, enable
-  notifications, and make drafts roam.
+- **C0.10:** improve threading and scale, enable notifications, and make drafts roam without
+  risking silent corruption.
 - **C1:** close the provider and release-trust gaps: labels, quick filters, accessibility, signing,
   connection limits, and recovery drills.
 - **C2:** make the core loop fast and private: keyboard triage, all-mail offline search, tracker

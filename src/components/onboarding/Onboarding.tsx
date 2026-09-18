@@ -84,6 +84,8 @@ export function Onboarding(props: { onDone: () => void }) {
   const [testReport, setTestReport] = createSignal<ConnectionTestReport | null>(
     null,
   );
+  const [smtpTestReport, setSmtpTestReport] =
+    createSignal<ConnectionTestReport | null>(null);
 
   // OAuth
   const [oauthSession, setOauthSession] = createSignal<OAuthSession | null>(
@@ -235,10 +237,31 @@ export function Onboarding(props: { onDone: () => void }) {
           server: server().trim(),
           port: port(),
           tls: tls(),
+          security: tls() ? "ssl" : "plain",
         },
         password(),
       );
       setTestReport(report);
+      const smtp = discovery()?.smtp ?? preset()?.smtp;
+      if (smtp) {
+        const smtpReport = await testConnectionSettings(
+          {
+            email: email().trim(),
+            protocol: "smtp",
+            server: smtp.host,
+            port: smtp.port,
+            tls: smtp.tls && smtp.port === 465,
+            security:
+              smtp.tls && smtp.port === 465
+                ? "ssl"
+                : smtp.tls
+                  ? "starttls"
+                  : "plain",
+          },
+          password(),
+        );
+        setSmtpTestReport(smtpReport);
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -251,6 +274,7 @@ export function Onboarding(props: { onDone: () => void }) {
     setError("");
     try {
       const protocol = preset()?.id === "proton" ? "Bridge" : "IMAP";
+      const smtp = discovery()?.smtp ?? preset()?.smtp;
       const acc = await addAccount(
         {
           address: email().trim(),
@@ -261,6 +285,15 @@ export function Onboarding(props: { onDone: () => void }) {
           sync_mode: "every 2 min",
         },
         password(),
+        smtp ? { host: smtp.host, port: smtp.port, tls: smtp.tls } : undefined,
+        smtp
+          ? smtp.tls && smtp.port === 465
+            ? "ssl"
+            : smtp.tls
+              ? "starttls"
+              : "plain"
+          : undefined,
+        email().trim(),
       );
       setAccount(acc);
       await loadSelection(acc);
@@ -656,7 +689,19 @@ export function Onboarding(props: { onDone: () => void }) {
                   role="status"
                 >
                   {report().ok
-                    ? `Connection OK — ${report().detail}`
+                    ? `IMAP: ${report().detail}`
+                    : formatIssues(report().issues)}
+                </div>
+              )}
+            </Show>
+            <Show when={smtpTestReport()}>
+              {(report) => (
+                <div
+                  class={`onboarding__test ${report().ok ? "ok" : "fail"}`}
+                  role="status"
+                >
+                  {report().ok
+                    ? `SMTP: ${report().detail}`
                     : formatIssues(report().issues)}
                 </div>
               )}

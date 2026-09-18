@@ -984,15 +984,36 @@ pub fn add_account(
     store: State<'_, SqliteStore>,
     info: NewAccount,
     password: String,
+    smtp: Option<Endpoint>,
+    smtp_security: Option<String>,
+    smtp_username: Option<String>,
 ) -> Result<Account, String> {
     quill_mail::credentials::set_credential(&info.address, &password)?;
     let palette = ["#3b5bdb", "#0f766e", "#b4451f"];
     let color = palette[store.accounts().len() % palette.len()].to_string();
-    store.create_account(&info, color).inspect_err(|_e| {
+    let account = store.create_account(&info, color).inspect_err(|_e| {
         // Roll back the keychain write so a failed insert (e.g. a duplicate
         // address) doesn't leave an orphaned credential behind.
         let _ = quill_mail::credentials::delete_credential(&info.address);
-    })
+    })?;
+    if let Some(smtp) = smtp {
+        let security = smtp_security.unwrap_or_else(|| {
+            if smtp.tls && smtp.port == 465 {
+                "ssl".into()
+            } else if smtp.tls {
+                "starttls".into()
+            } else {
+                "plain".into()
+            }
+        });
+        let username = smtp_username.unwrap_or_else(|| account.address.clone());
+        store.configure_smtp(account.id, &smtp.host, smtp.port, &security, &username)?;
+    }
+    store
+        .accounts()
+        .into_iter()
+        .find(|account_row| account_row.id == account.id)
+        .ok_or("created account was not found".into())
 }
 
 /// Update an existing account's editable fields (server/port/TLS/sync
@@ -1123,6 +1144,12 @@ pub async fn discover_mail_folders(
         server,
         port,
         tls,
+        imap_security: if tls { "ssl" } else { "plain" }.into(),
+        allow_plaintext_login: false,
+        smtp_server: String::new(),
+        smtp_port: 587,
+        smtp_security: "starttls".into(),
+        smtp_username: email.clone(),
         folder_count: 0,
         last_error: None,
     };
@@ -1463,7 +1490,19 @@ pub async fn exchange_oauth_code(
 
     let palette = ["#3b5bdb", "#0f766e", "#b4451f"];
     let color = palette[store.accounts().len() % palette.len()].to_string();
-    store.create_account(&new_account, color)
+    let account = store.create_account(&new_account, color)?;
+    store.configure_smtp(
+        account.id,
+        provider.default_smtp_host(),
+        587,
+        "starttls",
+        &account.address,
+    )?;
+    store
+        .accounts()
+        .into_iter()
+        .find(|account_row| account_row.id == account.id)
+        .ok_or("created account was not found".into())
 }
 
 /// Wait for the browser's OAuth redirect back to the loopback listener and

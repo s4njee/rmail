@@ -211,7 +211,7 @@ pub async fn connect(
         .await
         .map_err(|e| format!("connect {addr}: {e}"))?;
 
-    let stream: Stream = if account.tls {
+    let stream: Stream = if account.imap_security == "ssl" {
         let tls = async_native_tls::TlsConnector::new();
         let tls_stream = tls
             .connect(&account.server, tcp.compat())
@@ -229,11 +229,32 @@ pub async fn connect(
         .map_err(|e| format!("greeting: {e}"))?
         .ok_or_else(|| "no greeting from server".to_string())?;
 
-    match credential {
-        Credential::Password(password) => client
-            .login(&account.address, password)
+    if account.imap_security == "starttls" {
+        client
+            .run_command_and_check_ok("STARTTLS", None)
             .await
-            .map_err(|(e, _)| format!("login for {}: {e}", account.address)),
+            .map_err(|e| format!("STARTTLS: {e}"))?;
+        let tls = async_native_tls::TlsConnector::new();
+        let tls_stream = tls
+            .connect(&account.server, client.into_inner())
+            .await
+            .map_err(|e| format!("STARTTLS to {}: {e}", account.server))?;
+        client = async_imap::Client::new(Box::new(tls_stream));
+    }
+
+    match credential {
+        Credential::Password(password) => {
+            if account.imap_security == "plain"
+                && !(account.allow_plaintext_login
+                    && matches!(account.server.as_str(), "localhost" | "127.0.0.1" | "::1"))
+            {
+                return Err("refusing plaintext IMAP LOGIN except for an explicitly enabled localhost bridge".into());
+            }
+            client
+                .login(&account.address, password)
+                .await
+                .map_err(|(e, _)| format!("login for {}: {e}", account.address))
+        }
         Credential::OAuth { address, provider } => {
             let access_token = get_valid_access_token(address, *provider).await?;
             let auth = Xoauth2Authenticator {

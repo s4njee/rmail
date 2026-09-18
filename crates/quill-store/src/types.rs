@@ -42,6 +42,18 @@ pub struct Account {
     pub port: u16,
     /// Use TLS on the connection.
     pub tls: bool,
+    /// IMAP transport: `ssl`, `starttls`, or `plain` (localhost bridge only).
+    pub imap_security: String,
+    /// Whether password LOGIN may proceed without TLS for a localhost bridge.
+    pub allow_plaintext_login: bool,
+    /// SMTP submission hostname, distinct from the IMAP server.
+    pub smtp_server: String,
+    /// SMTP submission port.
+    pub smtp_port: u16,
+    /// SMTP transport: `ssl`, `starttls`, or `plain` (localhost bridge only).
+    pub smtp_security: String,
+    /// SMTP AUTH username; commonly, but not necessarily, the email address.
+    pub smtp_username: String,
     /// Number of folders the account has configured (0 = not shown in the
     /// Settings detail line).
     pub folder_count: u32,
@@ -330,6 +342,12 @@ pub struct AccountEdit {
     pub server: String,
     pub port: u16,
     pub tls: bool,
+    pub imap_security: String,
+    pub allow_plaintext_login: bool,
+    pub smtp_server: String,
+    pub smtp_port: u16,
+    pub smtp_security: String,
+    pub smtp_username: String,
     /// `"every 2 min"`, `"on open"`, or `"manual"`.
     pub sync_mode: String,
     pub color: String,
@@ -1290,6 +1308,8 @@ pub struct TestConnectionSettings {
     pub server: String,
     pub port: u16,
     pub tls: bool,
+    /// `ssl`, `starttls`, or `plain`.
+    pub security: String,
 }
 
 /// Result of a connection test: reachability + auth per stage, with issues.

@@ -282,9 +282,18 @@ export const listAccounts = async (): Promise<Account[]> => {
 export const addAccount = async (
   info: NewAccount,
   _password: string,
+  smtp?: { host: string; port: number; tls: boolean },
+  smtpSecurity?: string,
+  smtpUsername?: string,
 ): Promise<Account> => {
   if (isTauri())
-    return invoke<Account>("add_account", { info, password: _password });
+    return invoke<Account>("add_account", {
+      info,
+      password: _password,
+      smtp,
+      smtpSecurity,
+      smtpUsername,
+    });
   const newAcc: Account = {
     id: mockAccounts.length + 1,
     address: info.address,
@@ -296,6 +305,12 @@ export const addAccount = async (
     server: info.server,
     port: info.port,
     tls: info.tls,
+    imap_security: info.tls ? "ssl" : "plain",
+    allow_plaintext_login: false,
+    smtp_server: smtp?.host ?? info.server,
+    smtp_port: smtp?.port ?? 587,
+    smtp_security: smtpSecurity ?? "starttls",
+    smtp_username: smtpUsername ?? info.address,
     folder_count: 1,
     last_error: null,
   };
@@ -321,6 +336,12 @@ export const updateAccount = async (
       server: edit.server,
       port: edit.port,
       tls: edit.tls,
+      imap_security: edit.imapSecurity,
+      allow_plaintext_login: edit.allowPlaintextLogin,
+      smtp_server: edit.smtpServer,
+      smtp_port: edit.smtpPort,
+      smtp_security: edit.smtpSecurity,
+      smtp_username: edit.smtpUsername,
       sync_mode: edit.syncMode,
       color: edit.color,
     };
@@ -1007,6 +1028,14 @@ export const exchangeOAuthCode = async (
     server: provider === "google" ? "imap.gmail.com" : "outlook.office365.com",
     port: 993,
     tls: true,
+    imap_security: "ssl",
+    allow_plaintext_login: false,
+    smtp_server:
+      provider === "google" ? "smtp.gmail.com" : "smtp.office365.com",
+    smtp_port: provider === "google" ? 465 : 587,
+    smtp_security: provider === "google" ? "ssl" : "starttls",
+    smtp_username:
+      provider === "google" ? "user@gmail.com" : "user@outlook.com",
     folder_count: 5,
     last_error: null,
   };
