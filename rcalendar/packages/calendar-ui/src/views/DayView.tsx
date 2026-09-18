@@ -1,5 +1,7 @@
 import { Component, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { Calendar, OccurrenceItem, Task } from "../types/calendar";
+import { AttendeeBadge } from "../components/AttendeeBadge";
+import { AttendeeSummary } from "../headless/attendees";
 import {
   addDays,
   formatTime24,
@@ -43,6 +45,8 @@ export interface DayViewProps {
   workingHours?: { start: number; end: number };
   /** Mark overlapping events with a conflict badge (default true). */
   conflictDetection?: boolean;
+  /** Per-event attendee RSVP rollups, keyed by event id (for acceptance badges). */
+  attendeeSummaries?: ReadonlyMap<string, AttendeeSummary>;
 }
 
 const GRID_CONFIG: GridConfig = {
@@ -608,6 +612,9 @@ export const DayView: Component<DayViewProps> = (props) => {
 
                         <div style={{ flex: 1 }} />
 
+                        <Show when={props.attendeeSummaries?.get(pe.item.event.id)}>
+                          {(summary) => <AttendeeBadge summary={summary()} />}
+                        </Show>
                         <Show when={metaBadge()}>
                           <span
                             style={{

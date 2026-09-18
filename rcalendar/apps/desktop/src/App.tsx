@@ -1,6 +1,7 @@
 import {
   Component,
   createEffect,
+  createMemo,
   createSignal,
   onCleanup,
   onMount,
@@ -13,9 +14,15 @@ import {
   addDays,
   addMonths,
   AgendaView,
+  Attendee,
+  AttendeeSummary,
   Calendar,
   DayView,
+  DefaultAlerts,
   EditScope,
+  IdentitySettings,
+  EditorAlert,
+  EditorAttendee,
   Event,
   EventDraft,
   EventEditorModal,
@@ -23,18 +30,24 @@ import {
   IcsImportExportModal,
   MonthView,
   OccurrenceItem,
+  Reminder,
   SearchModal,
   SettingsView,
   ShortcutsHelpModal,
   Sidebar,
+  summarizeAttendees,
   Task,
   ThreeDayView,
   Titlebar,
   ViewMode,
   WeekView,
+  YearView,
 } from "@rcalendar/ui";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { TauriCalendarDataSource } from "./services/tauriAdapter";
+
+const isMacOS = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
 
 export const App: Component = () => {
   const dataSource = new TauriCalendarDataSource();
@@ -64,6 +77,26 @@ export const App: Component = () => {
   const [isGoogleConnectOpen, setIsGoogleConnectOpen] = createSignal(false);
   const [isSettingsOpen, setIsSettingsOpen] = createSignal(false);
 
+  const [defaultAlerts, setDefaultAlerts] = createSignal<DefaultAlerts>({
+    event: null,
+    allDay: null,
+  });
+  const [editorReminders, setEditorReminders] = createSignal<Reminder[]>([]);
+  const [editorAttendees, setEditorAttendees] = createSignal<Attendee[]>([]);
+  const [attendeeSummaries, setAttendeeSummaries] = createSignal<ReadonlyMap<string, AttendeeSummary>>(
+    new Map(),
+  );
+  const [identity, setIdentity] = createSignal<IdentitySettings>({
+    selfEmail: null,
+    showDeclined: false,
+  });
+  const [firedToast, setFiredToast] = createSignal<{
+    eventId: string;
+    title: string;
+    reminderId: string;
+    startedAt: string;
+  } | null>(null);
+
   const loadAccountsAndCalendars = async () => {
     try {
       const accs = await dataSource.listAccounts();
@@ -80,9 +113,13 @@ export const App: Component = () => {
   const loadOccurrences = async () => {
     try {
       const f = focusedDate();
-      // Fetch a 3-month window around focusedDate
-      const fromDate = new Date(f.getFullYear(), f.getMonth() - 1, 1);
-      const toDate = new Date(f.getFullYear(), f.getMonth() + 2, 0, 23, 59, 59);
+      const yearView = view() === "Year";
+      const fromDate = yearView
+        ? new Date(f.getFullYear(), 0, 1)
+        : new Date(f.getFullYear(), f.getMonth() - 1, 1);
+      const toDate = yearView
+        ? new Date(f.getFullYear(), 11, 31, 23, 59, 59)
+        : new Date(f.getFullYear(), f.getMonth() + 2, 0, 23, 59, 59);
 
       const fromIso = fromDate.toISOString();
       const toIso = toDate.toISOString();
@@ -92,18 +129,67 @@ export const App: Component = () => {
 
       const items = await dataSource.listOccurrences(fromIso, toIso, enabledIds);
       setOccurrences(items);
+      await loadAttendeeSummaries(items);
     } catch (err) {
       console.error("Failed to fetch occurrences:", err);
     }
   };
 
+  const loadAttendeeSummaries = async (items: OccurrenceItem[]) => {
+    const uniqueIds = [...new Set(items.map((i) => i.event.id))];
+    if (uniqueIds.length === 0) {
+      setAttendeeSummaries(new Map());
+      return;
+    }
+    try {
+      const rows = await Promise.all(
+        uniqueIds.map(async (id) => {
+          const attendees = await dataSource.listAttendees(id);
+          return [id, summarizeAttendees(attendees, identity().selfEmail)] as const;
+        }),
+      );
+      setAttendeeSummaries(new Map(rows));
+    } catch (err) {
+      console.error("Failed to load attendee summaries:", err);
+    }
+  };
+
+  /** Occurrences actually shown; events the user declined are hidden unless opted in. */
+  const visibleOccurrences = createMemo(() => {
+    const items = occurrences();
+    if (identity().showDeclined) return items;
+    const summaries = attendeeSummaries();
+    return items.filter((i) => !summaries.get(i.event.id)?.selfDeclined);
+  });
+
   onMount(() => {
     loadAccountsAndCalendars().then(() => loadOccurrences());
+    dataSource
+      .getDefaultAlerts()
+      .then(setDefaultAlerts)
+      .catch((err) => console.error("Failed to load default alerts:", err));
+    dataSource
+      .getIdentity()
+      .then(setIdentity)
+      .catch((err) => console.error("Failed to load identity:", err));
+
+    // Native reminder delivery: show an in-app banner with snooze + open.
+    const unlistenPromise = listen<{
+      eventId: string;
+      title: string;
+      reminderId: string;
+    }>("almanac://reminder-fired", (event) => {
+      setFiredToast({ ...event.payload, startedAt: Date.now().toString() });
+    });
+    onCleanup(() => {
+      unlistenPromise.then((unlisten) => unlisten());
+    });
   });
 
   createEffect(() => {
-    // Re-fetch occurrences when focused date or calendars change
+    // Re-fetch occurrences when focused date, view, or calendars change
     focusedDate();
+    view();
     calendars();
     loadOccurrences();
   });
@@ -174,7 +260,7 @@ export const App: Component = () => {
         return;
       }
 
-      // '1' - '5': Switch views
+      // '1' - '6': Switch views
       if (e.key === "1") {
         setView("Month");
       } else if (e.key === "2") {
@@ -185,6 +271,8 @@ export const App: Component = () => {
         setView("Day");
       } else if (e.key === "5") {
         setView("Agenda");
+      } else if (e.key === "6") {
+        setView("Year");
       }
     };
 
@@ -204,6 +292,8 @@ export const App: Component = () => {
       const prev = addDays(selectedDate(), -1);
       setSelectedDate(prev);
       setFocusedDate(prev);
+    } else if (v === "Year") {
+      setFocusedDate(addMonths(focusedDate(), -12));
     }
   };
 
@@ -219,6 +309,8 @@ export const App: Component = () => {
       const next = addDays(selectedDate(), 1);
       setSelectedDate(next);
       setFocusedDate(next);
+    } else if (v === "Year") {
+      setFocusedDate(addMonths(focusedDate(), 12));
     }
   };
 
@@ -243,6 +335,7 @@ export const App: Component = () => {
   };
 
   const handleNewEvent = () => {
+    setEditorReminders([]);
     setEditor({
       isOpen: true,
       event: null,
@@ -251,6 +344,16 @@ export const App: Component = () => {
   };
 
   const handleEventClick = (occ: OccurrenceItem) => {
+    setEditorReminders([]);
+    setEditorAttendees([]);
+    dataSource
+      .listReminders(occ.event.id)
+      .then(setEditorReminders)
+      .catch((err) => console.error("Failed to load reminders:", err));
+    dataSource
+      .listAttendees(occ.event.id)
+      .then(setEditorAttendees)
+      .catch((err) => console.error("Failed to load attendees:", err));
     setEditor({
       isOpen: true,
       event: occ.event,
@@ -260,6 +363,8 @@ export const App: Component = () => {
 
   const handleSlotClick = (date: Date) => {
     setSelectedDate(date);
+    setEditorReminders([]);
+    setEditorAttendees([]);
     setEditor({
       isOpen: true,
       event: null,
@@ -267,14 +372,69 @@ export const App: Component = () => {
     });
   };
 
+  const reconcileReminders = async (eventId: string, alerts: EditorAlert[]) => {
+    const existing = await dataSource.listReminders(eventId);
+    const keepIds = new Set(alerts.map((a) => a.id).filter((x): x is string => !!x));
+    for (const r of existing) {
+      if (!keepIds.has(r.id)) await dataSource.deleteReminder(r.id);
+    }
+    for (const a of alerts) {
+      await dataSource.saveReminder({
+        id: a.id,
+        eventId,
+        offsetMinutes: a.offsetMinutes ?? null,
+        absoluteAt: a.absoluteAt ?? null,
+      });
+    }
+  };
+
+  const reconcileAttendees = async (eventId: string, invitees: EditorAttendee[]) => {
+    const existing = await dataSource.listAttendees(eventId);
+    const keepIds = new Set(invitees.map((a) => a.id).filter((x): x is string => !!x));
+    for (const a of existing) {
+      if (!keepIds.has(a.id)) await dataSource.deleteAttendee(a.id);
+    }
+    for (const a of invitees) {
+      await dataSource.saveAttendee({
+        id: a.id,
+        eventId,
+        email: a.email,
+        displayName: a.displayName ?? null,
+        role: a.role,
+        status: a.status,
+        rsvp: a.rsvp ?? false,
+        isOrganizer: a.isOrganizer ?? false,
+      });
+    }
+  };
+
   const handleSaveEvent = async (
     draft: EventDraft,
+    alerts: EditorAlert[],
+    invitees: EditorAttendee[],
     id?: string,
     scope?: EditScope,
     targetDate?: string,
   ) => {
     try {
-      await dataSource.saveEvent(draft, id, scope, targetDate);
+      const saved = await dataSource.saveEvent(draft, id, scope, targetDate);
+      const targetEventId = id || saved[0]?.id || "";
+      if (targetEventId) {
+        const previous = await dataSource.listAttendees(targetEventId).catch(() => []);
+        await reconcileReminders(targetEventId, alerts);
+        await reconcileAttendees(targetEventId, invitees);
+        const previousEmails = new Set(previous.map((a) => a.email.toLowerCase()));
+        const added = invitees.some(
+          (a) => !a.isOrganizer && !previousEmails.has(a.email.toLowerCase()),
+        );
+        if (added) {
+          await dataSource.sendInvitations(targetEventId).catch((err) => {
+            console.error("Failed to send invitations:", err);
+          });
+        }
+      }
+      setEditorReminders([]);
+      setEditorAttendees([]);
       await loadOccurrences();
       await loadAccountsAndCalendars();
     } catch (err) {
@@ -305,6 +465,9 @@ export const App: Component = () => {
         allDay: occ.event.allDay,
         tz: occ.event.tz,
         rrule: occ.event.rrule,
+        travelTimeMinutes: occ.event.travelTimeMinutes,
+        color: occ.event.color,
+        busy: occ.event.busy !== false,
       };
       await dataSource.saveEvent(draft, occ.event.id, "all");
       await loadOccurrences();
@@ -325,6 +488,9 @@ export const App: Component = () => {
         allDay: occ.event.allDay,
         tz: occ.event.tz,
         rrule: occ.event.rrule,
+        travelTimeMinutes: occ.event.travelTimeMinutes,
+        color: occ.event.color,
+        busy: occ.event.busy !== false,
       };
       await dataSource.saveEvent(draft, occ.event.id, "all");
       await loadOccurrences();
@@ -334,6 +500,7 @@ export const App: Component = () => {
   };
 
   const handleRangeCreate = (startsAt: Date, _endsAt: Date) => {
+    setEditorReminders([]);
     setEditor({
       isOpen: true,
       event: null,
@@ -391,6 +558,8 @@ export const App: Component = () => {
         onMinimize={handleMinimize}
         onMaximize={handleMaximize}
         onClose={handleClose}
+        showWindowControls={!isMacOS}
+        leadingInset={isMacOS ? 72 : 0}
       />
 
       {/* Main Workspace */}
@@ -407,8 +576,29 @@ export const App: Component = () => {
               await loadOccurrences();
             }}
             onSetSyncInterval={(mins) => dataSource.setSyncInterval(mins)}
+            defaultAlerts={defaultAlerts()}
+            onSetDefaultAlerts={async (alerts) => {
+              await dataSource.setDefaultAlerts(alerts);
+              setDefaultAlerts(alerts);
+            }}
+            identity={identity()}
+            onSetIdentity={async (next) => {
+              await dataSource.setIdentity(next);
+              setIdentity(next);
+              await loadOccurrences();
+            }}
             onAddAccountClick={() => setIsIcsOpen(true)}
             onConnectGoogleClick={() => setIsGoogleConnectOpen(true)}
+            onDeleteAccount={async (accountId) => {
+              await dataSource.deleteAccount(accountId);
+              await loadAccountsAndCalendars();
+              await loadOccurrences();
+            }}
+            onDeleteCalendar={async (calendarId) => {
+              await dataSource.deleteCalendar(calendarId);
+              await loadAccountsAndCalendars();
+              await loadOccurrences();
+            }}
             onClose={() => setIsSettingsOpen(false)}
           />
         }
@@ -440,12 +630,13 @@ export const App: Component = () => {
                   selectedDate={selectedDate()}
                   onSelectDate={setSelectedDate}
                   onFocusedDateChange={setFocusedDate}
-                  occurrences={occurrences()}
+                  occurrences={visibleOccurrences()}
                   calendars={calendars()}
                   onEventClick={handleEventClick}
                   onCellClick={(d) => {
                     setSelectedDate(d);
                   }}
+                  attendeeSummaries={attendeeSummaries()}
                 />
               </Match>
 
@@ -455,13 +646,14 @@ export const App: Component = () => {
                   selectedDate={selectedDate()}
                   onSelectDate={setSelectedDate}
                   onFocusedDateChange={setFocusedDate}
-                  occurrences={occurrences()}
+                  occurrences={visibleOccurrences()}
                   calendars={calendars()}
                   onEventClick={handleEventClick}
                   onSlotClick={handleSlotClick}
                   onEventMove={handleEventMove}
                   onEventResize={handleEventResize}
                   onRangeCreate={handleRangeCreate}
+                  attendeeSummaries={attendeeSummaries()}
                 />
               </Match>
 
@@ -471,13 +663,14 @@ export const App: Component = () => {
                   selectedDate={selectedDate()}
                   onSelectDate={setSelectedDate}
                   onFocusedDateChange={setFocusedDate}
-                  occurrences={occurrences()}
+                  occurrences={visibleOccurrences()}
                   calendars={calendars()}
                   onEventClick={handleEventClick}
                   onSlotClick={handleSlotClick}
                   onEventMove={handleEventMove}
                   onEventResize={handleEventResize}
                   onRangeCreate={handleRangeCreate}
+                  attendeeSummaries={attendeeSummaries()}
                 />
               </Match>
 
@@ -487,13 +680,14 @@ export const App: Component = () => {
                   selectedDate={selectedDate()}
                   onSelectDate={setSelectedDate}
                   onFocusedDateChange={setFocusedDate}
-                  occurrences={occurrences()}
+                  occurrences={visibleOccurrences()}
                   calendars={calendars()}
                   tasks={tasks()}
                   onToggleTask={handleToggleTask}
                   onEventClick={handleEventClick}
                   onSlotClick={handleSlotClick}
                   onAddToDay={(d) => {
+                    setEditorReminders([]);
                     setEditor({
                       isOpen: true,
                       event: null,
@@ -503,6 +697,7 @@ export const App: Component = () => {
                   onEventMove={handleEventMove}
                   onEventResize={handleEventResize}
                   onRangeCreate={handleRangeCreate}
+                  attendeeSummaries={attendeeSummaries()}
                 />
               </Match>
 
@@ -512,11 +707,24 @@ export const App: Component = () => {
                   selectedDate={selectedDate()}
                   onSelectDate={setSelectedDate}
                   onFocusedDateChange={setFocusedDate}
-                  occurrences={occurrences()}
+                  occurrences={visibleOccurrences()}
                   calendars={calendars()}
                   tasks={tasks()}
                   onToggleTask={handleToggleTask}
                   onEventClick={handleEventClick}
+                  attendeeSummaries={attendeeSummaries()}
+                />
+              </Match>
+
+              <Match when={view() === "Year"}>
+                <YearView
+                  focusedDate={focusedDate()}
+                  selectedDate={selectedDate()}
+                  onSelectDate={setSelectedDate}
+                  onFocusedDateChange={setFocusedDate}
+                  occurrences={visibleOccurrences()}
+                  calendars={calendars()}
+                  onNavigateView={setView}
                 />
               </Match>
             </Switch>
@@ -530,6 +738,19 @@ export const App: Component = () => {
         event={editor().event}
         initialDate={editor().initialDate}
         calendars={calendars()}
+        reminders={editorReminders()}
+        attendees={editorAttendees()}
+        defaultAlertOffset={editor().event ? null : defaultAlerts().event}
+        onSuggestAttendees={(q) => dataSource.suggestAttendees(q)}
+        onFindAvailableSlots={async (date, duration) =>
+          dataSource.findAvailableSlots(
+            date,
+            duration,
+            calendars()
+              .filter((c) => c.enabled)
+              .map((c) => c.id),
+          )
+        }
         onSave={handleSaveEvent}
         onDelete={handleDeleteEvent}
         onClose={() => setEditor({ isOpen: false, event: null })}
@@ -541,6 +762,16 @@ export const App: Component = () => {
         onClose={() => setIsSearchOpen(false)}
         onSearch={(q) => dataSource.search(q)}
         onSelectEvent={(evt) => {
+          setEditorReminders([]);
+          setEditorAttendees([]);
+          dataSource
+            .listReminders(evt.id)
+            .then(setEditorReminders)
+            .catch((err) => console.error("Failed to load reminders:", err));
+          dataSource
+            .listAttendees(evt.id)
+            .then(setEditorAttendees)
+            .catch((err) => console.error("Failed to load attendees:", err));
           setEditor({ isOpen: true, event: evt });
         }}
         onSelectDate={(d) => {
@@ -575,6 +806,118 @@ export const App: Component = () => {
           await loadOccurrences();
         }}
       />
+
+      {/* Reminder-fired banner (native delivery surface for snooze + open) */}
+      <Show when={firedToast()}>
+        {(toast) => (
+          <div
+            style={{
+              position: "fixed",
+              top: "64px",
+              right: "16px",
+              "z-index": 200,
+              width: "320px",
+              padding: "14px 16px",
+              "border-radius": "12px",
+              background: "var(--al-surface, #FFFFFF)",
+              "box-shadow": "var(--al-shadow-modal, 0 24px 60px -18px rgba(0,0,0,0.4))",
+              border: "1px solid var(--al-border, #E0E0E0)",
+              "font-family": "var(--al-font-ui)",
+              color: "var(--al-ink, #1A1A1A)",
+            }}
+          >
+            <div style={{ "font-size": "13.5px", "font-weight": 600 }}>{toast().title}</div>
+            <div style={{ "font-size": "12px", color: "#777777", "margin-top": "2px" }}>
+              Reminder — it's time.
+            </div>
+            <div
+              style={{
+                display: "flex",
+                gap: "8px",
+                "margin-top": "10px",
+                "justify-content": "flex-end",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  dataSource
+                    .snoozeReminder(toast().reminderId, 5)
+                    .catch((err) => console.error("Snooze failed:", err))
+                    .then(() => setFiredToast(null))
+                }
+                style={{
+                  height: "28px",
+                  padding: "0 10px",
+                  border: "1px solid var(--al-border, #E0E0E0)",
+                  "border-radius": "7px",
+                  background: "#FFFFFF",
+                  "font-size": "11.5px",
+                  cursor: "pointer",
+                }}
+              >
+                Snooze 5 min
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  dataSource
+                    .snoozeReminder(toast().reminderId, 15)
+                    .catch((err) => console.error("Snooze failed:", err))
+                    .then(() => setFiredToast(null))
+                }
+                style={{
+                  height: "28px",
+                  padding: "0 10px",
+                  border: "1px solid var(--al-border, #E0E0E0)",
+                  "border-radius": "7px",
+                  background: "#FFFFFF",
+                  "font-size": "11.5px",
+                  cursor: "pointer",
+                }}
+              >
+                15 min
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const eventId = toast().eventId;
+                  dataSource
+                    .getEvent(eventId)
+                    .then((evt) => {
+                      if (evt) {
+                        setEditorReminders([]);
+                        dataSource
+                          .listReminders(eventId)
+                          .then(setEditorReminders)
+                          .catch(() => {});
+                        setEditor({
+                          isOpen: true,
+                          event: evt,
+                          initialDate: new Date(evt.startsAt),
+                        });
+                      }
+                    })
+                    .catch(() => {});
+                  setFiredToast(null);
+                }}
+                style={{
+                  height: "28px",
+                  padding: "0 10px",
+                  border: "none",
+                  "border-radius": "7px",
+                  background: "var(--al-accent, #1F6FEB)",
+                  color: "#FFFFFF",
+                  "font-size": "11.5px",
+                  cursor: "pointer",
+                }}
+              >
+                Open
+              </button>
+            </div>
+          </div>
+        )}
+      </Show>
     </div>
   );
 };

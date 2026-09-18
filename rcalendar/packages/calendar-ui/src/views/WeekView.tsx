@@ -1,5 +1,7 @@
 import { Component, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { Calendar, OccurrenceItem } from "../types/calendar";
+import { AttendeeBadge } from "../components/AttendeeBadge";
+import { AttendeeSummary } from "../headless/attendees";
 import {
   addDays,
   formatTime24,
@@ -41,6 +43,8 @@ export interface WeekViewProps {
   workingHours?: { start: number; end: number };
   /** Mark overlapping events with a conflict badge (default true). */
   conflictDetection?: boolean;
+  /** Per-event attendee RSVP rollups, keyed by event id (for acceptance badges). */
+  attendeeSummaries?: ReadonlyMap<string, AttendeeSummary>;
 }
 
 const GRID_CONFIG: GridConfig = {
@@ -483,7 +487,7 @@ export const WeekView: Component<WeekViewProps> = (props) => {
                 <For each={dayAllDay()}>
                   {(item) => {
                     const cal = () => calendarMap().get(item.event.calendarId);
-                    const color = () => cal()?.color || "var(--al-accent, #1F6FEB)";
+                    const color = () => item.event.color || cal()?.color || "var(--al-accent, #1F6FEB)";
 
                     return (
                       <div
@@ -520,6 +524,9 @@ export const WeekView: Component<WeekViewProps> = (props) => {
                         >
                           {item.event.title}
                         </span>
+                        <Show when={props.attendeeSummaries?.get(item.event.id)}>
+                          {(summary) => <AttendeeBadge summary={summary()} />}
+                        </Show>
                       </div>
                     );
                   }}
@@ -801,6 +808,9 @@ export const WeekView: Component<WeekViewProps> = (props) => {
                           >
                             {timeStr()}
                           </span>
+                          <Show when={props.attendeeSummaries?.get(pe.item.event.id)}>
+                            {(summary) => <AttendeeBadge summary={summary()} />}
+                          </Show>
                           <Show when={conflicted()}>
                             <span
                               title="Overlaps another event"

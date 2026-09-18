@@ -1,12 +1,19 @@
 import {
   Account,
   AccountKind,
+  Attendee,
+  AttendeeDraft,
   Calendar,
   CalendarDataSource,
+  AvailableSlot,
+  DefaultAlerts,
   EditScope,
+  IdentitySettings,
   Event,
   EventDraft,
   OccurrenceItem,
+  Reminder,
+  ReminderDraft,
   SearchResults,
   Task,
 } from "@rcalendar/ui";
@@ -106,6 +113,20 @@ export class InMemoryCalendarDataSource implements CalendarDataSource {
     if (cal) cal.enabled = enabled;
   }
 
+  async deleteAccount(accountId: string): Promise<void> {
+    const calIds = this.calendars.filter((c) => c.accountId === accountId).map((c) => c.id);
+    this.accounts = this.accounts.filter((a) => a.id !== accountId);
+    this.calendars = this.calendars.filter((c) => c.accountId !== accountId);
+    this.events = this.events.filter((e) => !calIds.includes(e.calendarId));
+    this.tasks = this.tasks.filter((t) => !calIds.includes(t.calendarId));
+  }
+
+  async deleteCalendar(calendarId: string): Promise<void> {
+    this.calendars = this.calendars.filter((c) => c.id !== calendarId);
+    this.events = this.events.filter((e) => e.calendarId !== calendarId);
+    this.tasks = this.tasks.filter((t) => t.calendarId !== calendarId);
+  }
+
   async listOccurrences(
     _from: string,
     _to: string,
@@ -184,6 +205,148 @@ export class InMemoryCalendarDataSource implements CalendarDataSource {
     if (!task) throw new Error("Task not found");
     task.completedAt = task.completedAt ? null : new Date().toISOString();
     return { ...task };
+  }
+
+  private reminders: Reminder[] = [];
+
+  private defaultAlerts: DefaultAlerts = { event: null, allDay: null };
+
+  async listReminders(eventId: string): Promise<Reminder[]> {
+    return this.reminders.filter((r) => r.eventId === eventId);
+  }
+
+  async saveReminder(draft: ReminderDraft): Promise<Reminder> {
+    const existing = this.reminders.find((r) => r.id === draft.id);
+    if (existing) {
+      existing.offsetMinutes = draft.offsetMinutes ?? null;
+      existing.absoluteAt = draft.absoluteAt ?? null;
+      return { ...existing };
+    }
+    const reminder: Reminder = {
+      id: `rem-${Date.now()}`,
+      eventId: draft.eventId,
+      offsetMinutes: draft.offsetMinutes ?? null,
+      absoluteAt: draft.absoluteAt ?? null,
+    };
+    this.reminders.push(reminder);
+    return { ...reminder };
+  }
+
+  async deleteReminder(id: string): Promise<void> {
+    this.reminders = this.reminders.filter((r) => r.id !== id);
+  }
+
+  async snoozeReminder(_id: string, _minutes: number): Promise<void> {}
+
+  private attendees: Attendee[] = [];
+
+  async listAttendees(eventId: string): Promise<Attendee[]> {
+    return this.attendees.filter((a) => a.eventId === eventId);
+  }
+
+  async saveAttendee(draft: AttendeeDraft): Promise<Attendee> {
+    const existing = this.attendees.find((a) => a.id === draft.id);
+    if (existing) {
+      existing.email = draft.email;
+      existing.displayName = draft.displayName ?? existing.displayName;
+      existing.role = draft.role ?? existing.role;
+      existing.status = draft.status ?? existing.status;
+      existing.rsvp = draft.rsvp ?? existing.rsvp;
+      existing.isOrganizer = draft.isOrganizer ?? existing.isOrganizer;
+      return { ...existing };
+    }
+    const attendee: Attendee = {
+      id: `att-${Date.now()}`,
+      eventId: draft.eventId,
+      email: draft.email,
+      displayName: draft.displayName ?? null,
+      role: draft.role ?? "required",
+      status: draft.status ?? "needs_action",
+      rsvp: draft.rsvp ?? false,
+      isOrganizer: draft.isOrganizer ?? false,
+    };
+    this.attendees.push(attendee);
+    return { ...attendee };
+  }
+
+  async deleteAttendee(id: string): Promise<void> {
+    this.attendees = this.attendees.filter((a) => a.id !== id);
+  }
+
+  async suggestAttendees(query: string): Promise<Attendee[]> {
+    const q = query.toLowerCase();
+    const seen = new Set<string>();
+    return this.attendees.filter((a) => {
+      const key = a.email.toLowerCase();
+      if (seen.has(key)) return false;
+      if (!a.email.toLowerCase().includes(q) && !(a.displayName || "").toLowerCase().includes(q)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }
+
+  async findAvailableSlots(
+    date: string,
+    durationMinutes: number,
+  ): Promise<AvailableSlot[]> {
+    const start = new Date(`${date}T09:00:00Z`);
+    const end = new Date(`${date}T18:00:00Z`);
+    const durationMs = durationMinutes * 60_000;
+    const slots: AvailableSlot[] = [];
+    for (let t = start.getTime(); t + durationMs <= end.getTime(); t += 30 * 60_000) {
+      const s = new Date(t);
+      const e = new Date(t + durationMs);
+      const conflict = this.events.some((ev) => {
+        if (ev.busy === false) return false;
+        const es = new Date(ev.startsAt).getTime();
+        const ee = new Date(ev.endsAt).getTime();
+        return es < e.getTime() && ee > s.getTime();
+      });
+      if (!conflict) {
+        slots.push({ start: s.toISOString(), end: e.toISOString() });
+      }
+    }
+    return slots;
+  }
+
+  async sendInvitations(eventId: string): Promise<{
+    subject: string;
+    recipients: string[];
+    outboxPath?: string | null;
+  }> {
+    const event = this.events.find((e) => e.id === eventId);
+    const recipients = this.attendees
+      .filter((a) => a.eventId === eventId && !a.isOrganizer)
+      .map((a) => a.email);
+    return {
+      subject: `Invitation: ${event?.title ?? "event"}`,
+      recipients,
+      outboxPath: null,
+    };
+  }
+
+  async applyItip(): Promise<{ method: string; uid: string; message: string }> {
+    return { method: "REQUEST", uid: "", message: "ignored in memory" };
+  }
+
+  private identity: IdentitySettings = { selfEmail: null, showDeclined: false };
+
+  async getIdentity(): Promise<IdentitySettings> {
+    return { ...this.identity };
+  }
+
+  async setIdentity(identity: IdentitySettings): Promise<void> {
+    this.identity = { ...identity };
+  }
+
+  async getDefaultAlerts(): Promise<DefaultAlerts> {
+    return { ...this.defaultAlerts };
+  }
+
+  async setDefaultAlerts(alerts: DefaultAlerts): Promise<void> {
+    this.defaultAlerts = { ...alerts };
   }
 
   async search(query: string): Promise<SearchResults> {

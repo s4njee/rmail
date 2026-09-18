@@ -1,13 +1,61 @@
-import { Component, createEffect, createSignal, For, Show } from "solid-js";
-import { Calendar, EditScope, Event, EventDraft } from "../types/calendar";
+import { Component, createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import {
+  Attendee,
+  AttendeeRole,
+  AttendeeStatus,
+  AvailableSlot,
+  Calendar,
+  EditScope,
+  Event,
+  EventDraft,
+  Reminder,
+} from "../types/calendar";
 import { toDateKey } from "../headless/dateUtils";
+import { buildEventDraft } from "../headless/eventDraft";
+import { ALERT_PRESETS, formatAlertOffset } from "../headless/alerts";
+import { ATTENDEE_STATUS_LABELS, summarizeAttendees } from "../headless/attendees";
+
+/** A single alert configured in the editor. */
+export interface EditorAlert {
+  id?: string;
+  offsetMinutes: number | null;
+  absoluteAt: string | null;
+}
+
+/** A single invitee configured in the editor. */
+export interface EditorAttendee {
+  id?: string;
+  email: string;
+  displayName?: string | null;
+  role: AttendeeRole;
+  status: AttendeeStatus;
+  rsvp?: boolean;
+  isOrganizer?: boolean;
+}
 
 export interface EventEditorModalProps {
   isOpen: boolean;
   event: Event | null; // null for new event
   initialDate?: Date;
   calendars: Calendar[];
-  onSave: (draft: EventDraft, id?: string, scope?: EditScope, targetDate?: string) => void;
+  /** Existing reminders when editing an event. */
+  reminders?: Reminder[];
+  /** Existing attendees when editing an event. */
+  attendees?: Attendee[];
+  /** Offset (minutes) to pre-fill for a newly created event, if any. */
+  defaultAlertOffset?: number | null;
+  /** Invitee autocomplete from previously used addresses. */
+  onSuggestAttendees?: (query: string) => Promise<Attendee[]>;
+  /** Real free/busy lookup for the Find a time strip. */
+  onFindAvailableSlots?: (date: string, durationMinutes: number) => Promise<AvailableSlot[]>;
+  onSave: (
+    draft: EventDraft,
+    alerts: EditorAlert[],
+    invitees: EditorAttendee[],
+    id?: string,
+    scope?: EditScope,
+    targetDate?: string,
+  ) => void;
   onDelete?: (id: string, scope?: EditScope, targetDate?: string) => void;
   onClose: () => void;
 }
@@ -41,9 +89,54 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
   const [color, setColor] = createSignal("");
   const [showFindTime, setShowFindTime] = createSignal(false);
   const [scope, setScope] = createSignal<EditScope>("this");
+  const [alerts, setAlerts] = createSignal<EditorAlert[]>([]);
+  const [addAlertValue, setAddAlertValue] = createSignal("");
+  const [showCustomAlert, setShowCustomAlert] = createSignal(false);
+  const [customMinutes, setCustomMinutes] = createSignal(15);
+  const [invitees, setInvitees] = createSignal<EditorAttendee[]>([]);
+  const [inviteeEmail, setInviteeEmail] = createSignal("");
+  const [inviteeName, setInviteeName] = createSignal("");
+  const [busy, setBusy] = createSignal(true);
+  const [suggestions, setSuggestions] = createSignal<Attendee[]>([]);
+  const [availableSlots, setAvailableSlots] = createSignal<AvailableSlot[]>([]);
+  const [findTimeLoading, setFindTimeLoading] = createSignal(false);
 
-  const readonlyCalendar = () =>
-    !!props.calendars.find((c) => c.id === calendarId())?.readOnly;
+  const inviteeSummary = createMemo(() =>
+    summarizeAttendees(
+      invitees().map((a) => ({
+        id: a.id ?? a.email,
+        eventId: props.event?.id ?? "",
+        email: a.email,
+        displayName: a.displayName,
+        role: a.role,
+        status: a.status,
+        rsvp: a.rsvp ?? false,
+        isOrganizer: a.isOrganizer ?? false,
+      })),
+    ),
+  );
+
+  const meetingDurationMinutes = () => {
+    const [sh, sm] = startTime().split(":").map(Number);
+    const [eh, em] = endTime().split(":").map(Number);
+    return Math.max(15, eh * 60 + em - (sh * 60 + sm));
+  };
+
+  createEffect(() => {
+    if (!showFindTime() || allDay() || !props.onFindAvailableSlots) {
+      return;
+    }
+    const date = dateStr();
+    const duration = meetingDurationMinutes();
+    setFindTimeLoading(true);
+    void props
+      .onFindAvailableSlots(date, duration)
+      .then((slots) => setAvailableSlots(slots))
+      .catch(() => setAvailableSlots([]))
+      .finally(() => setFindTimeLoading(false));
+  });
+
+  const readonlyCalendar = () => !!props.calendars.find((c) => c.id === calendarId())?.readOnly;
 
   const EVENT_COLORS = ["#3b5bdb", "#0f766e", "#b4451f", "#e8590c", "#7048e8", "#e03131"];
 
@@ -84,6 +177,29 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
       setLocation(e.location || "");
       setNotes(e.notes || "");
       setColor(e.color || "");
+      setAlerts(
+        (props.reminders || []).map((r) => ({
+          id: r.id,
+          offsetMinutes: r.offsetMinutes ?? null,
+          absoluteAt: r.absoluteAt ?? null,
+        })),
+      );
+      setInvitees(
+        (props.attendees || []).map<EditorAttendee>((a) => ({
+          id: a.id,
+          email: a.email,
+          displayName: a.displayName ?? null,
+          role: a.role,
+          status: a.status,
+          rsvp: a.rsvp,
+          isOrganizer: a.isOrganizer,
+        })),
+      );
+      setInviteeEmail("");
+      setInviteeName("");
+      setBusy(e.busy !== false);
+      setSuggestions([]);
+      setAvailableSlots([]);
 
       if (e.rrule) {
         if (e.rrule.includes("FREQ=DAILY")) setRepeatFreq("DAILY");
@@ -149,6 +265,19 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
       setTravelTime(0);
       setColor("#3b5bdb");
       setShowFindTime(false);
+      setAlerts(
+        props.defaultAlertOffset != null
+          ? [{ offsetMinutes: props.defaultAlertOffset, absoluteAt: null }]
+          : [],
+      );
+      setInvitees([]);
+      setInviteeEmail("");
+      setInviteeName("");
+      setBusy(true);
+      setSuggestions([]);
+      setAvailableSlots([]);
+      setAddAlertValue("");
+      setShowCustomAlert(false);
     }
   });
 
@@ -159,6 +288,100 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
     } else {
       setSelectedDays([...curr, day]);
     }
+  };
+
+  const addOffsetAlert = (offsetMinutes: number) => {
+    const curr = alerts();
+    if (curr.some((a) => a.offsetMinutes === offsetMinutes && a.absoluteAt == null)) return;
+    setAlerts([...curr, { offsetMinutes, absoluteAt: null }]);
+  };
+
+  const addCustomAlert = () => {
+    const mins = customMinutes();
+    if (mins > 0) addOffsetAlert(-mins);
+    setCustomMinutes(15);
+    setShowCustomAlert(false);
+  };
+
+  const removeAlert = (index: number) => {
+    setAlerts(alerts().filter((_, i) => i !== index));
+  };
+
+  const handleAddAlertChange = (value: string) => {
+    setAddAlertValue("");
+    if (value === "custom") {
+      setShowCustomAlert(true);
+      return;
+    }
+    if (value !== "") {
+      addOffsetAlert(Number(value));
+    }
+  };
+
+  const addInvitee = () => {
+    const email = inviteeEmail().trim();
+    if (!email) return;
+    if (!invitees().some((a) => a.email.toLowerCase() === email.toLowerCase())) {
+      setInvitees([
+        ...invitees(),
+        {
+          email,
+          displayName: inviteeName().trim() || null,
+          role: "required",
+          status: "needs_action",
+          rsvp: true,
+          isOrganizer: false,
+        },
+      ]);
+    }
+    setInviteeEmail("");
+    setInviteeName("");
+    setSuggestions([]);
+  };
+
+  const pickSuggestion = (person: Attendee) => {
+    if (!invitees().some((a) => a.email.toLowerCase() === person.email.toLowerCase())) {
+      setInvitees([
+        ...invitees(),
+        {
+          id: undefined,
+          email: person.email,
+          displayName: person.displayName ?? null,
+          role: person.role,
+          status: "needs_action",
+          rsvp: true,
+          isOrganizer: false,
+        },
+      ]);
+    }
+    setInviteeEmail("");
+    setInviteeName("");
+    setSuggestions([]);
+  };
+
+  const onInviteeEmailInput = (value: string) => {
+    setInviteeEmail(value);
+    const q = value.trim();
+    if (q.length < 1 || !props.onSuggestAttendees) {
+      setSuggestions([]);
+      return;
+    }
+    void props.onSuggestAttendees(q).then((rows) => {
+      const taken = new Set(invitees().map((a) => a.email.toLowerCase()));
+      setSuggestions(rows.filter((r) => !taken.has(r.email.toLowerCase())).slice(0, 6));
+    });
+  };
+
+  const removeInvitee = (index: number) => {
+    setInvitees(invitees().filter((_, i) => i !== index));
+  };
+
+  const setInviteeStatus = (index: number, status: AttendeeStatus) => {
+    setInvitees(invitees().map((a, i) => (i === index ? { ...a, status } : a)));
+  };
+
+  const setInviteeRole = (index: number, role: AttendeeRole) => {
+    setInvitees(invitees().map((a, i) => (i === index ? { ...a, role } : a)));
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -173,47 +396,29 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
     if (!title().trim()) return;
     if (readonlyCalendar()) return; // P1.4: read-only calendars can't be edited
 
-    let startsAt: string;
-    let endsAt: string;
-
-    if (allDay()) {
-      startsAt = `${dateStr()}T00:00:00Z`;
-      endsAt = `${dateStr()}T23:59:59Z`;
-    } else {
-      startsAt = `${dateStr()}T${startTime()}:00Z`;
-      endsAt = `${dateStr()}T${endTime()}:00Z`;
-    }
-
-    let rrule: string | null = null;
-    if (repeatFreq() !== "none") {
-      const parts = [`FREQ=${repeatFreq()}`];
-      if (repeatFreq() === "WEEKLY" && selectedDays().length > 0) {
-        parts.push(`BYDAY=${selectedDays().join(",")}`);
-      }
-      if (endsMode() === "count" && occurrenceCount() > 0) {
-        parts.push(`COUNT=${occurrenceCount()}`);
-      } else if (endsMode() === "until" && untilDate()) {
-        const u = untilDate().replace(/-/g, "");
-        parts.push(`UNTIL=${u}T235959Z`);
-      }
-      rrule = parts.join(";");
-    }
-
-    const draft: EventDraft = {
-      calendarId: calendarId() || props.calendars[0]?.id || "",
-      title: title().trim(),
-      location: location().trim() || null,
-      notes: notes().trim() || null,
-      startsAt,
-      endsAt,
+    const draft: EventDraft | null = buildEventDraft({
+      title: title(),
+      calendarId: calendarId(),
+      dateStr: dateStr(),
+      startTime: startTime(),
+      endTime: endTime(),
       allDay: allDay(),
-      tz: tz() === "local" ? null : tz(),
-      rrule,
-      travelTimeMinutes: travelTime() > 0 ? travelTime() : null,
-      color: color() || null,
-    };
+      repeatFreq: repeatFreq(),
+      selectedDays: selectedDays(),
+      endsMode: endsMode(),
+      untilDate: untilDate(),
+      occurrenceCount: occurrenceCount(),
+      tz: tz(),
+      location: location(),
+      notes: notes(),
+      travelTime: travelTime(),
+      color: color(),
+      fallbackCalendarId: props.calendars[0]?.id || "",
+      busy: busy(),
+    });
+    if (!draft) return;
 
-    props.onSave(draft, props.event?.id, scope(), dateStr());
+    props.onSave(draft, alerts(), invitees(), props.event?.id, scope(), dateStr());
     props.onClose();
   };
 
@@ -425,6 +630,23 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
                 />
                 All day
               </label>
+              <label
+                style={{
+                  display: "flex",
+                  "align-items": "center",
+                  gap: "6px",
+                  "font-size": "12px",
+                  color: "var(--al-ink-5, #777777)",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={busy()}
+                  onChange={(e) => setBusy(e.currentTarget.checked)}
+                />
+                Busy
+              </label>
 
               <Show when={!allDay()}>
                 <button
@@ -489,21 +711,32 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
                   </span>
                 </div>
                 <div style={{ display: "flex", "flex-wrap": "wrap", gap: "6px" }}>
-                  <For
-                    each={["09:00", "10:00", "11:00", "13:00", "14:00", "15:00", "16:00", "17:00"]}
-                  >
+                  <Show when={findTimeLoading()}>
+                    <span style={{ "font-size": "11px", color: "var(--al-ink-5, #777777)" }}>
+                      Looking for openings…
+                    </span>
+                  </Show>
+                  <Show when={!findTimeLoading() && availableSlots().length === 0}>
+                    <span style={{ "font-size": "11px", color: "var(--al-ink-5, #777777)" }}>
+                      No free slots of {meetingDurationMinutes()} min on this day.
+                    </span>
+                  </Show>
+                  <For each={availableSlots()}>
                     {(slot) => {
-                      const h = Number(slot.split(":")[0]);
-                      const endH = String(h + 1).padStart(2, "0");
-                      const endSlot = `${endH}:00`;
-                      const isCurrent = () => startTime() === slot;
+                      const start = new Date(slot.start);
+                      const end = new Date(slot.end);
+                      const fmt = (d: Date) =>
+                        `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+                      const startLabel = fmt(start);
+                      const endLabel = fmt(end);
+                      const isCurrent = () => startTime() === startLabel && endTime() === endLabel;
 
                       return (
                         <button
                           type="button"
                           onClick={() => {
-                            setStartTime(slot);
-                            setEndTime(endSlot);
+                            setStartTime(startLabel);
+                            setEndTime(endLabel);
                           }}
                           style={{
                             padding: "4px 8px",
@@ -520,7 +753,7 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
                             cursor: "pointer",
                           }}
                         >
-                          {slot} - {endSlot}
+                          {startLabel} – {endLabel}
                         </button>
                       );
                     }}
@@ -718,8 +951,8 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
             </div>
           </div>
 
-          {/* Remind Me row */}
-          <div style={{ display: "flex", "align-items": "center", gap: "16px" }}>
+          {/* Invitees row */}
+          <div style={{ display: "flex", "align-items": "flex-start", gap: "16px" }}>
             <span
               style={{
                 "font-family": "var(--al-font-mono)",
@@ -728,61 +961,376 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
                 color: "var(--al-ink-7, #A0A0A0)",
                 width: "92px",
                 flex: "none",
+                "margin-top": "8px",
               }}
             >
-              REMIND ME
+              INVITEES
+            </span>
+            <div style={{ display: "flex", "flex-direction": "column", gap: "8px", flex: 1 }}>
+              <Show when={invitees().length === 0}>
+                <span style={{ "font-size": "12px", color: "var(--al-ink-5, #777777)" }}>
+                  No attendees
+                </span>
+              </Show>
+              <Show when={inviteeSummary().total > 0}>
+                <span style={{ "font-size": "11px", color: "var(--al-ink-5, #777777)" }}>
+                  {inviteeSummary().accepted} accepted · {inviteeSummary().pending} pending ·{" "}
+                  {inviteeSummary().declined} declined
+                  {inviteeSummary().tentative > 0
+                    ? ` · ${inviteeSummary().tentative} maybe`
+                    : ""}
+                </span>
+              </Show>
+              <div style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
+                <For each={invitees()}>
+                  {(invitee, index) => (
+                    <div
+                      style={{
+                        display: "flex",
+                        "align-items": "center",
+                        gap: "8px",
+                        padding: "5px 10px",
+                        "border": "1px solid var(--al-border, #E0E0E0)",
+                        "border-radius": "8px",
+                        background: "var(--al-accent-tint, #E4EBF8)",
+                      }}
+                    >
+                      <span
+                        style={{
+                          flex: 1,
+                          "font-size": "12.5px",
+                          color: "var(--al-ink-2, #222222)",
+                          overflow: "hidden",
+                          "text-overflow": "ellipsis",
+                          "white-space": "nowrap",
+                        }}
+                        title={invitee.email}
+                      >
+                        {invitee.displayName || invitee.email}
+                        {invitee.displayName ? (
+                          <span style={{ color: "var(--al-ink-5, #777777)" }}>
+                            {` · ${invitee.email}`}
+                          </span>
+                        ) : null}
+                        {invitee.isOrganizer ? (
+                          <span style={{ color: "var(--al-accent, #1F6FEB)" }}> · organizer</span>
+                        ) : null}
+                      </span>
+                      <div style={{ display: "flex", gap: "4px" }} role="group" aria-label="RSVP status">
+                        <For
+                          each={
+                            [
+                              ["needs_action", "Pending"],
+                              ["accepted", "Yes"],
+                              ["tentative", "Maybe"],
+                              ["declined", "No"],
+                            ] as [AttendeeStatus, string][]
+                          }
+                        >
+                          {([value, label]) => (
+                            <button
+                              type="button"
+                              aria-pressed={invitee.status === value}
+                              title={ATTENDEE_STATUS_LABELS[value]}
+                              onClick={() => setInviteeStatus(index(), value)}
+                              style={{
+                                height: "22px",
+                                padding: "0 7px",
+                                border:
+                                  invitee.status === value
+                                    ? "1px solid var(--al-accent, #1F6FEB)"
+                                    : "1px solid var(--al-border, #E0E0E0)",
+                                "border-radius": "11px",
+                                background:
+                                  invitee.status === value
+                                    ? "var(--al-accent-tint, #E4EBF8)"
+                                    : "#FFFFFF",
+                                color:
+                                  invitee.status === value
+                                    ? "var(--al-accent, #1F6FEB)"
+                                    : "var(--al-ink-5, #777777)",
+                                "font-size": "10px",
+                                cursor: "pointer",
+                              }}
+                            >
+                              {label}
+                            </button>
+                          )}
+                        </For>
+                      </div>
+                      <select
+                        aria-label="Role"
+                        value={invitee.role}
+                        onChange={(e) =>
+                          setInviteeRole(index(), e.currentTarget.value as AttendeeRole)
+                        }
+                        style={{
+                          height: "26px",
+                          border: "1px solid var(--al-border, #E0E0E0)",
+                          "border-radius": "6px",
+                          "font-size": "11px",
+                          background: "#FFFFFF",
+                        }}
+                      >
+                        <option value="required">Required</option>
+                        <option value="optional">Optional</option>
+                        <option value="chair">Chair</option>
+                        <option value="non_participant">Observer</option>
+                      </select>
+                      <button
+                        type="button"
+                        aria-label="Remove invitee"
+                        onClick={() => removeInvitee(index())}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          padding: "0",
+                          cursor: "pointer",
+                          color: "var(--al-accent, #1F6FEB)",
+                          "font-size": "13px",
+                          "line-height": 1,
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
+                </For>
+              </div>
+              <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
+                <input
+                  type="text"
+                  placeholder="name (optional)"
+                  value={inviteeName()}
+                  onInput={(e) => setInviteeName(e.currentTarget.value)}
+                  style={{
+                    height: "30px",
+                    padding: "0 10px",
+                    "border": "1px solid var(--al-border, #E0E0E0)",
+                    "border-radius": "8px",
+                    "font-size": "12.5px",
+                    width: "130px",
+                  }}
+                />
+                <input
+                  type="text"
+                  placeholder="email address"
+                  value={inviteeEmail()}
+                  onInput={(e) => onInviteeEmailInput(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addInvitee();
+                    }
+                    if (e.key === "ArrowDown" && suggestions().length > 0) {
+                      e.preventDefault();
+                      pickSuggestion(suggestions()[0]);
+                    }
+                  }}
+                  style={{
+                    height: "30px",
+                    padding: "0 10px",
+                    "border": "1px solid var(--al-border, #E0E0E0)",
+                    "border-radius": "8px",
+                    "font-size": "12.5px",
+                    flex: 1,
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={addInvitee}
+                  style={{
+                    height: "30px",
+                    padding: "0 12px",
+                    "border": "1px solid var(--al-accent, #1F6FEB)",
+                    "border-radius": "8px",
+                    background: "var(--al-accent-tint, #E4EBF8)",
+                    color: "var(--al-accent, #1F6FEB)",
+                    "font-size": "12px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Add
+                </button>
+              </div>
+              <Show when={suggestions().length > 0}>
+                <div
+                  style={{
+                    border: "1px solid var(--al-border, #E0E0E0)",
+                    "border-radius": "8px",
+                    background: "#FFFFFF",
+                    overflow: "hidden",
+                  }}
+                >
+                  <For each={suggestions()}>
+                    {(person) => (
+                      <button
+                        type="button"
+                        onClick={() => pickSuggestion(person)}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          "text-align": "left",
+                          padding: "8px 10px",
+                          border: "none",
+                          background: "transparent",
+                          cursor: "pointer",
+                          "font-size": "12.5px",
+                        }}
+                      >
+                        {person.displayName || person.email}
+                        <Show when={person.displayName}>
+                          <span style={{ color: "var(--al-ink-5, #777777)" }}>
+                            {` · ${person.email}`}
+                          </span>
+                        </Show>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
+          </div>
+
+          {/* Remind Me row */}
+          <div style={{ display: "flex", "align-items": "flex-start", gap: "16px" }}>
+            <span
+              style={{
+                "font-family": "var(--al-font-mono)",
+                "font-size": "10px",
+                "letter-spacing": "0.08em",
+                color: "var(--al-ink-7, #A0A0A0)",
+                width: "92px",
+                flex: "none",
+                "margin-top": "8px",
+              }}
+            >
+              ALERT
             </span>
             <div
               style={{
                 display: "flex",
-                "align-items": "center",
-                gap: "7px",
+                "flex-direction": "column",
+                gap: "8px",
                 flex: 1,
-                "flex-wrap": "wrap",
               }}
             >
-              <div
+              <div style={{ display: "flex", "flex-wrap": "wrap", gap: "7px" }}>
+                <For each={alerts()}>
+                  {(alert, index) => (
+                    <div
+                      style={{
+                        display: "flex",
+                        "align-items": "center",
+                        gap: "7px",
+                        height: "30px",
+                        padding: "0 10px",
+                        "border-radius": "15px",
+                        background: "var(--al-accent-tint, #E4EBF8)",
+                      }}
+                    >
+                      <span
+                        style={{
+                          "font-family": "var(--al-font-mono)",
+                          "font-size": "11px",
+                          color: "var(--al-accent, #1F6FEB)",
+                        }}
+                      >
+                        {alert.absoluteAt
+                          ? `at ${new Date(alert.absoluteAt).toLocaleString()}`
+                          : formatAlertOffset(alert.offsetMinutes)}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="Remove alert"
+                        onClick={() => removeAlert(index())}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          padding: "0",
+                          cursor: "pointer",
+                          color: "var(--al-accent, #1F6FEB)",
+                          "font-size": "13px",
+                          "line-height": 1,
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
+                </For>
+                <Show when={alerts().length === 0}>
+                  <span
+                    style={{
+                      "font-size": "12px",
+                      color: "var(--al-ink-5, #777777)",
+                      "align-self": "center",
+                    }}
+                  >
+                    None
+                  </span>
+                </Show>
+              </div>
+
+              <select
+                value={addAlertValue()}
+                onChange={(e) => handleAddAlertChange(e.currentTarget.value)}
                 style={{
-                  display: "flex",
-                  "align-items": "center",
-                  gap: "7px",
                   height: "30px",
-                  padding: "0 11px",
-                  "border-radius": "15px",
-                  background: "var(--al-accent-tint, #E4EBF8)",
+                  padding: "0 10px",
+                  border: "1px solid var(--al-border, #E0E0E0)",
+                  "border-radius": "8px",
+                  "font-size": "12.5px",
+                  background: "#FFFFFF",
+                  width: "180px",
                 }}
               >
-                <span
-                  style={{
-                    "font-family": "var(--al-font-mono)",
-                    "font-size": "11px",
-                    color: "var(--al-accent, #1F6FEB)",
-                  }}
-                >
-                  10 min before
-                </span>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  "align-items": "center",
-                  gap: "7px",
-                  height: "30px",
-                  padding: "0 11px",
-                  "border-radius": "15px",
-                  background: "var(--al-accent-tint, #E4EBF8)",
-                }}
-              >
-                <span
-                  style={{
-                    "font-family": "var(--al-font-mono)",
-                    "font-size": "11px",
-                    color: "var(--al-accent, #1F6FEB)",
-                  }}
-                >
-                  at 08:00 same day
-                </span>
-              </div>
+                <option value="">Add alert…</option>
+                <For each={ALERT_PRESETS.filter((p) => p.offsetMinutes != null)}>
+                  {(p) => <option value={String(p.offsetMinutes)}>{p.label}</option>}
+                </For>
+                <option value="custom">Custom…</option>
+              </select>
+
+              <Show when={showCustomAlert()}>
+                <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10080"
+                    value={customMinutes()}
+                    onInput={(e) => setCustomMinutes(Number(e.currentTarget.value) || 1)}
+                    style={{
+                      height: "30px",
+                      padding: "0 8px",
+                      border: "1px solid var(--al-border, #E0E0E0)",
+                      "border-radius": "7px",
+                      "font-family": "var(--al-font-mono)",
+                      "font-size": "12px",
+                      width: "80px",
+                    }}
+                  />
+                  <span style={{ "font-size": "12px", color: "var(--al-ink-5, #777777)" }}>
+                    minutes before
+                  </span>
+                  <button
+                    type="button"
+                    onClick={addCustomAlert}
+                    style={{
+                      height: "30px",
+                      padding: "0 12px",
+                      border: "1px solid var(--al-accent, #1F6FEB)",
+                      "border-radius": "8px",
+                      background: "var(--al-accent-tint, #E4EBF8)",
+                      color: "var(--al-accent, #1F6FEB)",
+                      "font-size": "12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Add
+                  </button>
+                </div>
+              </Show>
             </div>
           </div>
 

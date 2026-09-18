@@ -17,11 +17,15 @@ export * from "./types/calendar";
 export * from "./headless/dateUtils";
 export * from "./headless/layout";
 export * from "./headless/dragEngine";
+export * from "./headless/eventDraft";
+export * from "./headless/alerts";
+export * from "./headless/attendees";
 
 // Chrome & Modals
 export * from "./components/Titlebar";
 export * from "./components/Sidebar";
 export * from "./components/EventEditorModal";
+export * from "./components/AttendeeBadge";
 export * from "./components/SearchModal";
 export * from "./components/ShortcutsHelpModal";
 export * from "./components/IcsImportExportModal";

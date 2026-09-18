@@ -13,6 +13,11 @@ export type AccountKind = "local" | "google" | "caldav";
 export type AccountStatus = "idle" | "syncing" | "error";
 export type EditScope = "this" | "future" | "all";
 
+/** An invitee's role (RFC 5545 `ROLE`). */
+export type AttendeeRole = "chair" | "required" | "optional" | "non_participant";
+/** An invitee's RSVP status (RFC 5545 `PARTSTAT`). */
+export type AttendeeStatus = "needs_action" | "accepted" | "declined" | "tentative" | "delegated";
+
 /** An Account owning calendars. */
 export interface Account {
   id: string;
@@ -58,6 +63,8 @@ export interface Event {
   /** Per-event color override — falls back to the calendar color (P1.4). */
   color?: string | null;
   etag?: string | null;
+  /** RFC 5545 TRANSP: true = busy (opaque), false = free (transparent). */
+  busy?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -86,6 +93,46 @@ export interface Reminder {
   updatedAt?: string;
 }
 
+/** A person on an event (invitee or organizer). */
+export interface Attendee {
+  id: string;
+  eventId: string;
+  email: string;
+  displayName?: string | null;
+  role: AttendeeRole;
+  status: AttendeeStatus;
+  rsvp: boolean;
+  isOrganizer: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** Payload for creating/updating an attendee (the id is optional for creates). */
+export interface AttendeeDraft {
+  id?: string;
+  eventId: string;
+  email: string;
+  displayName?: string | null;
+  role?: AttendeeRole;
+  status?: AttendeeStatus;
+  rsvp?: boolean;
+  isOrganizer?: boolean;
+}
+
+/** Payload for creating/updating a reminder (the id is optional for creates). */
+export interface ReminderDraft {
+  id?: string;
+  eventId: string;
+  offsetMinutes?: number | null;
+  absoluteAt?: string | null;
+}
+
+/** Default alert offsets (minutes before start; negative = before, 0 = at start). */
+export interface DefaultAlerts {
+  event: number | null;
+  allDay: number | null;
+}
+
 /** A task / to-do item. */
 export interface Task {
   id: string;
@@ -111,6 +158,20 @@ export interface EventDraft {
   travelTimeMinutes?: number | null;
   /** Per-event color override (P1.4). */
   color?: string | null;
+  /** RFC 5545 TRANSP. Defaults to busy. */
+  busy?: boolean;
+}
+
+/** Local identity used to hide declined invitations. */
+export interface IdentitySettings {
+  selfEmail?: string | null;
+  showDeclined: boolean;
+}
+
+/** A free meeting slot returned by "Find a time". */
+export interface AvailableSlot {
+  start: string;
+  end: string;
 }
 
 /** Search results payload. */
@@ -130,6 +191,8 @@ export interface CalendarDataSource {
   listAccounts(): Promise<{ account: Account; calendars: Calendar[] }[]>;
   listCalendars(): Promise<Calendar[]>;
   setCalendarEnabled(calendarId: string, enabled: boolean): Promise<void>;
+  deleteAccount(accountId: string): Promise<void>;
+  deleteCalendar(calendarId: string): Promise<void>;
   listOccurrences(from: string, to: string, calendarIds?: string[]): Promise<OccurrenceItem[]>;
   getEvent(id: string): Promise<Event | null>;
   saveEvent(
@@ -141,6 +204,32 @@ export interface CalendarDataSource {
   deleteEvent(id: string, scope?: EditScope, targetDate?: string): Promise<Event[]>;
   listTasks(from?: string, to?: string): Promise<Task[]>;
   toggleTask(id: string): Promise<Task>;
+  listReminders(eventId: string): Promise<Reminder[]>;
+  saveReminder(draft: ReminderDraft): Promise<Reminder>;
+  deleteReminder(id: string): Promise<void>;
+  snoozeReminder(id: string, minutes: number): Promise<void>;
+  listAttendees(eventId: string): Promise<Attendee[]>;
+  saveAttendee(draft: AttendeeDraft): Promise<Attendee>;
+  deleteAttendee(id: string): Promise<void>;
+  suggestAttendees(query: string): Promise<Attendee[]>;
+  findAvailableSlots(
+    date: string,
+    durationMinutes: number,
+    calendarIds?: string[],
+  ): Promise<AvailableSlot[]>;
+  sendInvitations(eventId: string): Promise<{
+    subject: string;
+    recipients: string[];
+    outboxPath?: string | null;
+  }>;
+  applyItip(
+    calendarId: string,
+    icsContent: string,
+  ): Promise<{ method: string; uid: string; message: string }>;
+  getIdentity(): Promise<IdentitySettings>;
+  setIdentity(identity: IdentitySettings): Promise<void>;
+  getDefaultAlerts(): Promise<DefaultAlerts>;
+  setDefaultAlerts(alerts: DefaultAlerts): Promise<void>;
   search(query: string): Promise<SearchResults>;
   exportIcs(calendarId?: string): Promise<string>;
   importIcs(calendarId: string, icsContent: string): Promise<Event[]>;

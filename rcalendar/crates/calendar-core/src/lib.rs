@@ -9,7 +9,7 @@
 //! # Layout
 //!
 //! - [`date`] — date/time utilities (add/sub months, month grids).
-//! - [`model`] — `Account`, `Calendar`, `Event`, `Occurrence`, `Reminder`, `Task`.
+//! - [`model`] — `Account`, `Calendar`, `Event`, `Occurrence`, `Reminder`, `Attendee`, `Task`.
 //! - [`store`] — the [`Store`] trait + in-memory impl.
 //! - [`recurrence`] — RRULE parsing/expansion, EXDATE handling, scoped edits.
 //! - [`ical`] — RFC 5545 import/export.
@@ -37,7 +37,11 @@
 //!     tz: None,
 //!     rrule: Some("FREQ=WEEKLY;BYDAY=MO,WE,FR".into()),
 //!     exdates: vec![],
+//!     travel_time_minutes: None,
+//!     color: None,
 //!     etag: None,
+//!     attendees: vec![],
+//!     busy: true,
 //!     updated_at: "2026-08-10T15:00:00Z".parse().unwrap(),
 //!     created_at: "2026-08-10T15:00:00Z".parse().unwrap(),
 //!     deleted_at: None,
@@ -48,7 +52,9 @@
 //! ```
 
 pub mod date;
+pub mod freebusy;
 pub mod ical;
+pub mod itip;
 pub mod model;
 pub mod recurrence;
 pub mod store;
@@ -66,8 +72,10 @@ pub fn version() -> &'static str {
 }
 
 pub use error::{Error, Result};
+pub use freebusy::{compute_free_busy, find_available_slots, FreeBusySlot};
+pub use itip::{ImipEmailEnvelope, ItipMessage, ItipMethod};
 pub use model::{
-    Account, AccountKind, AccountStatus, Calendar, Event, EventDraft, Occurrence, Reminder, Task,
-    TimeRange,
+    Account, AccountKind, AccountStatus, Attendee, AttendeeRole, AttendeeStatus, Calendar, Event,
+    EventDraft, Occurrence, Reminder, Task, TimeRange,
 };
 pub use store::Store;

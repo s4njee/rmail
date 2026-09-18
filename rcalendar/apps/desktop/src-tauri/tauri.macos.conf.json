@@ -1,0 +1,21 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Almanac",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 600,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "acceptFirstMouse": true,
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 18
+        }
+      }
+    ]
+  }
+}

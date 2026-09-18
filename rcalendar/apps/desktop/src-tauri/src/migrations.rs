@@ -5,9 +5,10 @@
 
 use rusqlite::{params, Connection, Result};
 
-pub const MIGRATIONS: &[(&str, &str)] = &[(
-    "001_initial_schema",
-    r#"
+pub const MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "001_initial_schema",
+        r#"
     CREATE TABLE IF NOT EXISTS _migrations (
         version INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
@@ -97,7 +98,49 @@ pub const MIGRATIONS: &[(&str, &str)] = &[(
     CREATE INDEX IF NOT EXISTS idx_tasks_due_at ON tasks(due_at);
     CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON tasks(deleted_at);
     "#,
-)];
+    ),
+    (
+        "002_event_travel_time_and_color",
+        r#"
+    ALTER TABLE events ADD COLUMN travel_time_minutes INTEGER;
+    ALTER TABLE events ADD COLUMN color TEXT;
+    "#,
+    ),
+    (
+        "003_reminder_delivery",
+        r#"
+    ALTER TABLE reminders ADD COLUMN delivered_at TEXT;
+    ALTER TABLE reminders ADD COLUMN snooze_until TEXT;
+    "#,
+    ),
+    (
+        "004_attendees",
+        r#"
+    CREATE TABLE IF NOT EXISTS attendees (
+        id TEXT PRIMARY KEY NOT NULL,
+        event_id TEXT NOT NULL,
+        email TEXT NOT NULL,
+        display_name TEXT,
+        role TEXT NOT NULL,
+        status TEXT NOT NULL,
+        rsvp INTEGER NOT NULL DEFAULT 0,
+        is_organizer INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_attendees_event_id ON attendees(event_id);
+    CREATE INDEX IF NOT EXISTS idx_attendees_deleted_at ON attendees(deleted_at);
+    "#,
+    ),
+    (
+        "005_event_busy",
+        r#"
+    ALTER TABLE events ADD COLUMN busy INTEGER NOT NULL DEFAULT 1;
+    "#,
+    ),
+];
 
 /// Runs any pending migrations in a transaction.
 pub fn run_migrations(conn: &mut Connection) -> Result<()> {

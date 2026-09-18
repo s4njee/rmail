@@ -13,7 +13,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::error::Result;
-use crate::model::{Account, Calendar, Event, Reminder, Task, TimeRange};
+use crate::model::{Account, Attendee, Calendar, Event, Reminder, Task, TimeRange};
 
 /// The full CRUD surface of the calendar store, plus range queries.
 ///
@@ -44,6 +44,11 @@ pub trait Store {
     fn upsert_reminder(&self, reminder: &Reminder) -> Result<()>;
     fn delete_reminder(&self, id: Uuid) -> Result<()>;
 
+    // -- attendees ------------------------------------------------------
+    fn list_attendees(&self, event_id: Uuid) -> Result<Vec<Attendee>>;
+    fn upsert_attendee(&self, attendee: &Attendee) -> Result<()>;
+    fn delete_attendee(&self, id: Uuid) -> Result<()>;
+
     // -- tasks ----------------------------------------------------------
     /// Lists tasks whose due time falls inside `range`, or all when `None`.
     fn list_tasks(&self, range: Option<&TimeRange>) -> Result<Vec<Task>>;
@@ -65,6 +70,7 @@ struct Inner {
     calendars: HashMap<Uuid, Calendar>,
     events: HashMap<Uuid, Event>,
     reminders: HashMap<Uuid, Reminder>,
+    attendees: HashMap<Uuid, Attendee>,
     tasks: HashMap<Uuid, Task>,
 }
 
@@ -100,7 +106,29 @@ impl Store for InMemoryStore {
     }
 
     fn delete_account(&self, id: Uuid) -> Result<()> {
-        self.inner.lock().unwrap().accounts.remove(&id);
+        let mut inner = self.inner.lock().unwrap();
+        let cal_ids: Vec<Uuid> = inner
+            .calendars
+            .values()
+            .filter(|c| c.account_id == id)
+            .map(|c| c.id)
+            .collect();
+        let event_ids: Vec<Uuid> = inner
+            .events
+            .values()
+            .filter(|e| cal_ids.contains(&e.calendar_id))
+            .map(|e| e.id)
+            .collect();
+        inner.accounts.remove(&id);
+        for cid in &cal_ids {
+            inner.calendars.remove(cid);
+        }
+        for eid in &event_ids {
+            inner.events.remove(eid);
+            inner.reminders.retain(|_, r| r.event_id != *eid);
+            inner.attendees.retain(|_, a| a.event_id != *eid);
+        }
+        inner.tasks.retain(|_, t| !cal_ids.contains(&t.calendar_id));
         Ok(())
     }
 
@@ -129,7 +157,20 @@ impl Store for InMemoryStore {
     }
 
     fn delete_calendar(&self, id: Uuid) -> Result<()> {
-        self.inner.lock().unwrap().calendars.remove(&id);
+        let mut inner = self.inner.lock().unwrap();
+        let event_ids: Vec<Uuid> = inner
+            .events
+            .values()
+            .filter(|e| e.calendar_id == id)
+            .map(|e| e.id)
+            .collect();
+        inner.calendars.remove(&id);
+        for eid in &event_ids {
+            inner.events.remove(eid);
+            inner.reminders.retain(|_, r| r.event_id != *eid);
+            inner.attendees.retain(|_, a| a.event_id != *eid);
+        }
+        inner.tasks.retain(|_, t| t.calendar_id != id);
         Ok(())
     }
 
@@ -190,6 +231,31 @@ impl Store for InMemoryStore {
         Ok(())
     }
 
+    fn list_attendees(&self, event_id: Uuid) -> Result<Vec<Attendee>> {
+        let inner = self.inner.lock().unwrap();
+        Ok(inner
+            .attendees
+            .values()
+            .filter(|a| a.event_id == event_id)
+            .cloned()
+            .collect())
+    }
+
+    fn upsert_attendee(&self, attendee: &Attendee) -> Result<()> {
+        attendee.validate()?;
+        self.inner
+            .lock()
+            .unwrap()
+            .attendees
+            .insert(attendee.id, attendee.clone());
+        Ok(())
+    }
+
+    fn delete_attendee(&self, id: Uuid) -> Result<()> {
+        self.inner.lock().unwrap().attendees.remove(&id);
+        Ok(())
+    }
+
     fn list_tasks(&self, range: Option<&TimeRange>) -> Result<Vec<Task>> {
         let inner = self.inner.lock().unwrap();
         Ok(match range {
@@ -239,6 +305,7 @@ pub mod suite {
         event_crud(factory);
         event_range_queries(factory);
         reminder_crud(factory);
+        attendee_crud(factory);
         task_crud(factory);
         task_range_queries(factory);
     }
@@ -289,7 +356,11 @@ pub mod suite {
             tz: None,
             rrule: None,
             exdates: vec![],
+            travel_time_minutes: None,
+            color: None,
             etag: None,
+            attendees: vec![],
+            busy: true,
             updated_at: now(),
             created_at: now(),
             deleted_at: None,
@@ -461,6 +532,73 @@ pub mod suite {
             deleted_at: None,
         };
         assert!(store.upsert_reminder(&invalid).is_err());
+    }
+
+    fn attendee_crud(factory: &dyn Fn() -> Box<dyn Store>) {
+        use crate::model::{AttendeeRole, AttendeeStatus};
+        let store = factory();
+        let event_id = Uuid::new_v4();
+        let alice = Attendee {
+            id: Uuid::new_v4(),
+            event_id,
+            email: "alice@example.com".into(),
+            display_name: Some("Alice".into()),
+            role: AttendeeRole::Required,
+            status: AttendeeStatus::Accepted,
+            rsvp: true,
+            is_organizer: false,
+            created_at: now(),
+            updated_at: now(),
+            deleted_at: None,
+        };
+        let bob = Attendee {
+            id: Uuid::new_v4(),
+            event_id,
+            email: "bob@example.com".into(),
+            display_name: None,
+            role: AttendeeRole::Optional,
+            status: AttendeeStatus::NeedsAction,
+            rsvp: false,
+            is_organizer: false,
+            created_at: now(),
+            updated_at: now(),
+            deleted_at: None,
+        };
+
+        store.upsert_attendee(&alice).unwrap();
+        store.upsert_attendee(&bob).unwrap();
+        assert_eq!(store.list_attendees(event_id).unwrap().len(), 2);
+        assert_eq!(store.list_attendees(Uuid::new_v4()).unwrap().len(), 0);
+
+        // Upsert updates in place rather than duplicating.
+        let mut updated = alice.clone();
+        updated.status = AttendeeStatus::Declined;
+        store.upsert_attendee(&updated).unwrap();
+        assert_eq!(store.list_attendees(event_id).unwrap().len(), 2);
+        assert!(store
+            .list_attendees(event_id)
+            .unwrap()
+            .iter()
+            .any(|a| a.status == AttendeeStatus::Declined));
+
+        store.delete_attendee(alice.id).unwrap();
+        assert_eq!(store.list_attendees(event_id).unwrap().len(), 1);
+
+        // Attendees without an email are rejected at write time.
+        let invalid = Attendee {
+            id: Uuid::new_v4(),
+            event_id,
+            email: "   ".into(),
+            display_name: None,
+            role: AttendeeRole::Required,
+            status: AttendeeStatus::NeedsAction,
+            rsvp: false,
+            is_organizer: false,
+            created_at: now(),
+            updated_at: now(),
+            deleted_at: None,
+        };
+        assert!(store.upsert_attendee(&invalid).is_err());
     }
 
     fn task_crud(factory: &dyn Fn() -> Box<dyn Store>) {

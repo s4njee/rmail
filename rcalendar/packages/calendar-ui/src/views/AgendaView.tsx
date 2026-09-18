@@ -1,5 +1,7 @@
 import { Component, createMemo, createSignal, For, Show } from "solid-js";
 import { Calendar, OccurrenceItem, Task } from "../types/calendar";
+import { AttendeeBadge } from "../components/AttendeeBadge";
+import { AttendeeSummary } from "../headless/attendees";
 import {
   addDays,
   formatTime24,
@@ -19,6 +21,7 @@ export interface AgendaViewProps {
   tasks: Task[];
   onToggleTask?: (taskId: string) => void;
   onEventClick?: (item: OccurrenceItem) => void;
+  attendeeSummaries?: ReadonlyMap<string, AttendeeSummary>;
 }
 
 interface AgendaDayGroup {
@@ -79,7 +82,7 @@ export const AgendaView: Component<AgendaViewProps> = (props) => {
 
       for (const occ of dayOccurrences) {
         const cal = calendarMap().get(occ.event.calendarId);
-        const color = cal?.color || "#1F6FEB";
+        const color = occ.event.color || cal?.color || "#1F6FEB";
         let timeStr = "All day";
         if (!occ.occurrence.allDay && !occ.event.allDay) {
           const s = new Date(occ.occurrence.startsAt);
@@ -403,6 +406,10 @@ export const AgendaView: Component<AgendaViewProps> = (props) => {
                           >
                             {item.title}
                           </span>
+
+                          <Show when={item.rawEvent && props.attendeeSummaries?.get(item.rawEvent.event.id)}>
+                            {(summary) => <AttendeeBadge summary={summary()} />}
+                          </Show>
 
                           <div style={{ flex: 1 }} />
 

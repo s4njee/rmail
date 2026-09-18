@@ -9,7 +9,7 @@ use chrono::{Duration, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
-use crate::model::Event;
+use crate::model::{Attendee, AttendeeRole, AttendeeStatus, Event};
 
 /// Parses an RFC 5545 `.ics` string into events.
 ///
@@ -19,11 +19,21 @@ use crate::model::Event;
 ///   `DTSTART + 1d` (all-day).
 /// - Floating times (no `TZID`, no `Z`) are treated as UTC.
 pub fn parse_ical(input: &str) -> Result<Vec<Event>> {
+    parse_ical_inner(input, false)
+}
+
+/// Like [`parse_ical`], but keeps `STATUS:CANCELLED` events (marked with
+/// `deleted_at`) so iTIP `METHOD:CANCEL` payloads can be applied.
+pub fn parse_ical_including_cancelled(input: &str) -> Result<Vec<Event>> {
+    parse_ical_inner(input, true)
+}
+
+fn parse_ical_inner(input: &str, include_cancelled: bool) -> Result<Vec<Event>> {
     let mut events = Vec::new();
     for calendar in ical::parser::ical::IcalParser::new(input.as_bytes()) {
         let calendar = calendar.map_err(|e| Error::Ical(e.to_string()))?;
         for vevent in &calendar.events {
-            if let Some(event) = parse_vevent(vevent)? {
+            if let Some(event) = parse_vevent(vevent, include_cancelled)? {
                 events.push(event);
             }
         }
@@ -111,6 +121,12 @@ pub fn write_ical(events: &[Event]) -> Result<String> {
                 .join(",");
             push_prop(&mut out, "EXDATE", &values);
         }
+        write_attendees(&mut out, &event.attendees);
+        push_prop(
+            &mut out,
+            "TRANSP",
+            if event.busy { "OPAQUE" } else { "TRANSPARENT" },
+        );
         out.push_str("END:VEVENT\r\n");
     }
     out.push_str("END:VCALENDAR\r\n");
@@ -125,7 +141,88 @@ pub fn write_ical(events: &[Event]) -> Result<String> {
 /// IANA `TZID` (when anchored to one).
 type ParsedDateTime = (chrono::DateTime<Utc>, bool, Option<String>);
 
-fn parse_vevent(vevent: &ical::parser::ical::component::IcalEvent) -> Result<Option<Event>> {
+/// A parsed person line (ATTENDEE or ORGANIZER) before it is bound to an event id.
+struct RawAttendee {
+    email: String,
+    display_name: Option<String>,
+    role: AttendeeRole,
+    status: AttendeeStatus,
+    rsvp: bool,
+    is_organizer: bool,
+}
+
+fn parse_attendee_prop(prop: &ical::property::Property, is_organizer: bool) -> Result<RawAttendee> {
+    let params = prop.params.as_deref().unwrap_or_default();
+    let param = |key: &str| {
+        params
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .and_then(|(_, v)| v.first())
+            .cloned()
+    };
+
+    let email = prop
+        .value
+        .as_deref()
+        .map(|v| v.trim().trim_start_matches("mailto:"))
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| Error::Ical("person line is missing an email".into()))?;
+
+    let role = param("ROLE")
+        .as_deref()
+        .map(AttendeeRole::from_rfc)
+        .unwrap_or(if is_organizer {
+            AttendeeRole::Chair
+        } else {
+            AttendeeRole::Required
+        });
+    let status = param("PARTSTAT")
+        .as_deref()
+        .map(AttendeeStatus::from_rfc)
+        .unwrap_or_default();
+    let rsvp = param("RSVP").is_some_and(|v| v.eq_ignore_ascii_case("true"));
+
+    Ok(RawAttendee {
+        email,
+        display_name: param("CN"),
+        role,
+        status,
+        rsvp,
+        is_organizer,
+    })
+}
+
+/// Emits `ATTENDEE` / `ORGANIZER` lines for an event's people (RFC 5545 §3.8.4).
+fn write_attendees(out: &mut String, attendees: &[Attendee]) {
+    for a in attendees {
+        if a.is_organizer {
+            let mut line = String::from("ORGANIZER");
+            if let Some(cn) = &a.display_name {
+                line.push_str(&format!(";CN={}", escape_text(cn)));
+            }
+            line.push_str(&format!(":mailto:{}", a.email));
+            fold_line(out, &line);
+            continue;
+        }
+        let mut line = String::from("ATTENDEE");
+        if let Some(cn) = &a.display_name {
+            line.push_str(&format!(";CN={}", escape_text(cn)));
+        }
+        line.push_str(&format!(";ROLE={}", a.role.rfc_value()));
+        line.push_str(&format!(";PARTSTAT={}", a.status.rfc_value()));
+        if a.rsvp {
+            line.push_str(";RSVP=TRUE");
+        }
+        line.push_str(&format!(":mailto:{}", a.email));
+        fold_line(out, &line);
+    }
+}
+
+fn parse_vevent(
+    vevent: &ical::parser::ical::component::IcalEvent,
+    include_cancelled: bool,
+) -> Result<Option<Event>> {
     let mut uid = None;
     let mut title = None;
     let mut location = None;
@@ -135,6 +232,8 @@ fn parse_vevent(vevent: &ical::parser::ical::component::IcalEvent) -> Result<Opt
     let mut rrule = None;
     let mut exdates = Vec::new();
     let mut cancelled = false;
+    let mut busy = true;
+    let mut people = Vec::new();
 
     for prop in &vevent.properties {
         match prop.name.to_ascii_uppercase().as_str() {
@@ -149,6 +248,8 @@ fn parse_vevent(vevent: &ical::parser::ical::component::IcalEvent) -> Result<Opt
             "SUMMARY" => title = prop.value.as_deref().map(unescape_text),
             "DESCRIPTION" => notes = prop.value.as_deref().map(unescape_text),
             "LOCATION" => location = prop.value.as_deref().map(unescape_text),
+            "ATTENDEE" => people.push(parse_attendee_prop(prop, false)?),
+            "ORGANIZER" => people.push(parse_attendee_prop(prop, true)?),
             "DTSTART" => start = Some(parse_property_datetime(prop)?),
             "DTEND" => end = Some(parse_property_datetime(prop)?),
             "RRULE" => {
@@ -173,12 +274,18 @@ fn parse_vevent(vevent: &ical::parser::ical::component::IcalEvent) -> Result<Opt
                     .as_deref()
                     .is_some_and(|v| v.eq_ignore_ascii_case("cancelled"));
             }
+            "TRANSP" => {
+                busy = !prop
+                    .value
+                    .as_deref()
+                    .is_some_and(|v| v.eq_ignore_ascii_case("TRANSPARENT"));
+            }
             // Unknown properties are ignored without failing the import.
             _ => {}
         }
     }
 
-    if cancelled {
+    if cancelled && !include_cancelled {
         return Ok(None);
     }
 
@@ -191,8 +298,9 @@ fn parse_vevent(vevent: &ical::parser::ical::component::IcalEvent) -> Result<Opt
         None => starts_at + Duration::hours(1),
     };
 
+    let event_id = Uuid::new_v4();
     let event = Event {
-        id: Uuid::new_v4(),
+        id: event_id,
         calendar_id: Uuid::new_v4(), // assigned by the caller's store
         uid: uid.unwrap_or_else(|| format!("import-{}@almanac", Uuid::new_v4())),
         title: title.unwrap_or_default(),
@@ -204,10 +312,29 @@ fn parse_vevent(vevent: &ical::parser::ical::component::IcalEvent) -> Result<Opt
         tz,
         rrule,
         exdates,
+        travel_time_minutes: None,
+        color: None,
         etag: None,
+        attendees: people
+            .into_iter()
+            .map(|p| Attendee {
+                id: Uuid::new_v4(),
+                event_id,
+                email: p.email,
+                display_name: p.display_name,
+                role: p.role,
+                status: p.status,
+                rsvp: p.rsvp,
+                is_organizer: p.is_organizer,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                deleted_at: None,
+            })
+            .collect(),
+        busy,
         updated_at: Utc::now(),
         created_at: Utc::now(),
-        deleted_at: None,
+        deleted_at: if cancelled { Some(Utc::now()) } else { None },
     };
     event.validate().map_err(|e| Error::Ical(e.to_string()))?;
     Ok(Some(event))
@@ -355,7 +482,11 @@ mod tests {
             tz: Some("America/New_York".into()),
             rrule: Some("FREQ=WEEKLY;BYDAY=MO,WE,TH".into()),
             exdates: vec![NaiveDate::from_ymd_opt(2026, 8, 20).unwrap()],
+            travel_time_minutes: None,
+            color: None,
             etag: None,
+            attendees: vec![],
+            busy: true,
             updated_at: utc("2026-08-13T10:00:00"),
             created_at: utc("2026-08-13T10:00:00"),
             deleted_at: None,
@@ -528,9 +659,9 @@ mod tests {
         );
     }
 
-    // P1.6 hardening: reminder/attendee lines and malformed input are tolerated.
+    // P1.6 hardening: malformed input and VALARM lines are tolerated.
     #[test]
-    fn ignores_valarm_and_attendee_lines() {
+    fn ignores_valarm_and_parses_attendee_lines() {
         let ics = concat!(
             "BEGIN:VCALENDAR\r\n",
             "VERSION:2.0\r\n",
@@ -540,6 +671,137 @@ mod tests {
             "DTEND:20260813T110000Z\r\n",
             "SUMMARY:Meet\r\n",
             "ATTENDEE;CN=Alice;PARTSTAT=ACCEPTED:mailto:alice@example.com\r\n",
+            "BEGIN:VALARM\r\n",
+            "TRIGGER:-PT15M\r\n",
+            "ACTION:DISPLAY\r\n",
+            "END:VALARM\r\n",
+            "END:VEVENT\r\n",
+            "END:VCALENDAR",
+        );
+        let events = parse_ical(ics).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].title, "Meet");
+        assert_eq!(events[0].tz, None, "floating times parse as UTC");
+        assert_eq!(events[0].attendees.len(), 1);
+        assert_eq!(events[0].attendees[0].email, "alice@example.com");
+        assert_eq!(events[0].attendees[0].status, AttendeeStatus::Accepted);
+    }
+
+    #[test]
+    fn transparency_round_trips() {
+        let mut e = sample_event();
+        e.busy = false;
+        let ics = write_ical(&[e]).unwrap();
+        assert!(ics.contains("TRANSP:TRANSPARENT"));
+        let imported = parse_ical(&ics).unwrap();
+        assert!(!imported[0].busy);
+
+        let mut opaque = sample_event();
+        opaque.busy = true;
+        let ics = write_ical(&[opaque]).unwrap();
+        assert!(ics.contains("TRANSP:OPAQUE"));
+        assert!(parse_ical(&ics).unwrap()[0].busy);
+    }
+
+    #[test]
+    fn attendee_round_trips_through_ical() {
+        use crate::model::Attendee;
+        let mut e = sample_event();
+        e.attendees = vec![
+            Attendee {
+                id: Uuid::new_v4(),
+                event_id: e.id,
+                email: "alice@example.com".into(),
+                display_name: Some("Alice".into()),
+                role: crate::model::AttendeeRole::Required,
+                status: crate::model::AttendeeStatus::Accepted,
+                rsvp: true,
+                is_organizer: false,
+                created_at: utc("2026-08-01T00:00:00"),
+                updated_at: utc("2026-08-01T00:00:00"),
+                deleted_at: None,
+            },
+            Attendee {
+                id: Uuid::new_v4(),
+                event_id: e.id,
+                email: "carol@example.com".into(),
+                display_name: None,
+                role: crate::model::AttendeeRole::Optional,
+                status: crate::model::AttendeeStatus::Tentative,
+                rsvp: false,
+                is_organizer: false,
+                created_at: utc("2026-08-01T00:00:00"),
+                updated_at: utc("2026-08-01T00:00:00"),
+                deleted_at: None,
+            },
+            Attendee {
+                id: Uuid::new_v4(),
+                event_id: e.id,
+                email: "boss@example.com".into(),
+                display_name: Some("Boss".into()),
+                role: crate::model::AttendeeRole::Chair,
+                status: crate::model::AttendeeStatus::NeedsAction,
+                rsvp: false,
+                is_organizer: true,
+                created_at: utc("2026-08-01T00:00:00"),
+                updated_at: utc("2026-08-01T00:00:00"),
+                deleted_at: None,
+            },
+        ];
+
+        let ics = write_ical(&[e.clone()]).unwrap();
+        assert!(
+            ics.contains("ORGANIZER;CN=Boss:mailto:boss@example.com"),
+            "organizer emitted: {ics}"
+        );
+        assert!(
+            ics.contains("ATTENDEE;CN=Alice;ROLE=REQ-PARTICIPANT"),
+            "attendee params emitted: {ics}"
+        );
+        assert!(
+            ics.contains("PARTSTAT=ACCEPTED;RSVP=TRUE"),
+            "attendee status/rsvp emitted: {ics}"
+        );
+
+        let imported = parse_ical(&ics).unwrap();
+        assert_eq!(imported.len(), 1);
+        let got = &imported[0];
+        assert_eq!(got.attendees.len(), 3, "all people round-trip");
+
+        let alice = got
+            .attendees
+            .iter()
+            .find(|a| a.email == "alice@example.com")
+            .unwrap();
+        assert_eq!(alice.display_name.as_deref(), Some("Alice"));
+        assert_eq!(alice.role, crate::model::AttendeeRole::Required);
+        assert_eq!(alice.status, crate::model::AttendeeStatus::Accepted);
+        assert!(alice.rsvp);
+        assert!(!alice.is_organizer);
+        assert_eq!(
+            alice.event_id, got.id,
+            "attendee bound to its (imported) event"
+        );
+
+        let boss = got
+            .attendees
+            .iter()
+            .find(|a| a.email == "boss@example.com")
+            .unwrap();
+        assert!(boss.is_organizer);
+        assert_eq!(boss.role, crate::model::AttendeeRole::Chair);
+    }
+
+    #[test]
+    fn import_rules_out_valarm_and_malformed_input() {
+        let ics = concat!(
+            "BEGIN:VCALENDAR\r\n",
+            "VERSION:2.0\r\n",
+            "BEGIN:VEVENT\r\n",
+            "UID:r@example.com\r\n",
+            "DTSTART:20260813T100000Z\r\n",
+            "DTEND:20260813T110000Z\r\n",
+            "SUMMARY:Meet\r\n",
             "BEGIN:VALARM\r\n",
             "TRIGGER:-PT15M\r\n",
             "ACTION:DISPLAY\r\n",

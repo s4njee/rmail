@@ -406,7 +406,9 @@ pub enum EditScope {
 }
 
 /// Field changes for an occurrence edit. `title`/`location`/`notes` fall back
-/// to the series values when `None`.
+/// to the series values when `None`. `rrule` and `tz` are tri-state:
+/// `None` leaves the series value alone, `Some(None)` clears it, `Some(Some(_))`
+/// replaces it. A `This` override never inherits a new series rule.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OccurrenceChanges {
     pub starts_at: DateTime<Utc>,
@@ -415,6 +417,10 @@ pub struct OccurrenceChanges {
     pub title: Option<String>,
     pub location: Option<String>,
     pub notes: Option<String>,
+    pub rrule: Option<Option<String>>,
+    pub tz: Option<Option<String>>,
+    pub travel_time_minutes: Option<i64>,
+    pub color: Option<String>,
 }
 
 fn apply_changes(event: &mut Event, changes: &OccurrenceChanges) {
@@ -430,6 +436,14 @@ fn apply_changes(event: &mut Event, changes: &OccurrenceChanges) {
     if let Some(notes) = &changes.notes {
         event.notes = Some(notes.clone());
     }
+    if let Some(tz) = &changes.tz {
+        event.tz = tz.clone();
+    }
+    if let Some(rrule) = &changes.rrule {
+        event.rrule = rrule.clone();
+    }
+    event.travel_time_minutes = changes.travel_time_minutes;
+    event.color = changes.color.clone();
 }
 
 fn add_exdate(event: &mut Event, date: NaiveDate) {
@@ -487,8 +501,9 @@ pub fn edit_occurrence(
             add_exdate(&mut updated, date);
             updated.updated_at = stamp();
 
+            let override_id = Uuid::new_v4();
             let override_event = Event {
-                id: Uuid::new_v4(),
+                id: override_id,
                 calendar_id: series.calendar_id,
                 uid: format!("{}@almanac.local", Uuid::new_v4()),
                 title: changes
@@ -500,10 +515,23 @@ pub fn edit_occurrence(
                 starts_at: changes.starts_at,
                 ends_at: changes.ends_at,
                 all_day: changes.all_day,
-                tz: series.tz.clone(),
+                tz: changes.tz.clone().unwrap_or_else(|| series.tz.clone()),
                 rrule: None,
                 exdates: vec![],
+                travel_time_minutes: changes.travel_time_minutes.or(series.travel_time_minutes),
+                color: changes.color.clone().or_else(|| series.color.clone()),
                 etag: None,
+                attendees: series
+                    .attendees
+                    .iter()
+                    .map(|a| {
+                        let mut copy = a.clone();
+                        copy.id = Uuid::new_v4();
+                        copy.event_id = override_id;
+                        copy
+                    })
+                    .collect(),
+                busy: series.busy,
                 updated_at: stamp(),
                 created_at: stamp(),
                 deleted_at: None,
@@ -522,8 +550,16 @@ pub fn edit_occurrence(
             let mut head = series.clone();
             head.id = Uuid::new_v4();
             head.uid = format!("{}@almanac.local", Uuid::new_v4());
+            for attendee in &mut head.attendees {
+                attendee.id = Uuid::new_v4();
+                attendee.event_id = head.id;
+            }
             apply_changes(&mut head, changes);
-            head.rrule = Some(rule.to_string());
+            // A future split carries the new rule when one was supplied;
+            // otherwise it keeps the original series rule.
+            if changes.rrule.is_none() {
+                head.rrule = Some(rule.to_string());
+            }
             head.exdates.clear();
             head.etag = None;
             head.created_at = stamp();
@@ -592,7 +628,11 @@ mod tests {
             tz: None,
             rrule: rrule.map(str::to_string),
             exdates: vec![],
+            travel_time_minutes: None,
+            color: None,
             etag: None,
+            attendees: vec![],
+            busy: true,
             updated_at: dt("2026-08-01T00:00:00"),
             created_at: dt("2026-08-01T00:00:00"),
             deleted_at: None,
@@ -826,6 +866,10 @@ mod tests {
             title: Some("New time after DST".into()),
             location: None,
             notes: None,
+            rrule: None,
+            tz: None,
+            travel_time_minutes: None,
+            color: None,
         };
 
         let result = edit_occurrence(
@@ -903,6 +947,10 @@ mod tests {
             title: None,
             location: None,
             notes: None,
+            rrule: None,
+            tz: None,
+            travel_time_minutes: None,
+            color: None,
         };
         let result = edit_occurrence(
             &series,
@@ -949,6 +997,10 @@ mod tests {
             title: None,
             location: None,
             notes: None,
+            rrule: None,
+            tz: None,
+            travel_time_minutes: None,
+            color: None,
         };
         let result = edit_occurrence(
             &series,
@@ -1004,6 +1056,10 @@ mod tests {
             title: Some("Moved".into()),
             location: None,
             notes: None,
+            rrule: None,
+            tz: None,
+            travel_time_minutes: None,
+            color: None,
         };
         let result = edit_occurrence(
             &series,
@@ -1083,6 +1139,10 @@ mod tests {
             title: None,
             location: None,
             notes: None,
+            rrule: None,
+            tz: None,
+            travel_time_minutes: None,
+            color: None,
         };
         for scope in [EditScope::This, EditScope::Future, EditScope::All] {
             let result = edit_occurrence(
@@ -1095,5 +1155,82 @@ mod tests {
             assert_eq!(result.len(), 1);
             assert_eq!(result[0].starts_at, dt("2026-08-13T11:00:00"));
         }
+    }
+
+    #[test]
+    fn future_split_carries_new_rrule_and_tz() {
+        let mut series = event(
+            "2026-08-10T09:00:00",
+            "2026-08-10T10:00:00",
+            Some("FREQ=WEEKLY;BYDAY=MO"),
+        );
+        series.tz = Some("America/New_York".into());
+
+        let changes = OccurrenceChanges {
+            starts_at: dt("2026-08-17T09:00:00"),
+            ends_at: dt("2026-08-17T10:00:00"),
+            all_day: false,
+            title: None,
+            location: None,
+            notes: None,
+            rrule: Some(Some("FREQ=MONTHLY;BYMONTHDAY=17".into())),
+            tz: Some(Some("Europe/London".into())),
+            travel_time_minutes: None,
+            color: None,
+        };
+        let result = edit_occurrence(
+            &series,
+            EditScope::Future,
+            NaiveDate::from_ymd_opt(2026, 8, 17).unwrap(),
+            &changes,
+        )
+        .unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(
+            result[0].rrule.as_ref().unwrap().contains("UNTIL="),
+            "original series is truncated"
+        );
+        assert_eq!(result[0].tz.as_deref(), Some("America/New_York"));
+        assert_eq!(
+            result[1].rrule.as_deref(),
+            Some("FREQ=MONTHLY;BYMONTHDAY=17")
+        );
+        assert_eq!(result[1].tz.as_deref(), Some("Europe/London"));
+    }
+
+    #[test]
+    fn this_override_does_not_change_series_rrule_or_tz() {
+        let mut series = event(
+            "2026-08-10T09:00:00",
+            "2026-08-10T10:00:00",
+            Some("FREQ=WEEKLY;BYDAY=MO"),
+        );
+        series.tz = Some("America/New_York".into());
+
+        let changes = OccurrenceChanges {
+            starts_at: dt("2026-08-17T11:00:00"),
+            ends_at: dt("2026-08-17T12:00:00"),
+            all_day: false,
+            title: Some("One-off".into()),
+            location: None,
+            notes: None,
+            rrule: Some(Some("FREQ=MONTHLY".into())),
+            tz: Some(Some("Europe/London".into())),
+            travel_time_minutes: None,
+            color: None,
+        };
+        let result = edit_occurrence(
+            &series,
+            EditScope::This,
+            NaiveDate::from_ymd_opt(2026, 8, 17).unwrap(),
+            &changes,
+        )
+        .unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].rrule.as_deref(), Some("FREQ=WEEKLY;BYDAY=MO"));
+        assert_eq!(result[0].tz.as_deref(), Some("America/New_York"));
+        assert!(result[1].rrule.is_none(), "this-instance stays a one-off");
+        assert_eq!(result[1].tz.as_deref(), Some("Europe/London"));
+        assert_eq!(result[1].title, "One-off");
     }
 }

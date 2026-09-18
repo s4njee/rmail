@@ -5,18 +5,24 @@
 
 use std::sync::Arc;
 
+use std::path::Path;
+
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use calendar_core::freebusy::find_available_slots as compute_available_slots;
+use calendar_core::itip::{generate_imip_email_invitation, parse_itip_message, ItipMethod};
 use calendar_core::model::{
-    Account, AccountKind, AccountStatus, Calendar, Event, EventDraft, Occurrence, Task, TimeRange,
+    Account, AccountKind, AccountStatus, Attendee, AttendeeRole, AttendeeStatus, Calendar, Event,
+    EventDraft, Occurrence, Reminder, Task, TimeRange,
 };
 use calendar_core::recurrence::{
     delete_occurrence, edit_occurrence, expand, EditScope, OccurrenceChanges,
 };
 use calendar_core::Store;
 
+use crate::mail::{dispatch_imip, ImipDispatch};
 use crate::search::{parse_date_query, SearchResults};
 use crate::store::SqliteStore;
 
@@ -110,7 +116,11 @@ impl AppState {
                     tz: draft.tz,
                     rrule: draft.rrule,
                     exdates: vec![],
+                    travel_time_minutes: draft.travel_time_minutes,
+                    color: draft.color,
                     etag: None,
+                    attendees: vec![],
+                    busy: draft.busy,
                     created_at: now,
                     updated_at: now,
                     deleted_at: None,
@@ -136,16 +146,38 @@ impl AppState {
                     title: Some(draft.title.clone()),
                     location: draft.location.clone(),
                     notes: draft.notes.clone(),
+                    rrule: Some(draft.rrule.clone()),
+                    tz: Some(draft.tz.clone()),
+                    travel_time_minutes: draft.travel_time_minutes,
+                    color: draft.color.clone(),
                 };
 
                 let date = target_date.unwrap_or_else(|| draft.starts_at.date_naive());
                 let resulting_events = edit_occurrence(&existing, edit_scope, date, &changes)
                     .map_err(|e| e.to_string())?;
+                let original_attendees = self
+                    .store
+                    .list_attendees(existing_id)
+                    .map_err(|e| e.to_string())?;
 
-                for evt in &resulting_events {
-                    self.store.upsert_event(evt).map_err(|e| e.to_string())?;
+                let mut saved = Vec::new();
+                for mut evt in resulting_events {
+                    evt.busy = draft.busy;
+                    self.store.upsert_event(&evt).map_err(|e| e.to_string())?;
+                    if evt.id != existing_id {
+                        for mut attendee in original_attendees.clone() {
+                            attendee.id = Uuid::new_v4();
+                            attendee.event_id = evt.id;
+                            attendee.created_at = now;
+                            attendee.updated_at = now;
+                            self.store
+                                .upsert_attendee(&attendee)
+                                .map_err(|e| e.to_string())?;
+                        }
+                    }
+                    saved.push(evt);
                 }
-                Ok(resulting_events)
+                Ok(saved)
             }
         }
     }
@@ -179,6 +211,24 @@ impl AppState {
         }
 
         Ok(resulting_events)
+    }
+
+    /// Soft-deletes an account and every calendar, event, task, and reminder it owns.
+    pub fn delete_account(&self, id: Uuid) -> Result<(), String> {
+        self.store
+            .get_account(id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("account {id} not found"))?;
+        self.store.delete_account(id).map_err(|e| e.to_string())
+    }
+
+    /// Soft-deletes a calendar and its events, tasks, and reminders.
+    pub fn delete_calendar(&self, id: Uuid) -> Result<(), String> {
+        self.store
+            .get_calendar(id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("calendar {id} not found"))?;
+        self.store.delete_calendar(id).map_err(|e| e.to_string())
     }
 
     /// Enables or disables a calendar (sidebar toggle).
@@ -368,6 +418,120 @@ impl AppState {
         Ok(task)
     }
 
+    /// Lists all reminders attached to an event.
+    pub fn list_reminders(&self, event_id: Uuid) -> Result<Vec<Reminder>, String> {
+        self.store
+            .list_reminders(event_id)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Creates or updates a reminder (upsert semantics). Returns the stored reminder.
+    pub fn save_reminder(&self, payload: SaveReminderPayload) -> Result<Reminder, String> {
+        let now = Utc::now();
+        let reminder = Reminder {
+            id: payload.id.unwrap_or_else(Uuid::new_v4),
+            event_id: payload.event_id,
+            offset_minutes: payload.offset_minutes,
+            absolute_at: payload.absolute_at,
+            created_at: now,
+            updated_at: now,
+            deleted_at: None,
+        };
+        reminder.validate().map_err(|e| e.to_string())?;
+        // Associate only with events that actually exist.
+        self.store
+            .get_event(payload.event_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("event {} not found", payload.event_id))?;
+        self.store
+            .upsert_reminder(&reminder)
+            .map_err(|e| e.to_string())?;
+        Ok(reminder)
+    }
+
+    /// Soft-deletes a reminder.
+    pub fn delete_reminder(&self, id: Uuid) -> Result<(), String> {
+        self.store.delete_reminder(id).map_err(|e| e.to_string())
+    }
+
+    /// Snoozes a reminder for a number of minutes from now.
+    pub fn snooze_reminder(&self, id: Uuid, minutes: u32) -> Result<(), String> {
+        let until = Utc::now() + chrono::Duration::minutes(minutes as i64);
+        self.store
+            .set_reminder_snooze(id, Some(until))
+            .map_err(|e| e.to_string())
+    }
+
+    /// Lists all attendees attached to an event.
+    pub fn list_attendees(&self, event_id: Uuid) -> Result<Vec<Attendee>, String> {
+        self.store
+            .list_attendees(event_id)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Creates or updates an attendee (upsert semantics). Returns the stored attendee.
+    pub fn save_attendee(&self, payload: SaveAttendeePayload) -> Result<Attendee, String> {
+        let now = Utc::now();
+        let attendee = Attendee {
+            id: payload.id.unwrap_or_else(Uuid::new_v4),
+            event_id: payload.event_id,
+            email: payload.email,
+            display_name: payload.display_name,
+            role: payload.role.unwrap_or(AttendeeRole::Required),
+            status: payload.status.unwrap_or(AttendeeStatus::NeedsAction),
+            rsvp: payload.rsvp.unwrap_or(false),
+            is_organizer: payload.is_organizer.unwrap_or(false),
+            created_at: now,
+            updated_at: now,
+            deleted_at: None,
+        };
+        attendee.validate().map_err(|e| e.to_string())?;
+        // Associate only with events that actually exist.
+        self.store
+            .get_event(payload.event_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("event {} not found", payload.event_id))?;
+        self.store
+            .upsert_attendee(&attendee)
+            .map_err(|e| e.to_string())?;
+        Ok(attendee)
+    }
+
+    /// Soft-deletes an attendee.
+    pub fn delete_attendee(&self, id: Uuid) -> Result<(), String> {
+        self.store.delete_attendee(id).map_err(|e| e.to_string())
+    }
+
+    /// Reads the default alert offsets (minutes before event start).
+    pub fn get_default_alerts(&self) -> Result<DefaultAlerts, String> {
+        let read = |key: &str| -> Result<Option<i64>, String> {
+            match self.store.get_setting(key).map_err(|e| e.to_string())? {
+                None => Ok(None),
+                Some(v) if v == "none" => Ok(None),
+                Some(v) => v
+                    .parse::<i64>()
+                    .map(Some)
+                    .map_err(|_| format!("invalid setting {key}: {v}")),
+            }
+        };
+        Ok(DefaultAlerts {
+            event: read("default_event_alert")?,
+            all_day: read("default_all_day_alert")?,
+        })
+    }
+
+    /// Persists the default alert offsets.
+    pub fn set_default_alerts(&self, alerts: DefaultAlerts) -> Result<(), String> {
+        let write = |key: &str, value: Option<i64>| -> Result<(), String> {
+            let s = value
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "none".into());
+            self.store.set_setting(key, &s).map_err(|e| e.to_string())
+        };
+        write("default_event_alert", alerts.event)?;
+        write("default_all_day_alert", alerts.all_day)
+    }
+
     /// Searches events and tasks with text matching and natural-language date parsing.
     pub fn search(&self, query: String) -> Result<SearchResults, String> {
         let today = Utc::now().date_naive();
@@ -427,11 +591,31 @@ impl AppState {
             .list_events_for_expansion(&range, Some(&target_cals))
             .map_err(|e| e.to_string())?;
 
-        calendar_core::ical::write_ical(&events).map_err(|e| e.to_string())
+        // Attach each event's attendees so the `.ics` export carries people.
+        let mut events_with_attendees = Vec::new();
+        for mut event in events {
+            event.attendees = self
+                .store
+                .list_attendees(event.id)
+                .map_err(|e| e.to_string())?;
+            events_with_attendees.push(event);
+        }
+
+        calendar_core::ical::write_ical(&events_with_attendees).map_err(|e| e.to_string())
     }
 
     /// Imports events from an iCalendar (.ics) string into the target calendar.
+    /// iTIP payloads (`METHOD:REQUEST/REPLY/CANCEL`) are applied rather than
+    /// blindly inserted as new events.
     pub fn import_ics(&self, calendar_id: Uuid, ics_content: String) -> Result<Vec<Event>, String> {
+        if ics_content
+            .lines()
+            .any(|l| l.trim().to_ascii_uppercase().starts_with("METHOD:"))
+        {
+            let report = self.apply_itip(calendar_id, ics_content)?;
+            return Ok(report.event.into_iter().collect());
+        }
+
         let imported_events =
             calendar_core::ical::parse_ical(&ics_content).map_err(|e| e.to_string())?;
 
@@ -439,16 +623,312 @@ impl AppState {
         let now = Utc::now();
 
         for mut event in imported_events {
-            event.id = Uuid::new_v4();
+            let new_id = Uuid::new_v4();
+            let parsed_attendees = std::mem::take(&mut event.attendees);
+            event.id = new_id;
             event.calendar_id = calendar_id;
             event.created_at = now;
             event.updated_at = now;
             event.deleted_at = None;
             self.store.upsert_event(&event).map_err(|e| e.to_string())?;
+            for mut attendee in parsed_attendees {
+                attendee.event_id = new_id;
+                attendee.id = Uuid::new_v4();
+                attendee.created_at = now;
+                attendee.updated_at = now;
+                attendee.deleted_at = None;
+                self.store
+                    .upsert_attendee(&attendee)
+                    .map_err(|e| e.to_string())?;
+            }
             created.push(event);
         }
 
         Ok(created)
+    }
+
+    /// Applies an iTIP REQUEST / REPLY / CANCEL against the store.
+    pub fn apply_itip(
+        &self,
+        calendar_id: Uuid,
+        ics_content: String,
+    ) -> Result<ItipApplyReport, String> {
+        let parsed = parse_itip_message(&ics_content).map_err(|e| e.to_string())?;
+        let now = Utc::now();
+        match parsed.method {
+            ItipMethod::Reply => {
+                let existing = self
+                    .store
+                    .get_event_by_uid(&parsed.uid)
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("no local event with uid {}", parsed.uid))?;
+                let Some(responder) = parsed.attendees.first().cloned() else {
+                    return Err("REPLY is missing an ATTENDEE".into());
+                };
+                let mut attendees = self
+                    .store
+                    .list_attendees(existing.id)
+                    .map_err(|e| e.to_string())?;
+                if let Some(local) = attendees
+                    .iter_mut()
+                    .find(|a| a.email.eq_ignore_ascii_case(&responder.email))
+                {
+                    local.status = responder.status;
+                    local.updated_at = now;
+                    self.store
+                        .upsert_attendee(local)
+                        .map_err(|e| e.to_string())?;
+                } else {
+                    let mut incoming = responder;
+                    incoming.id = Uuid::new_v4();
+                    incoming.event_id = existing.id;
+                    incoming.created_at = now;
+                    incoming.updated_at = now;
+                    incoming.deleted_at = None;
+                    self.store
+                        .upsert_attendee(&incoming)
+                        .map_err(|e| e.to_string())?;
+                }
+                Ok(ItipApplyReport {
+                    method: "REPLY".into(),
+                    uid: parsed.uid,
+                    event: Some(existing),
+                    message: format!("updated RSVP for {}", parsed.attendees[0].email),
+                })
+            }
+            ItipMethod::Cancel => {
+                if let Some(existing) = self
+                    .store
+                    .get_event_by_uid(&parsed.uid)
+                    .map_err(|e| e.to_string())?
+                {
+                    self.store
+                        .delete_event(existing.id)
+                        .map_err(|e| e.to_string())?;
+                    Ok(ItipApplyReport {
+                        method: "CANCEL".into(),
+                        uid: parsed.uid,
+                        event: None,
+                        message: "event cancelled".into(),
+                    })
+                } else {
+                    Ok(ItipApplyReport {
+                        method: "CANCEL".into(),
+                        uid: parsed.uid,
+                        event: None,
+                        message: "no matching local event".into(),
+                    })
+                }
+            }
+            ItipMethod::Request => {
+                let mut incoming = parsed.event;
+                let people = std::mem::take(&mut incoming.attendees);
+                if let Some(mut existing) = self
+                    .store
+                    .get_event_by_uid(&parsed.uid)
+                    .map_err(|e| e.to_string())?
+                {
+                    existing.title = incoming.title;
+                    existing.location = incoming.location;
+                    existing.notes = incoming.notes;
+                    existing.starts_at = incoming.starts_at;
+                    existing.ends_at = incoming.ends_at;
+                    existing.all_day = incoming.all_day;
+                    existing.tz = incoming.tz;
+                    existing.rrule = incoming.rrule;
+                    existing.exdates = incoming.exdates;
+                    existing.busy = incoming.busy;
+                    existing.updated_at = now;
+                    existing.validate().map_err(|e| e.to_string())?;
+                    self.store
+                        .upsert_event(&existing)
+                        .map_err(|e| e.to_string())?;
+                    self.replace_attendees(existing.id, people, now)?;
+                    Ok(ItipApplyReport {
+                        method: "REQUEST".into(),
+                        uid: parsed.uid,
+                        event: Some(existing),
+                        message: "invitation updated".into(),
+                    })
+                } else {
+                    incoming.id = Uuid::new_v4();
+                    incoming.calendar_id = calendar_id;
+                    incoming.created_at = now;
+                    incoming.updated_at = now;
+                    incoming.deleted_at = None;
+                    incoming.validate().map_err(|e| e.to_string())?;
+                    self.store
+                        .upsert_event(&incoming)
+                        .map_err(|e| e.to_string())?;
+                    self.replace_attendees(incoming.id, people, now)?;
+                    Ok(ItipApplyReport {
+                        method: "REQUEST".into(),
+                        uid: parsed.uid,
+                        event: Some(incoming),
+                        message: "invitation created".into(),
+                    })
+                }
+            }
+        }
+    }
+
+    fn replace_attendees(
+        &self,
+        event_id: Uuid,
+        people: Vec<Attendee>,
+        now: DateTime<Utc>,
+    ) -> Result<(), String> {
+        let existing = self
+            .store
+            .list_attendees(event_id)
+            .map_err(|e| e.to_string())?;
+        for a in existing {
+            self.store
+                .delete_attendee(a.id)
+                .map_err(|e| e.to_string())?;
+        }
+        for mut attendee in people {
+            attendee.id = Uuid::new_v4();
+            attendee.event_id = event_id;
+            attendee.created_at = now;
+            attendee.updated_at = now;
+            attendee.deleted_at = None;
+            self.store
+                .upsert_attendee(&attendee)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Builds an iMIP REQUEST and hands it to the mail outbox (T1.10).
+    pub fn send_invitations(
+        &self,
+        event_id: Uuid,
+        outbox_dir: Option<&Path>,
+    ) -> Result<ImipDispatch, String> {
+        let mut event = self
+            .store
+            .get_event(event_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("event {event_id} not found"))?;
+        event.attendees = self
+            .store
+            .list_attendees(event_id)
+            .map_err(|e| e.to_string())?;
+        let organizer = event
+            .attendees
+            .iter()
+            .find(|a| a.is_organizer)
+            .map(|a| a.display_name.clone().unwrap_or_else(|| a.email.clone()))
+            .unwrap_or_else(|| "Almanac".into());
+        let recipients: Vec<String> = event
+            .attendees
+            .iter()
+            .filter(|a| !a.is_organizer)
+            .map(|a| a.email.clone())
+            .collect();
+        if recipients.is_empty() {
+            return Err("event has no invitees to send to".into());
+        }
+        let envelope =
+            generate_imip_email_invitation(&event, &organizer).map_err(|e| e.to_string())?;
+        match outbox_dir {
+            Some(dir) => dispatch_imip(dir, envelope, recipients),
+            None => Ok(ImipDispatch {
+                envelope,
+                recipients,
+                outbox_path: None,
+                mailed: false,
+            }),
+        }
+    }
+
+    /// Finds free slots on `date` among enabled calendars (T1.11).
+    pub fn find_available_slots(
+        &self,
+        date: NaiveDate,
+        duration_minutes: u32,
+        calendar_ids: Option<Vec<Uuid>>,
+    ) -> Result<Vec<TimeRange>, String> {
+        let start =
+            DateTime::<Utc>::from_naive_utc_and_offset(date.and_hms_opt(0, 0, 0).unwrap(), Utc);
+        let end = DateTime::<Utc>::from_naive_utc_and_offset(
+            date.succ_opt()
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+                .unwrap_or(date.and_hms_opt(23, 59, 59).unwrap()),
+            Utc,
+        );
+        let range = TimeRange::new(start, end).map_err(|e| e.to_string())?;
+        let events = self
+            .store
+            .list_events_for_expansion(&range, calendar_ids.as_deref())
+            .map_err(|e| e.to_string())?;
+
+        let mut busy_events = Vec::new();
+        for event in events {
+            if !event.busy {
+                continue;
+            }
+            match expand(&event, &range) {
+                Ok(occs) => {
+                    for occ in occs {
+                        let mut clone = event.clone();
+                        clone.starts_at = occ.starts_at;
+                        clone.ends_at = occ.ends_at;
+                        clone.all_day = occ.all_day;
+                        clone.rrule = None;
+                        busy_events.push(clone);
+                    }
+                }
+                Err(_) => busy_events.push(event),
+            }
+        }
+        Ok(compute_available_slots(
+            &busy_events,
+            date,
+            duration_minutes.max(15),
+            9,
+            18,
+        ))
+    }
+
+    /// Distinct known invitees matching `query` (editor autocomplete).
+    pub fn suggest_attendees(&self, query: String) -> Result<Vec<Attendee>, String> {
+        self.store
+            .list_known_attendees(&query)
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn get_identity(&self) -> Result<IdentitySettings, String> {
+        let self_email = self
+            .store
+            .get_setting("self_email")
+            .map_err(|e| e.to_string())?
+            .filter(|s| !s.trim().is_empty());
+        let show_declined = matches!(
+            self.store
+                .get_setting("show_declined")
+                .map_err(|e| e.to_string())?
+                .as_deref(),
+            Some("1") | Some("true")
+        );
+        Ok(IdentitySettings {
+            self_email,
+            show_declined,
+        })
+    }
+
+    pub fn set_identity(&self, identity: IdentitySettings) -> Result<(), String> {
+        self.store
+            .set_setting("self_email", identity.self_email.as_deref().unwrap_or(""))
+            .map_err(|e| e.to_string())?;
+        self.store
+            .set_setting(
+                "show_declined",
+                if identity.show_declined { "1" } else { "0" },
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
 
@@ -480,6 +960,51 @@ pub struct SyncReport {
     pub account_id: Uuid,
     pub synced_at: DateTime<Utc>,
     pub success: bool,
+    pub message: String,
+}
+
+/// Payload for creating or updating a reminder.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SaveReminderPayload {
+    pub id: Option<Uuid>,
+    pub event_id: Uuid,
+    pub offset_minutes: Option<i64>,
+    pub absolute_at: Option<DateTime<Utc>>,
+}
+
+/// Payload for creating or updating an attendee.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SaveAttendeePayload {
+    pub id: Option<Uuid>,
+    pub event_id: Uuid,
+    pub email: String,
+    pub display_name: Option<String>,
+    pub role: Option<AttendeeRole>,
+    pub status: Option<AttendeeStatus>,
+    pub rsvp: Option<bool>,
+    pub is_organizer: Option<bool>,
+}
+
+/// Default alert offsets (minutes before start; negative = before, 0 = at start).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DefaultAlerts {
+    pub event: Option<i64>,
+    pub all_day: Option<i64>,
+}
+
+/// Local identity used for declined-event filtering and iTIP organizer fallback.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IdentitySettings {
+    pub self_email: Option<String>,
+    pub show_declined: bool,
+}
+
+/// Result of applying an incoming iTIP payload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItipApplyReport {
+    pub method: String,
+    pub uid: String,
+    pub event: Option<Event>,
     pub message: String,
 }
 
@@ -530,6 +1055,18 @@ pub fn delete_event(
     target_date: Option<NaiveDate>,
 ) -> Result<Vec<Event>, String> {
     state.delete_event(id, scope, target_date)
+}
+
+/// Soft-deletes an account and its calendars/events.
+#[tauri::command]
+pub fn delete_account(state: tauri::State<'_, AppState>, id: Uuid) -> Result<(), String> {
+    state.delete_account(id)
+}
+
+/// Soft-deletes a calendar and its events.
+#[tauri::command]
+pub fn delete_calendar(state: tauri::State<'_, AppState>, id: Uuid) -> Result<(), String> {
+    state.delete_calendar(id)
 }
 
 /// Enables or disables a calendar (sidebar toggle).
@@ -590,6 +1127,79 @@ pub fn toggle_task(state: tauri::State<'_, AppState>, id: Uuid) -> Result<Task, 
     state.toggle_task(id)
 }
 
+/// Lists reminders attached to an event.
+#[tauri::command]
+pub fn list_reminders(
+    state: tauri::State<'_, AppState>,
+    event_id: Uuid,
+) -> Result<Vec<Reminder>, String> {
+    state.list_reminders(event_id)
+}
+
+/// Creates or updates a reminder.
+#[tauri::command]
+pub fn save_reminder(
+    state: tauri::State<'_, AppState>,
+    payload: SaveReminderPayload,
+) -> Result<Reminder, String> {
+    state.save_reminder(payload)
+}
+
+/// Soft-deletes a reminder.
+#[tauri::command]
+pub fn delete_reminder(state: tauri::State<'_, AppState>, id: Uuid) -> Result<(), String> {
+    state.delete_reminder(id)
+}
+
+/// Snoozes a reminder for a number of minutes from now.
+#[tauri::command]
+pub fn snooze_reminder(
+    state: tauri::State<'_, AppState>,
+    id: Uuid,
+    minutes: u32,
+) -> Result<(), String> {
+    state.snooze_reminder(id, minutes)
+}
+
+/// Lists attendees attached to an event.
+#[tauri::command]
+pub fn list_attendees(
+    state: tauri::State<'_, AppState>,
+    event_id: Uuid,
+) -> Result<Vec<Attendee>, String> {
+    state.list_attendees(event_id)
+}
+
+/// Creates or updates an attendee.
+#[tauri::command]
+pub fn save_attendee(
+    state: tauri::State<'_, AppState>,
+    payload: SaveAttendeePayload,
+) -> Result<Attendee, String> {
+    state.save_attendee(payload)
+}
+
+/// Soft-deletes an attendee.
+#[tauri::command]
+pub fn delete_attendee(state: tauri::State<'_, AppState>, id: Uuid) -> Result<(), String> {
+    state.delete_attendee(id)
+}
+
+/// Reads the default alert offsets.
+#[tauri::command]
+pub fn get_default_alerts(state: tauri::State<'_, AppState>) -> Result<DefaultAlerts, String> {
+    state.get_default_alerts()
+}
+
+/// Persists the default alert offsets.
+#[tauri::command]
+pub fn set_default_alerts(
+    state: tauri::State<'_, AppState>,
+    alerts: DefaultAlerts,
+) -> Result<(), String> {
+    state.set_default_alerts(alerts)
+}
+
 /// Searches events and tasks with text matching and natural-language date parsing.
 #[tauri::command]
 pub fn search(state: tauri::State<'_, AppState>, query: String) -> Result<SearchResults, String> {
@@ -623,4 +1233,61 @@ pub fn connect_google_account(
     token: String,
 ) -> Result<AccountWithCalendars, String> {
     state.connect_google_account(email, token)
+}
+
+/// Applies an incoming iTIP REQUEST / REPLY / CANCEL.
+#[tauri::command]
+pub fn apply_itip(
+    state: tauri::State<'_, AppState>,
+    calendar_id: Uuid,
+    ics_content: String,
+) -> Result<ItipApplyReport, String> {
+    state.apply_itip(calendar_id, ics_content)
+}
+
+/// Generates an iMIP invitation and hands it to the mail outbox.
+#[tauri::command]
+pub fn send_invitations(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    event_id: Uuid,
+) -> Result<ImipDispatch, String> {
+    use tauri::Manager;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    state.send_invitations(event_id, Some(&dir))
+}
+
+/// Finds free meeting slots on a date.
+#[tauri::command]
+pub fn find_available_slots(
+    state: tauri::State<'_, AppState>,
+    date: NaiveDate,
+    duration_minutes: u32,
+    calendar_ids: Option<Vec<Uuid>>,
+) -> Result<Vec<TimeRange>, String> {
+    state.find_available_slots(date, duration_minutes, calendar_ids)
+}
+
+/// Autocomplete suggestions for the invitee picker.
+#[tauri::command]
+pub fn suggest_attendees(
+    state: tauri::State<'_, AppState>,
+    query: String,
+) -> Result<Vec<Attendee>, String> {
+    state.suggest_attendees(query)
+}
+
+/// Reads the local identity (self email + show-declined).
+#[tauri::command]
+pub fn get_identity(state: tauri::State<'_, AppState>) -> Result<IdentitySettings, String> {
+    state.get_identity()
+}
+
+/// Persists the local identity (self email + show-declined).
+#[tauri::command]
+pub fn set_identity(
+    state: tauri::State<'_, AppState>,
+    identity: IdentitySettings,
+) -> Result<(), String> {
+    state.set_identity(identity)
 }

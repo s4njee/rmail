@@ -12,7 +12,7 @@ const SHORTCUT_GROUPS = [
       { key: "t", desc: "Go to today" },
       { key: "j / k", desc: "Next / previous period" },
       { key: "← / →", desc: "Move focused date" },
-      { key: "1 – 5", desc: "Switch view (Month, Week, 3-day, Day, Agenda)" },
+      { key: "1 – 6", desc: "Switch view (Month, Week, 3-day, Day, Agenda, Year)" },
     ],
   },
   {

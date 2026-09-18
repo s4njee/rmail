@@ -1,5 +1,7 @@
 import { Component, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { Calendar, OccurrenceItem } from "../types/calendar";
+import { AttendeeBadge } from "../components/AttendeeBadge";
+import { AttendeeSummary } from "../headless/attendees";
 import {
   addDays,
   formatTime24,
@@ -29,6 +31,8 @@ export interface ThreeDayViewProps {
   primaryTz?: string | null;
   secondaryTz?: string | null;
   showSecondaryTz?: boolean;
+  /** Per-event attendee RSVP rollups, keyed by event id (for acceptance badges). */
+  attendeeSummaries?: ReadonlyMap<string, AttendeeSummary>;
 }
 
 const GRID_CONFIG: GridConfig = {
@@ -501,7 +505,7 @@ export const ThreeDayView: Component<ThreeDayViewProps> = (props) => {
                 <For each={dayEvents()}>
                   {(pe) => {
                     const cal = () => calendarMap().get(pe.item.event.calendarId);
-                    const color = () => cal()?.color || "#1F6FEB";
+                    const color = () => pe.item.event.color || cal()?.color || "#1F6FEB";
                     const tint = () => {
                       const c = color();
                       return c.startsWith("#") ? `${c}1A` : "rgba(31,111,235,0.10)";
@@ -580,6 +584,9 @@ export const ThreeDayView: Component<ThreeDayViewProps> = (props) => {
                         >
                           {pe.item.event.title}
                         </span>
+                        <Show when={props.attendeeSummaries?.get(pe.item.event.id)}>
+                          {(summary) => <AttendeeBadge summary={summary()} />}
+                        </Show>
                         <span
                           style={{
                             "font-family": "var(--al-font-mono)",

@@ -9,12 +9,19 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   Account,
   AccountKind,
+  Attendee,
+  AttendeeDraft,
   Calendar,
   CalendarDataSource,
+  AvailableSlot,
+  DefaultAlerts,
   EditScope,
+  IdentitySettings,
   Event,
   EventDraft,
   OccurrenceItem,
+  Reminder,
+  ReminderDraft,
   SearchResults,
   Task,
 } from "@rcalendar/ui";
@@ -55,7 +62,10 @@ interface RustEvent {
   tz?: string | null;
   rrule?: string | null;
   exdates?: string[];
+  travel_time_minutes?: number | null;
+  color?: string | null;
   etag?: string | null;
+  busy?: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -78,6 +88,28 @@ interface RustTask {
   completed_at?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface RustReminder {
+  id: string;
+  event_id: string;
+  offset_minutes?: number | null;
+  absolute_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface RustAttendee {
+  id: string;
+  event_id: string;
+  email: string;
+  display_name?: string | null;
+  role: "chair" | "required" | "optional" | "non_participant";
+  status: "needs_action" | "accepted" | "declined" | "tentative" | "delegated";
+  rsvp: boolean;
+  is_organizer: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
 function mapAccount(r: RustAccount): Account {
@@ -121,7 +153,10 @@ function mapEvent(r: RustEvent): Event {
     tz: r.tz,
     rrule: r.rrule,
     exdates: r.exdates,
+    travelTimeMinutes: r.travel_time_minutes,
+    color: r.color,
     etag: r.etag,
+    busy: r.busy !== false,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -134,6 +169,32 @@ function mapTask(r: RustTask): Task {
     title: r.title,
     dueAt: r.due_at,
     completedAt: r.completed_at,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+function mapReminder(r: RustReminder): Reminder {
+  return {
+    id: r.id,
+    eventId: r.event_id,
+    offsetMinutes: r.offset_minutes,
+    absoluteAt: r.absolute_at,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+function mapAttendee(r: RustAttendee): Attendee {
+  return {
+    id: r.id,
+    eventId: r.event_id,
+    email: r.email,
+    displayName: r.display_name,
+    role: r.role,
+    status: r.status,
+    rsvp: r.rsvp,
+    isOrganizer: r.is_organizer,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -156,6 +217,14 @@ export class TauriCalendarDataSource implements CalendarDataSource {
 
   async setCalendarEnabled(calendarId: string, enabled: boolean): Promise<void> {
     await invoke("set_calendar_enabled", { calendarId, enabled });
+  }
+
+  async deleteAccount(accountId: string): Promise<void> {
+    await invoke("delete_account", { id: accountId });
+  }
+
+  async deleteCalendar(calendarId: string): Promise<void> {
+    await invoke("delete_calendar", { id: calendarId });
   }
 
   async listOccurrences(
@@ -200,6 +269,9 @@ export class TauriCalendarDataSource implements CalendarDataSource {
       all_day: draft.allDay,
       tz: draft.tz || null,
       rrule: draft.rrule || null,
+      travel_time_minutes: draft.travelTimeMinutes ?? null,
+      color: draft.color || null,
+      busy: draft.busy !== false,
     };
     const raw = await invoke<RustEvent[]>("save_event", {
       draft: rustDraft,
@@ -230,6 +302,127 @@ export class TauriCalendarDataSource implements CalendarDataSource {
   async toggleTask(id: string): Promise<Task> {
     const raw = await invoke<RustTask>("toggle_task", { id });
     return mapTask(raw);
+  }
+
+  async listReminders(eventId: string): Promise<Reminder[]> {
+    const raw = await invoke<RustReminder[]>("list_reminders", { eventId });
+    return raw.map(mapReminder);
+  }
+
+  async saveReminder(draft: ReminderDraft): Promise<Reminder> {
+    const raw = await invoke<RustReminder>("save_reminder", {
+      payload: {
+        id: draft.id || null,
+        event_id: draft.eventId,
+        offset_minutes: draft.offsetMinutes ?? null,
+        absolute_at: draft.absoluteAt ?? null,
+      },
+    });
+    return mapReminder(raw);
+  }
+
+  async deleteReminder(id: string): Promise<void> {
+    await invoke("delete_reminder", { id });
+  }
+
+  async snoozeReminder(id: string, minutes: number): Promise<void> {
+    await invoke("snooze_reminder", { id, minutes });
+  }
+
+  async listAttendees(eventId: string): Promise<Attendee[]> {
+    const raw = await invoke<RustAttendee[]>("list_attendees", { eventId });
+    return raw.map(mapAttendee);
+  }
+
+  async saveAttendee(draft: AttendeeDraft): Promise<Attendee> {
+    const raw = await invoke<RustAttendee>("save_attendee", {
+      payload: {
+        id: draft.id || null,
+        event_id: draft.eventId,
+        email: draft.email,
+        display_name: draft.displayName ?? null,
+        role: draft.role ?? "required",
+        status: draft.status ?? "needs_action",
+        rsvp: draft.rsvp ?? false,
+        is_organizer: draft.isOrganizer ?? false,
+      },
+    });
+    return mapAttendee(raw);
+  }
+
+  async deleteAttendee(id: string): Promise<void> {
+    await invoke("delete_attendee", { id });
+  }
+
+  async suggestAttendees(query: string): Promise<Attendee[]> {
+    const raw = await invoke<RustAttendee[]>("suggest_attendees", { query });
+    return raw.map(mapAttendee);
+  }
+
+  async findAvailableSlots(
+    date: string,
+    durationMinutes: number,
+    calendarIds?: string[],
+  ): Promise<AvailableSlot[]> {
+    const raw = await invoke<{ start: string; end: string }[]>("find_available_slots", {
+      date,
+      durationMinutes,
+      calendarIds: calendarIds ?? null,
+    });
+    return raw.map((r) => ({ start: r.start, end: r.end }));
+  }
+
+  async sendInvitations(eventId: string): Promise<{
+    subject: string;
+    recipients: string[];
+    outboxPath?: string | null;
+  }> {
+    const raw = await invoke<{
+      envelope: { subject: string };
+      recipients: string[];
+      outbox_path?: string | null;
+    }>("send_invitations", { eventId });
+    return {
+      subject: raw.envelope.subject,
+      recipients: raw.recipients,
+      outboxPath: raw.outbox_path,
+    };
+  }
+
+  async applyItip(
+    calendarId: string,
+    icsContent: string,
+  ): Promise<{ method: string; uid: string; message: string }> {
+    return invoke("apply_itip", { calendarId, icsContent });
+  }
+
+  async getIdentity(): Promise<IdentitySettings> {
+    const raw = await invoke<{ self_email?: string | null; show_declined: boolean }>(
+      "get_identity",
+    );
+    return { selfEmail: raw.self_email ?? null, showDeclined: raw.show_declined };
+  }
+
+  async setIdentity(identity: IdentitySettings): Promise<void> {
+    await invoke("set_identity", {
+      identity: {
+        self_email: identity.selfEmail ?? null,
+        show_declined: identity.showDeclined,
+      },
+    });
+  }
+
+  async getDefaultAlerts(): Promise<DefaultAlerts> {
+    const raw = await invoke<{ event: number | null; all_day: number | null }>(
+      "get_default_alerts",
+    );
+    return { event: raw.event, allDay: raw.all_day };
+  }
+
+  async setDefaultAlerts(alerts: DefaultAlerts): Promise<void> {
+    await invoke("set_default_alerts", {
+      alerts: { event: alerts.event, all_day: alerts.allDay },
+    });
   }
 
   async search(query: string): Promise<SearchResults> {

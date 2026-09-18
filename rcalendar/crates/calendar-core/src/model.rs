@@ -112,8 +112,22 @@ pub struct Event {
     pub rrule: Option<String>,
     /// Occurrence dates excluded from expansion (per-instance cancellations).
     pub exdates: Vec<NaiveDate>,
+    /// Minutes of travel time shown as a buffer before the event start.
+    #[serde(default)]
+    pub travel_time_minutes: Option<i64>,
+    /// Per-event color override; `None` falls back to the calendar color.
+    #[serde(default)]
+    pub color: Option<String>,
     /// Server/sync change tag (Google Calendar `etag`); absent for local events.
     pub etag: Option<String>,
+    /// People on the event (invitees + organizer). Persisted as the child
+    /// `attendees` table in SQLite; carried here in memory / across the iCal
+    /// seam (T1.9).
+    #[serde(default)]
+    pub attendees: Vec<Attendee>,
+    /// RFC 5545 `TRANSP`: `true` = OPAQUE (busy), `false` = TRANSPARENT (free).
+    #[serde(default = "default_true")]
+    pub busy: bool,
     pub updated_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
@@ -175,6 +189,121 @@ impl Reminder {
     }
 }
 
+/// The role an attendee plays in an event, mirroring RFC 5545 `ROLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttendeeRole {
+    /// Meeting organizer (RFC `CHAIR`).
+    Chair,
+    /// Must attend (RFC `REQ-PARTICIPANT`).
+    #[default]
+    Required,
+    /// May attend (RFC `OPT-PARTICIPANT`).
+    Optional,
+    /// Informational copy only (RFC `NON-PARTICIPANT`).
+    NonParticipant,
+}
+
+impl AttendeeRole {
+    /// The RFC 5545 parameter value used on the wire / in ATTENDEE lines.
+    pub fn rfc_value(&self) -> &'static str {
+        match self {
+            AttendeeRole::Chair => "CHAIR",
+            AttendeeRole::Required => "REQ-PARTICIPANT",
+            AttendeeRole::Optional => "OPT-PARTICIPANT",
+            AttendeeRole::NonParticipant => "NON-PARTICIPANT",
+        }
+    }
+
+    /// Parses an RFC 5545 `ROLE` value; unknown values fall back to `Required`.
+    pub fn from_rfc(value: &str) -> Self {
+        match value.to_ascii_uppercase().as_str() {
+            "CHAIR" => AttendeeRole::Chair,
+            "OPT-PARTICIPANT" => AttendeeRole::Optional,
+            "NON-PARTICIPANT" => AttendeeRole::NonParticipant,
+            _ => AttendeeRole::Required,
+        }
+    }
+}
+
+/// The RSVP/participation status of an attendee, mirroring RFC 5545 `PARTSTAT`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttendeeStatus {
+    /// Invited but no reply yet.
+    #[default]
+    NeedsAction,
+    /// RSVP'd "yes".
+    Accepted,
+    /// RSVP'd "no".
+    Declined,
+    /// Accepted tentatively.
+    Tentative,
+    /// Delegate handled it.
+    Delegated,
+}
+
+impl AttendeeStatus {
+    /// The RFC 5545 parameter value used on the wire / in ATTENDEE lines.
+    pub fn rfc_value(&self) -> &'static str {
+        match self {
+            AttendeeStatus::NeedsAction => "NEEDS-ACTION",
+            AttendeeStatus::Accepted => "ACCEPTED",
+            AttendeeStatus::Declined => "DECLINED",
+            AttendeeStatus::Tentative => "TENTATIVE",
+            AttendeeStatus::Delegated => "DELEGATED",
+        }
+    }
+
+    /// Parses an RFC 5545 `PARTSTAT` value; unknown values fall back to
+    /// `NeedsAction`.
+    pub fn from_rfc(value: &str) -> Self {
+        match value.to_ascii_uppercase().as_str() {
+            "ACCEPTED" => AttendeeStatus::Accepted,
+            "DECLINED" => AttendeeStatus::Declined,
+            "TENTATIVE" => AttendeeStatus::Tentative,
+            "DELEGATED" => AttendeeStatus::Delegated,
+            _ => AttendeeStatus::NeedsAction,
+        }
+    }
+}
+
+/// A person attached to an event: an invitee or the organizer. Stored as a
+/// child of the event (like [`Reminder`]), keyed by `event_id`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Attendee {
+    pub id: Uuid,
+    pub event_id: Uuid,
+    /// `mailto:` address of the person.
+    pub email: String,
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub role: AttendeeRole,
+    #[serde(default)]
+    pub status: AttendeeStatus,
+    /// Whether an RSVP was requested (RFC `RSVP=TRUE`).
+    #[serde(default)]
+    pub rsvp: bool,
+    /// Whether this attendee is the meeting's organizer (RFC `ORGANIZER`).
+    #[serde(default)]
+    pub is_organizer: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
+}
+
+impl Attendee {
+    /// Requires a non-empty email address.
+    pub fn validate(&self) -> Result<()> {
+        if self.email.trim().is_empty() {
+            return Err(Error::InvalidEvent(
+                "attendee needs an email address".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// A to-do item shown in the sidebar and Agenda's "Events + tasks" mode.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Task {
@@ -202,6 +331,17 @@ pub struct EventDraft {
     pub all_day: bool,
     pub tz: Option<String>,
     pub rrule: Option<String>,
+    #[serde(default)]
+    pub travel_time_minutes: Option<i64>,
+    #[serde(default)]
+    pub color: Option<String>,
+    /// RFC 5545 `TRANSP`. Defaults to busy (opaque).
+    #[serde(default = "default_true")]
+    pub busy: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -227,7 +367,11 @@ mod tests {
             tz: None,
             rrule: None,
             exdates: vec![],
+            travel_time_minutes: None,
+            color: None,
             etag: None,
+            attendees: vec![],
+            busy: true,
             updated_at: dt("2026-08-10T15:00:00"),
             created_at: dt("2026-08-10T15:00:00"),
             deleted_at: None,
@@ -298,5 +442,86 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         let back: Event = serde_json::from_str(&json).unwrap();
         assert_eq!(event, back);
+    }
+
+    #[test]
+    fn attendee_requires_email_and_rejects_invalid() {
+        let mut attendee = Attendee {
+            id: Uuid::new_v4(),
+            event_id: Uuid::new_v4(),
+            email: "alice@example.com".into(),
+            display_name: None,
+            role: AttendeeRole::Required,
+            status: AttendeeStatus::Accepted,
+            rsvp: true,
+            is_organizer: false,
+            created_at: dt("2026-08-10T15:00:00"),
+            updated_at: dt("2026-08-10T15:00:00"),
+            deleted_at: None,
+        };
+        assert!(attendee.validate().is_ok());
+
+        attendee.email = "   ".into();
+        assert!(attendee.validate().is_err());
+    }
+
+    #[test]
+    fn attendee_enums_round_trip_rfc_values() {
+        for role in [
+            AttendeeRole::Chair,
+            AttendeeRole::Required,
+            AttendeeRole::Optional,
+            AttendeeRole::NonParticipant,
+        ] {
+            assert_eq!(AttendeeRole::from_rfc(role.rfc_value()), role);
+        }
+        assert_eq!(
+            AttendeeRole::from_rfc("REQ-PARTICIPANT"),
+            AttendeeRole::Required
+        );
+        assert_eq!(AttendeeRole::from_rfc("bogus"), AttendeeRole::Required);
+
+        for status in [
+            AttendeeStatus::NeedsAction,
+            AttendeeStatus::Accepted,
+            AttendeeStatus::Declined,
+            AttendeeStatus::Tentative,
+            AttendeeStatus::Delegated,
+        ] {
+            assert_eq!(AttendeeStatus::from_rfc(status.rfc_value()), status);
+        }
+        assert_eq!(
+            AttendeeStatus::from_rfc("DECLINED"),
+            AttendeeStatus::Declined
+        );
+        assert_eq!(
+            AttendeeStatus::from_rfc("bogus"),
+            AttendeeStatus::NeedsAction
+        );
+    }
+
+    #[test]
+    fn attendee_round_trips_through_serde_json() {
+        let attendee = Attendee {
+            id: Uuid::new_v4(),
+            event_id: Uuid::new_v4(),
+            email: "bob@example.com".into(),
+            display_name: Some("Bob".into()),
+            role: AttendeeRole::Optional,
+            status: AttendeeStatus::Tentative,
+            rsvp: true,
+            is_organizer: false,
+            created_at: dt("2026-08-10T15:00:00"),
+            updated_at: dt("2026-08-10T15:00:00"),
+            deleted_at: None,
+        };
+        let json = serde_json::to_string(&attendee).unwrap();
+        let back: Attendee = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, attendee);
+        assert!(json.contains("\"role\":\"optional\""), "snake_case role");
+        assert!(
+            json.contains("\"status\":\"tentative\""),
+            "snake_case status"
+        );
     }
 }

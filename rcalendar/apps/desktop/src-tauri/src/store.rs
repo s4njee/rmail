@@ -11,7 +11,8 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
 use calendar_core::model::{
-    Account, AccountKind, AccountStatus, Calendar, Event, Reminder, Task, TimeRange,
+    Account, AccountKind, AccountStatus, Attendee, AttendeeRole, AttendeeStatus, Calendar, Event,
+    Reminder, Task, TimeRange,
 };
 use calendar_core::Store;
 use calendar_core::{Error as CoreError, Result as CoreResult};
@@ -27,6 +28,16 @@ impl std::fmt::Debug for SqliteStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SqliteStore").finish_non_exhaustive()
     }
+}
+
+/// A reminder joined with its parent event plus the delivery bookkeeping columns
+/// (`delivered_at`, `snooze_until`) that live only in the desktop store.
+#[derive(Debug, Clone)]
+pub struct ReminderDelivery {
+    pub reminder: Reminder,
+    pub event: Event,
+    pub delivered_at: Option<DateTime<Utc>>,
+    pub snooze_until: Option<DateTime<Utc>>,
 }
 
 impl SqliteStore {
@@ -127,6 +138,53 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Looks up an active event by iCal UID (used to apply iTIP replies/cancels).
+    pub fn get_event_by_uid(&self, uid: &str) -> CoreResult<Option<Event>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = r#"
+            SELECT id, calendar_id, uid, title, location, notes, starts_at, ends_at,
+                   all_day, tz, rrule, exdates, etag, created_at, updated_at, deleted_at,
+                   travel_time_minutes, color, busy
+            FROM events
+            WHERE uid = ?1 AND deleted_at IS NULL
+            LIMIT 1
+        "#;
+        let mut stmt = conn.prepare(sql).map_err(to_core_err)?;
+        let res = stmt
+            .query_row(params![uid], row_to_event)
+            .optional()
+            .map_err(to_core_err)?;
+        Ok(res)
+    }
+
+    /// Distinct attendees across the store, filtered by email/name prefix.
+    pub fn list_known_attendees(&self, query: &str) -> CoreResult<Vec<Attendee>> {
+        let conn = self.conn.lock().unwrap();
+        let pattern = format!("{}%", query.trim());
+        let sql = r#"
+            SELECT id, event_id, email, display_name, role, status, rsvp, is_organizer,
+                   created_at, updated_at, deleted_at
+            FROM attendees
+            WHERE deleted_at IS NULL
+              AND (email LIKE ?1 COLLATE NOCASE OR COALESCE(display_name, '') LIKE ?1 COLLATE NOCASE)
+            ORDER BY COALESCE(display_name, email) ASC
+        "#;
+        let mut stmt = conn.prepare(sql).map_err(to_core_err)?;
+        let rows = stmt
+            .query_map(params![pattern], row_to_attendee)
+            .map_err(to_core_err)?;
+        let mut list = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for r in rows {
+            let attendee = r.map_err(to_core_err)?;
+            let key = attendee.email.to_ascii_lowercase();
+            if seen.insert(key) {
+                list.push(attendee);
+            }
+        }
+        Ok(list)
+    }
+
     /// Fetches all active events that could have occurrences in `range`:
     /// non-recurring events overlapping `range`, plus all recurring events whose
     /// series starts before `range.end`.
@@ -141,7 +199,8 @@ impl SqliteStore {
 
         let sql = r#"
             SELECT id, calendar_id, uid, title, location, notes, starts_at, ends_at,
-                   all_day, tz, rrule, exdates, etag, created_at, updated_at, deleted_at
+                   all_day, tz, rrule, exdates, etag, created_at, updated_at, deleted_at,
+                   travel_time_minutes, color, busy
             FROM events
             WHERE deleted_at IS NULL
               AND (
@@ -176,7 +235,8 @@ impl SqliteStore {
         let pattern = format!("%{query}%");
         let sql = r#"
             SELECT id, calendar_id, uid, title, location, notes, starts_at, ends_at,
-                   all_day, tz, rrule, exdates, etag, created_at, updated_at, deleted_at
+                   all_day, tz, rrule, exdates, etag, created_at, updated_at, deleted_at,
+                   travel_time_minutes, color, busy
             FROM events
             WHERE deleted_at IS NULL
               AND (title LIKE ?1 OR notes LIKE ?1 OR location LIKE ?1)
@@ -213,6 +273,57 @@ impl SqliteStore {
             results.push(r.map_err(to_core_err)?);
         }
         Ok(results)
+    }
+
+    /// Lists non-deleted reminders joined to their non-deleted events. The
+    /// scheduler (crate::notify) walks this set to decide what to deliver.
+    pub fn list_due_reminders(&self) -> CoreResult<Vec<ReminderDelivery>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = r#"
+            SELECT r.id, r.event_id, r.offset_minutes, r.absolute_at, r.created_at, r.updated_at, r.deleted_at,
+                   r.delivered_at, r.snooze_until,
+                   e.id, e.calendar_id, e.uid, e.title, e.location, e.notes, e.starts_at, e.ends_at,
+                   e.all_day, e.tz, e.rrule, e.exdates, e.etag, e.created_at, e.updated_at, e.deleted_at,
+                   e.travel_time_minutes, e.color, e.busy
+            FROM reminders r
+            INNER JOIN events e ON e.id = r.event_id
+            WHERE r.deleted_at IS NULL AND e.deleted_at IS NULL
+            ORDER BY r.created_at ASC
+        "#;
+        let mut stmt = conn.prepare(sql).map_err(to_core_err)?;
+        let rows = stmt.query_map([], row_to_delivery).map_err(to_core_err)?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(to_core_err)?);
+        }
+        Ok(list)
+    }
+
+    /// Marks a reminder as delivered for a specific occurrence (stored as UTC).
+    pub fn mark_reminder_delivered(&self, id: Uuid, delivered_at: DateTime<Utc>) -> CoreResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE reminders SET delivered_at = ?1, snooze_until = NULL, updated_at = ?2 WHERE id = ?3",
+            params![format_dt(delivered_at), format_dt(Utc::now()), id.to_string()],
+        )
+        .map_err(to_core_err)?;
+        Ok(())
+    }
+
+    /// Sets (or clears) the snooze-until timestamp on a reminder.
+    pub fn set_reminder_snooze(
+        &self,
+        id: Uuid,
+        snooze_until: Option<DateTime<Utc>>,
+    ) -> CoreResult<()> {
+        let conn = self.conn.lock().unwrap();
+        let snooze = snooze_until.map(format_dt);
+        conn.execute(
+            "UPDATE reminders SET snooze_until = ?1, updated_at = ?2 WHERE id = ?3",
+            params![snooze, format_dt(Utc::now()), id.to_string()],
+        )
+        .map_err(to_core_err)?;
+        Ok(())
     }
 }
 
@@ -299,13 +410,53 @@ impl Store for SqliteStore {
     }
 
     fn delete_account(&self, id: Uuid) -> CoreResult<()> {
-        let conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock().unwrap();
         let now = format_dt(Utc::now());
-        conn.execute(
-            "UPDATE accounts SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
-            params![now, id.to_string()],
+        let id_s = id.to_string();
+        let tx = conn.transaction().map_err(to_core_err)?;
+        tx.execute(
+            "UPDATE reminders SET deleted_at = ?1 WHERE deleted_at IS NULL AND event_id IN (
+                SELECT e.id FROM events e
+                INNER JOIN calendars c ON c.id = e.calendar_id
+                WHERE c.account_id = ?2
+            )",
+            params![now, id_s],
         )
         .map_err(to_core_err)?;
+        tx.execute(
+            "UPDATE attendees SET deleted_at = ?1 WHERE deleted_at IS NULL AND event_id IN (
+                SELECT e.id FROM events e
+                INNER JOIN calendars c ON c.id = e.calendar_id
+                WHERE c.account_id = ?2
+            )",
+            params![now, id_s],
+        )
+        .map_err(to_core_err)?;
+        tx.execute(
+            "UPDATE events SET deleted_at = ?1 WHERE deleted_at IS NULL AND calendar_id IN (
+                SELECT id FROM calendars WHERE account_id = ?2
+            )",
+            params![now, id_s],
+        )
+        .map_err(to_core_err)?;
+        tx.execute(
+            "UPDATE tasks SET deleted_at = ?1 WHERE deleted_at IS NULL AND calendar_id IN (
+                SELECT id FROM calendars WHERE account_id = ?2
+            )",
+            params![now, id_s],
+        )
+        .map_err(to_core_err)?;
+        tx.execute(
+            "UPDATE calendars SET deleted_at = ?1 WHERE account_id = ?2 AND deleted_at IS NULL",
+            params![now, id_s],
+        )
+        .map_err(to_core_err)?;
+        tx.execute(
+            "UPDATE accounts SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+            params![now, id_s],
+        )
+        .map_err(to_core_err)?;
+        tx.commit().map_err(to_core_err)?;
         Ok(())
     }
 
@@ -384,13 +535,40 @@ impl Store for SqliteStore {
     }
 
     fn delete_calendar(&self, id: Uuid) -> CoreResult<()> {
-        let conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock().unwrap();
         let now = format_dt(Utc::now());
-        conn.execute(
-            "UPDATE calendars SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
-            params![now, id.to_string()],
+        let id_s = id.to_string();
+        let tx = conn.transaction().map_err(to_core_err)?;
+        tx.execute(
+            "UPDATE reminders SET deleted_at = ?1 WHERE deleted_at IS NULL AND event_id IN (
+                SELECT id FROM events WHERE calendar_id = ?2
+            )",
+            params![now, id_s],
         )
         .map_err(to_core_err)?;
+        tx.execute(
+            "UPDATE attendees SET deleted_at = ?1 WHERE deleted_at IS NULL AND event_id IN (
+                SELECT id FROM events WHERE calendar_id = ?2
+            )",
+            params![now, id_s],
+        )
+        .map_err(to_core_err)?;
+        tx.execute(
+            "UPDATE events SET deleted_at = ?1 WHERE calendar_id = ?2 AND deleted_at IS NULL",
+            params![now, id_s],
+        )
+        .map_err(to_core_err)?;
+        tx.execute(
+            "UPDATE tasks SET deleted_at = ?1 WHERE calendar_id = ?2 AND deleted_at IS NULL",
+            params![now, id_s],
+        )
+        .map_err(to_core_err)?;
+        tx.execute(
+            "UPDATE calendars SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+            params![now, id_s],
+        )
+        .map_err(to_core_err)?;
+        tx.commit().map_err(to_core_err)?;
         Ok(())
     }
 
@@ -404,7 +582,8 @@ impl Store for SqliteStore {
                 let range_end = format_dt(range.end);
                 let sql = r#"
                     SELECT id, calendar_id, uid, title, location, notes, starts_at, ends_at,
-                           all_day, tz, rrule, exdates, etag, created_at, updated_at, deleted_at
+                           all_day, tz, rrule, exdates, etag, created_at, updated_at, deleted_at,
+                           travel_time_minutes, color, busy
                     FROM events
                     WHERE deleted_at IS NULL
                       AND starts_at < ?2 AND ends_at > ?1
@@ -421,7 +600,8 @@ impl Store for SqliteStore {
             None => {
                 let sql = r#"
                     SELECT id, calendar_id, uid, title, location, notes, starts_at, ends_at,
-                           all_day, tz, rrule, exdates, etag, created_at, updated_at, deleted_at
+                           all_day, tz, rrule, exdates, etag, created_at, updated_at, deleted_at,
+                           travel_time_minutes, color, busy
                     FROM events
                     WHERE deleted_at IS NULL
                     ORDER BY starts_at ASC
@@ -440,7 +620,8 @@ impl Store for SqliteStore {
         let conn = self.conn.lock().unwrap();
         let sql = r#"
             SELECT id, calendar_id, uid, title, location, notes, starts_at, ends_at,
-                   all_day, tz, rrule, exdates, etag, created_at, updated_at, deleted_at
+                   all_day, tz, rrule, exdates, etag, created_at, updated_at, deleted_at,
+                   travel_time_minutes, color, busy
             FROM events
             WHERE id = ?1 AND deleted_at IS NULL
         "#;
@@ -465,8 +646,9 @@ impl Store for SqliteStore {
 
         let sql = r#"
             INSERT INTO events (id, calendar_id, uid, title, location, notes, starts_at, ends_at,
-                               all_day, tz, rrule, exdates, etag, created_at, updated_at, deleted_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                               all_day, tz, rrule, exdates, etag, created_at, updated_at, deleted_at,
+                               travel_time_minutes, color, busy)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
             ON CONFLICT(id) DO UPDATE SET
                 calendar_id = excluded.calendar_id,
                 uid = excluded.uid,
@@ -482,7 +664,10 @@ impl Store for SqliteStore {
                 etag = excluded.etag,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
-                deleted_at = excluded.deleted_at
+                deleted_at = excluded.deleted_at,
+                travel_time_minutes = excluded.travel_time_minutes,
+                color = excluded.color,
+                busy = excluded.busy
         "#;
         conn.execute(
             sql,
@@ -503,6 +688,9 @@ impl Store for SqliteStore {
                 created_at,
                 updated_at,
                 deleted_at,
+                event.travel_time_minutes,
+                event.color,
+                if event.busy { 1 } else { 0 },
             ],
         )
         .map_err(to_core_err)?;
@@ -580,6 +768,81 @@ impl Store for SqliteStore {
         let now = format_dt(Utc::now());
         conn.execute(
             "UPDATE reminders SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+            params![now, id.to_string()],
+        )
+        .map_err(to_core_err)?;
+        Ok(())
+    }
+
+    // -- attendees ------------------------------------------------------
+    fn list_attendees(&self, event_id: Uuid) -> CoreResult<Vec<Attendee>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = r#"
+            SELECT id, event_id, email, display_name, role, status, rsvp, is_organizer,
+                   created_at, updated_at, deleted_at
+            FROM attendees
+            WHERE event_id = ?1 AND deleted_at IS NULL
+            ORDER BY COALESCE(display_name, email) ASC
+        "#;
+        let mut stmt = conn.prepare(sql).map_err(to_core_err)?;
+        let rows = stmt
+            .query_map(params![event_id.to_string()], row_to_attendee)
+            .map_err(to_core_err)?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(to_core_err)?);
+        }
+        Ok(list)
+    }
+
+    fn upsert_attendee(&self, attendee: &Attendee) -> CoreResult<()> {
+        attendee.validate()?;
+        let conn = self.conn.lock().unwrap();
+        let created_at = format_dt(attendee.created_at);
+        let updated_at = format_dt(attendee.updated_at);
+        let deleted_at = attendee.deleted_at.map(format_dt);
+
+        let sql = r#"
+            INSERT INTO attendees (id, event_id, email, display_name, role, status, rsvp, is_organizer,
+                                   created_at, updated_at, deleted_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            ON CONFLICT(id) DO UPDATE SET
+                event_id = excluded.event_id,
+                email = excluded.email,
+                display_name = excluded.display_name,
+                role = excluded.role,
+                status = excluded.status,
+                rsvp = excluded.rsvp,
+                is_organizer = excluded.is_organizer,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at,
+                deleted_at = excluded.deleted_at
+        "#;
+        conn.execute(
+            sql,
+            params![
+                attendee.id.to_string(),
+                attendee.event_id.to_string(),
+                attendee.email,
+                attendee.display_name,
+                attendee.role.rfc_value(),
+                attendee.status.rfc_value(),
+                if attendee.rsvp { 1 } else { 0 },
+                if attendee.is_organizer { 1 } else { 0 },
+                created_at,
+                updated_at,
+                deleted_at,
+            ],
+        )
+        .map_err(to_core_err)?;
+        Ok(())
+    }
+
+    fn delete_attendee(&self, id: Uuid) -> CoreResult<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = format_dt(Utc::now());
+        conn.execute(
+            "UPDATE attendees SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
             params![now, id.to_string()],
         )
         .map_err(to_core_err)?;
@@ -793,6 +1056,9 @@ fn row_to_event(row: &Row<'_>) -> Result<Event, rusqlite::Error> {
     let created_at_str: String = row.get(13)?;
     let updated_at_str: String = row.get(14)?;
     let deleted_at_str: Option<String> = row.get(15)?;
+    let travel_time_minutes: Option<i64> = row.get(16)?;
+    let color: Option<String> = row.get(17)?;
+    let busy_int: i64 = row.get(18)?;
 
     let exdates: Vec<NaiveDate> = serde_json::from_str(&exdates_json).unwrap_or_default();
 
@@ -809,7 +1075,11 @@ fn row_to_event(row: &Row<'_>) -> Result<Event, rusqlite::Error> {
         tz,
         rrule,
         exdates,
+        travel_time_minutes,
+        color,
         etag,
+        attendees: vec![],
+        busy: busy_int != 0,
         created_at: parse_dt(&created_at_str)?,
         updated_at: parse_dt(&updated_at_str)?,
         deleted_at: deleted_at_str.as_deref().map(parse_dt).transpose()?,
@@ -833,6 +1103,108 @@ fn row_to_reminder(row: &Row<'_>) -> Result<Reminder, rusqlite::Error> {
         created_at: parse_dt(&created_at_str)?,
         updated_at: parse_dt(&updated_at_str)?,
         deleted_at: deleted_at_str.as_deref().map(parse_dt).transpose()?,
+    })
+}
+
+fn row_to_attendee(row: &Row<'_>) -> Result<Attendee, rusqlite::Error> {
+    let id_str: String = row.get(0)?;
+    let event_id_str: String = row.get(1)?;
+    let email: String = row.get(2)?;
+    let display_name: Option<String> = row.get(3)?;
+    let role_str: String = row.get(4)?;
+    let status_str: String = row.get(5)?;
+    let rsvp_int: i64 = row.get(6)?;
+    let is_organizer_int: i64 = row.get(7)?;
+    let created_at_str: String = row.get(8)?;
+    let updated_at_str: String = row.get(9)?;
+    let deleted_at_str: Option<String> = row.get(10)?;
+
+    Ok(Attendee {
+        id: parse_uuid(&id_str)?,
+        event_id: parse_uuid(&event_id_str)?,
+        email,
+        display_name,
+        role: AttendeeRole::from_rfc(&role_str),
+        status: AttendeeStatus::from_rfc(&status_str),
+        rsvp: rsvp_int != 0,
+        is_organizer: is_organizer_int != 0,
+        created_at: parse_dt(&created_at_str)?,
+        updated_at: parse_dt(&updated_at_str)?,
+        deleted_at: deleted_at_str.as_deref().map(parse_dt).transpose()?,
+    })
+}
+
+fn row_to_delivery(row: &Row<'_>) -> Result<ReminderDelivery, rusqlite::Error> {
+    // Reminder columns (0..=6), delivery columns (7, 8), then event columns (9..).
+    let id_str: String = row.get(0)?;
+    let event_id_str: String = row.get(1)?;
+    let offset_minutes: Option<i64> = row.get(2)?;
+    let absolute_at_str: Option<String> = row.get(3)?;
+    let r_created_at: String = row.get(4)?;
+    let r_updated_at: String = row.get(5)?;
+    let r_deleted_at: Option<String> = row.get(6)?;
+    let delivered_at: Option<String> = row.get(7)?;
+    let snooze_until: Option<String> = row.get(8)?;
+
+    let calendar_id_str: String = row.get(10)?;
+    let uid: String = row.get(11)?;
+    let title: String = row.get(12)?;
+    let location: Option<String> = row.get(13)?;
+    let notes: Option<String> = row.get(14)?;
+    let starts_at_str: String = row.get(15)?;
+    let ends_at_str: String = row.get(16)?;
+    let all_day_int: i64 = row.get(17)?;
+    let tz: Option<String> = row.get(18)?;
+    let rrule: Option<String> = row.get(19)?;
+    let exdates_json: String = row.get(20)?;
+    let etag: Option<String> = row.get(21)?;
+    let e_created_at: String = row.get(22)?;
+    let e_updated_at: String = row.get(23)?;
+    let e_deleted_at: Option<String> = row.get(24)?;
+    let travel_time_minutes: Option<i64> = row.get(25)?;
+    let color: Option<String> = row.get(26)?;
+    let busy_int: i64 = row.get(27)?;
+
+    let exdates: Vec<NaiveDate> = serde_json::from_str(&exdates_json).unwrap_or_default();
+
+    let reminder = Reminder {
+        id: parse_uuid(&id_str)?,
+        event_id: parse_uuid(&event_id_str)?,
+        offset_minutes,
+        absolute_at: absolute_at_str.as_deref().map(parse_dt).transpose()?,
+        created_at: parse_dt(&r_created_at)?,
+        updated_at: parse_dt(&r_updated_at)?,
+        deleted_at: r_deleted_at.as_deref().map(parse_dt).transpose()?,
+    };
+
+    let event = Event {
+        id: parse_uuid(&event_id_str)?,
+        calendar_id: parse_uuid(&calendar_id_str)?,
+        uid,
+        title,
+        location,
+        notes,
+        starts_at: parse_dt(&starts_at_str)?,
+        ends_at: parse_dt(&ends_at_str)?,
+        all_day: all_day_int != 0,
+        tz,
+        rrule,
+        exdates,
+        travel_time_minutes,
+        color,
+        etag,
+        attendees: vec![],
+        busy: busy_int != 0,
+        created_at: parse_dt(&e_created_at)?,
+        updated_at: parse_dt(&e_updated_at)?,
+        deleted_at: e_deleted_at.as_deref().map(parse_dt).transpose()?,
+    };
+
+    Ok(ReminderDelivery {
+        reminder,
+        event,
+        delivered_at: delivered_at.as_deref().map(parse_dt).transpose()?,
+        snooze_until: snooze_until.as_deref().map(parse_dt).transpose()?,
     })
 }
 

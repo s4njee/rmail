@@ -1,4 +1,4 @@
-import { Component, For } from "solid-js";
+import { Component, For, Show } from "solid-js";
 import { ViewMode } from "../types/calendar";
 
 export interface TitlebarProps {
@@ -9,11 +9,18 @@ export interface TitlebarProps {
   onMinimize?: () => void;
   onMaximize?: () => void;
   onClose?: () => void;
+  /** Extra left padding so content clears native traffic lights (macOS overlay). */
+  leadingInset?: number;
+  /** Windows/Linux custom chrome. Hidden on macOS where traffic lights are native. */
+  showWindowControls?: boolean;
 }
 
 const VIEWS: ViewMode[] = ["Month", "Week", "3-day", "Day", "Agenda", "Year"];
 
 export const Titlebar: Component<TitlebarProps> = (props) => {
+  const showWindowControls = () => props.showWindowControls !== false;
+  const padLeft = () => `${14 + (props.leadingInset ?? 0)}px`;
+
   return (
     <header
       data-tauri-drag-region
@@ -23,7 +30,7 @@ export const Titlebar: Component<TitlebarProps> = (props) => {
         display: "flex",
         "align-items": "center",
         gap: "14px",
-        padding: "0 14px",
+        padding: `0 14px 0 ${padLeft()}`,
         background: "var(--al-chrome, #FAFAFA)",
         "border-bottom": "1px solid var(--al-border, #E0E0E0)",
         "font-family": "var(--al-font-ui)",
@@ -31,20 +38,8 @@ export const Titlebar: Component<TitlebarProps> = (props) => {
         "user-select": "none",
       }}
     >
-      {/* Wordmark */}
-      <div style={{ display: "flex", "align-items": "center", gap: "8px", "padding-right": "4px" }}>
-        <div
-          style={{
-            width: "16px",
-            height: "16px",
-            "border-radius": "4px",
-            background: "var(--al-ink, #1A1A1A)",
-          }}
-        />
-        <span style={{ "font-size": "14px", "font-weight": 600, "letter-spacing": "-0.01em" }}>
-          Almanac
-        </span>
-      </div>
+      {/* Spacer for drag region */}
+      <div data-tauri-drag-region style={{ flex: 1, height: "100%" }} />
 
       {/* View switcher */}
       <div
@@ -85,9 +80,6 @@ export const Titlebar: Component<TitlebarProps> = (props) => {
           }}
         </For>
       </div>
-
-      {/* Spacer for drag region */}
-      <div data-tauri-drag-region style={{ flex: 1, height: "100%" }} />
 
       {/* Search box */}
       <button
@@ -159,103 +151,105 @@ export const Titlebar: Component<TitlebarProps> = (props) => {
         <span>New event</span>
       </button>
 
-      <div
-        style={{
-          width: "1px",
-          height: "20px",
-          background: "var(--al-border, #E0E0E0)",
-          margin: "0 2px",
-        }}
-      />
+      <Show when={showWindowControls()}>
+        <div
+          style={{
+            width: "1px",
+            height: "20px",
+            background: "var(--al-border, #E0E0E0)",
+            margin: "0 2px",
+          }}
+        />
 
-      {/* Window controls */}
-      <div
-        style={{
-          display: "flex",
-          "align-items": "center",
-          gap: "14px",
-          color: "var(--al-ink-6, #888888)",
-        }}
-      >
-        <button
-          type="button"
-          aria-label="Minimize"
-          onClick={() => props.onMinimize?.()}
+        {/* Window controls — Windows/Linux. macOS uses native traffic lights. */}
+        <div
           style={{
-            background: "none",
-            border: "none",
-            padding: "4px",
-            cursor: "pointer",
             display: "flex",
             "align-items": "center",
-            color: "inherit",
+            gap: "14px",
+            color: "var(--al-ink-6, #888888)",
           }}
         >
-          <div style={{ width: "11px", height: "1.5px", background: "currentColor" }} />
-        </button>
-        <button
-          type="button"
-          aria-label="Maximize"
-          onClick={() => props.onMaximize?.()}
-          style={{
-            background: "none",
-            border: "none",
-            padding: "4px",
-            cursor: "pointer",
-            display: "flex",
-            "align-items": "center",
-            color: "inherit",
-          }}
-        >
-          <div
+          <button
+            type="button"
+            aria-label="Minimize"
+            onClick={() => props.onMinimize?.()}
             style={{
-              width: "10px",
-              height: "10px",
-              border: "1.5px solid currentColor",
-              "border-radius": "2px",
+              background: "none",
+              border: "none",
+              padding: "4px",
+              cursor: "pointer",
+              display: "flex",
+              "align-items": "center",
+              color: "inherit",
             }}
-          />
-        </button>
-        <button
-          type="button"
-          aria-label="Close"
-          onClick={() => props.onClose?.()}
-          style={{
-            background: "none",
-            border: "none",
-            padding: "4px",
-            cursor: "pointer",
-            display: "flex",
-            "align-items": "center",
-            color: "inherit",
-          }}
-        >
-          <div style={{ width: "12px", height: "12px", position: "relative" }}>
+          >
+            <div style={{ width: "11px", height: "1.5px", background: "currentColor" }} />
+          </button>
+          <button
+            type="button"
+            aria-label="Maximize"
+            onClick={() => props.onMaximize?.()}
+            style={{
+              background: "none",
+              border: "none",
+              padding: "4px",
+              cursor: "pointer",
+              display: "flex",
+              "align-items": "center",
+              color: "inherit",
+            }}
+          >
             <div
               style={{
-                position: "absolute",
-                top: "5px",
-                left: 0,
-                width: "12px",
-                height: "1.5px",
-                background: "currentColor",
-                transform: "rotate(45deg)",
+                width: "10px",
+                height: "10px",
+                border: "1.5px solid currentColor",
+                "border-radius": "2px",
               }}
             />
-            <div
-              style={{
-                position: "absolute",
-                top: "5px",
-                left: 0,
-                width: "12px",
-                height: "1.5px",
-                background: "currentColor",
-                transform: "rotate(-45deg)",
-              }}
-            />
-          </div>
-        </button>
-      </div>
+          </button>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => props.onClose?.()}
+            style={{
+              background: "none",
+              border: "none",
+              padding: "4px",
+              cursor: "pointer",
+              display: "flex",
+              "align-items": "center",
+              color: "inherit",
+            }}
+          >
+            <div style={{ width: "12px", height: "12px", position: "relative" }}>
+              <div
+                style={{
+                  position: "absolute",
+                  top: "5px",
+                  left: 0,
+                  width: "12px",
+                  height: "1.5px",
+                  background: "currentColor",
+                  transform: "rotate(45deg)",
+                }}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  top: "5px",
+                  left: 0,
+                  width: "12px",
+                  height: "1.5px",
+                  background: "currentColor",
+                  transform: "rotate(-45deg)",
+                }}
+              />
+            </div>
+          </button>
+        </div>
+      </Show>
     </header>
   );
 };

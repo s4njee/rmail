@@ -822,6 +822,73 @@ Design source of truth: `design_handoff_almanac_calendar/`.
 
 - `apps/desktop/src-tauri/src/lib.rs` & `commands.rs` — application commands and setup lifecycle.
 
+### S6.7 — Alert delivery end-to-end _(P0)_
+
+**As a** user **I want** event reminders **so that** I'm notified before events start, even after
+the app was asleep.
+
+**Acceptance criteria:**
+
+- [x] Reminder commands (`list_reminders` / `save_reminder` / `delete_reminder` / `snooze_reminder`).
+- [x] Editor "Alert" row with presets (at time of event, 5/15/30 min, 1 hour, 1 day, 1 week, custom) and multiple alerts.
+- [x] `tauri-plugin-notification` granted in capabilities + a backend scheduler with catch-up, permission handling, and click-through.
+- [x] Default alerts per calendar (Events / All-day events) stored in settings and pre-filled on create.
+- [x] All-day alerts fire relative to a configured day start, not midnight.
+- [x] Snooze 5/15 min.
+
+**Files created:**
+
+- `apps/desktop/src-tauri/src/notify.rs` — reminder scheduler (trigger computation, catch-up, permission, delivery, snooze re-fire).
+- `packages/calendar-ui/src/headless/alerts.ts` — shared alert presets and label formatting.
+
+**Files modified:**
+
+- `apps/desktop/src-tauri/Cargo.toml` — added `tauri-plugin-notification`.
+- `apps/desktop/src-tauri/capabilities/default.json` — added `notification:default`.
+- `apps/desktop/src-tauri/src/migrations.rs` — `003_reminder_delivery` (`delivered_at`, `snooze_until`).
+- `apps/desktop/src-tauri/src/store.rs` — delivery bookkeeping queries (`list_due_reminders`, `mark_reminder_delivered`, `set_reminder_snooze`).
+- `apps/desktop/src-tauri/src/commands.rs` — reminder + default-alert commands.
+- `apps/desktop/src-tauri/src/lib.rs` — registered plugin, commands, and scheduler.
+- `packages/calendar-ui/src/types/calendar.ts` — `ReminderDraft`, `DefaultAlerts`, and new `CalendarDataSource` methods.
+- `packages/calendar-ui/src/components/EventEditorModal.tsx` — functional alert row.
+- `packages/calendar-ui/src/views/SettingsView.tsx` — Notifications tab (default alerts).
+- `apps/desktop/src/services/tauriAdapter.ts` + `inMemoryAdapter.ts` — new data-source methods.
+- `apps/desktop/src/App.tsx` — reminder reconciliation on save + reminder-fired banner with snooze/open.
+- `apps/desktop/src-tauri/tests/sqlite_store.rs` — `reminder_delivery_round_trip` integration test.
+
+### S6.8 — Attendees & invitations _(P0 model, P1 transport)_
+
+**As a** user **I want** to invite people, see RSVPs, find a free time, and exchange iTIP
+over mail **so that** Almanac can schedule with others.
+
+**Acceptance criteria:**
+
+- [x] Attendee model + `attendees` table, wired through core → SQLite → Tauri → UI.
+- [x] Editor invitee picker with autocomplete, RSVP chips, and accepted/declined/pending counts on event blocks.
+- [x] iCal `ATTENDEE`/`ORGANIZER`/`TRANSP` round-trip.
+- [x] iTIP REQUEST/REPLY/CANCEL generate + apply; invitations handed to an outbox/`ALMANAC_MAIL_COMMAND` (no SMTP in this crate).
+- [x] Find a time uses real free/busy (busy/free flag, expanded occurrences).
+- [x] Show/hide declined events keyed off the user's email.
+
+**Files created:**
+
+- `crates/calendar-core/src/itip.rs` — RFC 5546/6047 generate/parse + iMIP envelopes.
+- `crates/calendar-core/src/freebusy.rs` — free/busy slots, find-a-time, VFREEBUSY.
+- `apps/desktop/src-tauri/src/mail.rs` — iMIP outbox + mail-command/`mailto:` handoff.
+- `packages/calendar-ui/src/headless/attendees.ts` — RSVP rollups.
+- `packages/calendar-ui/src/components/AttendeeBadge.tsx` — event-block acceptance pill.
+
+**Files modified:**
+
+- `crates/calendar-core/src/model.rs` — `Attendee`, `busy` on `Event`/`EventDraft`.
+- `crates/calendar-core/src/ical.rs` — ATTENDEE/ORGANIZER/TRANSP + cancelled iTIP parse.
+- `apps/desktop/src-tauri/src/migrations.rs` — `004_attendees`, `005_event_busy`.
+- `apps/desktop/src-tauri/src/{store,commands,lib}.rs` — persistence, iTIP apply/send, find-a-time, identity.
+- `packages/calendar-ui/src/components/EventEditorModal.tsx` — invitees, RSVP chips, Find a time, busy toggle.
+- `packages/calendar-ui/src/views/{Month,Week,ThreeDay,Day,Agenda}View.tsx` — attendee badges.
+- `packages/calendar-ui/src/views/SettingsView.tsx` — identity email + show declined.
+- `apps/desktop/src/{App.tsx,services/tauriAdapter.ts}` — data-source wiring.
+
 ---
 
 ## E7 — Embeddability hardening

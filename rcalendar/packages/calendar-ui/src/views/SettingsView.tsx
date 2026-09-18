@@ -1,5 +1,6 @@
 import { Component, createSignal, For, Show } from "solid-js";
-import { Account, Calendar } from "../types/calendar";
+import { Account, Calendar, DefaultAlerts, IdentitySettings } from "../types/calendar";
+import { ALERT_PRESETS, formatAlertOffset } from "../headless/alerts";
 
 export interface SettingsViewProps {
   accounts: { account: Account; calendars: Calendar[] }[];
@@ -7,10 +8,20 @@ export interface SettingsViewProps {
   onToggleCalendar: (calendarId: string, enabled: boolean) => void;
   onSyncAccount?: (accountId: string) => Promise<void>;
   onSetSyncInterval?: (minutes: number) => Promise<void>;
+  defaultAlerts?: DefaultAlerts;
+  onSetDefaultAlerts?: (alerts: DefaultAlerts) => Promise<void> | void;
+  identity?: IdentitySettings;
+  onSetIdentity?: (identity: IdentitySettings) => Promise<void> | void;
   onAddAccountClick?: () => void;
   onConnectGoogleClick?: () => void;
+  onDeleteAccount?: (accountId: string) => Promise<void> | void;
+  onDeleteCalendar?: (calendarId: string) => Promise<void> | void;
   onClose: () => void;
 }
+
+type PendingDelete =
+  | { kind: "account"; id: string; name: string; detail: string }
+  | { kind: "calendar"; id: string; name: string; detail: string };
 
 const SETTINGS_NAV = [
   { id: "general", name: "General" },
@@ -27,6 +38,9 @@ export const SettingsView: Component<SettingsViewProps> = (props) => {
   const [syncInterval, setSyncInterval] = createSignal(15);
   const [syncingId, setSyncingId] = createSignal<string | null>(null);
   const [syncStatus, setSyncStatus] = createSignal<string>("");
+  const [pendingDelete, setPendingDelete] = createSignal<PendingDelete | null>(null);
+  const [deleteBusy, setDeleteBusy] = createSignal(false);
+  const [deleteError, setDeleteError] = createSignal("");
 
   const handleSync = async (accountId: string) => {
     if (!props.onSyncAccount) return;
@@ -43,11 +57,68 @@ export const SettingsView: Component<SettingsViewProps> = (props) => {
     }
   };
 
+  const accountName = (accountId: string) =>
+    props.accounts.find((a) => a.account.id === accountId)?.account.displayName || "Account";
+
+  const confirmDelete = async () => {
+    const pending = pendingDelete();
+    if (!pending) return;
+    setDeleteBusy(true);
+    setDeleteError("");
+    try {
+      if (pending.kind === "account") {
+        await props.onDeleteAccount?.(pending.id);
+      } else {
+        await props.onDeleteCalendar?.(pending.id);
+      }
+      setPendingDelete(null);
+    } catch (e) {
+      setDeleteError(`Could not remove: ${e}`);
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
   const handleIntervalChange = async (minutes: number) => {
     setSyncInterval(minutes);
     if (props.onSetSyncInterval) {
       await props.onSetSyncInterval(minutes);
     }
+  };
+
+  const defaultAlertSelect = (kind: "event" | "allDay") => {
+    const current = kind === "event" ? props.defaultAlerts?.event : props.defaultAlerts?.allDay;
+    return (
+      <select
+        value={current == null ? "none" : String(current)}
+        onChange={(e) => {
+          const v = e.currentTarget.value;
+          const next: DefaultAlerts = {
+            event: props.defaultAlerts?.event ?? null,
+            allDay: props.defaultAlerts?.allDay ?? null,
+          };
+          next[kind] = v === "none" ? null : Number(v);
+          props.onSetDefaultAlerts?.(next);
+        }}
+        style={{
+          height: "32px",
+          padding: "0 10px",
+          border: "1px solid var(--al-border, #E0E0E0)",
+          "border-radius": "8px",
+          "font-size": "12.5px",
+          background: "#FFFFFF",
+          width: "200px",
+        }}
+      >
+        <For each={ALERT_PRESETS}>
+          {(p) => (
+            <option value={p.offsetMinutes == null ? "none" : String(p.offsetMinutes)}>
+              {p.label}
+            </option>
+          )}
+        </For>
+      </select>
+    );
   };
 
   return (
@@ -299,6 +370,33 @@ export const SettingsView: Component<SettingsViewProps> = (props) => {
                     >
                       {syncingId() === accItem.account.id ? "Syncing..." : "Sync now"}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPendingDelete({
+                          kind: "account",
+                          id: accItem.account.id,
+                          name: accItem.account.displayName,
+                          detail: `${accItem.calendars.length} calendar${
+                            accItem.calendars.length === 1 ? "" : "s"
+                          } and their events will be removed from this Mac.`,
+                        })
+                      }
+                      style={{
+                        display: "flex",
+                        "align-items": "center",
+                        height: "30px",
+                        padding: "0 12px",
+                        border: "1px solid #E0E0E0",
+                        "border-radius": "8px",
+                        background: "#FFFFFF",
+                        "font-size": "12px",
+                        color: "#C2410C",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Remove
+                    </button>
                   </div>
 
                   {/* Calendars in Account */}
@@ -348,6 +446,29 @@ export const SettingsView: Component<SettingsViewProps> = (props) => {
                             }
                             style={{ cursor: "pointer", "margin-left": "4px" }}
                           />
+                          <button
+                            type="button"
+                            aria-label={`Remove ${cal.name}`}
+                            onClick={() =>
+                              setPendingDelete({
+                                kind: "calendar",
+                                id: cal.id,
+                                name: cal.name,
+                                detail: "Events and tasks on this calendar will be removed.",
+                              })
+                            }
+                            style={{
+                              background: "none",
+                              border: "none",
+                              padding: "0 0 0 4px",
+                              cursor: "pointer",
+                              color: "#A0A0A0",
+                              "font-size": "14px",
+                              "line-height": 1,
+                            }}
+                          >
+                            ×
+                          </button>
                         </div>
                       )}
                     </For>
@@ -433,29 +554,31 @@ export const SettingsView: Component<SettingsViewProps> = (props) => {
                   "border-radius": "9px",
                 }}
               >
-                {[5, 15, 60, 0].map((mins) => {
-                  const label = mins === 0 ? "manual" : mins === 60 ? "1 hour" : `${mins} min`;
-                  const active = syncInterval() === mins;
-                  return (
-                    <button
-                      type="button"
-                      onClick={() => handleIntervalChange(mins)}
-                      style={{
-                        padding: "5px 11px",
-                        "border-radius": "6px",
-                        "font-family": "var(--al-font-mono)",
-                        "font-size": "11.5px",
-                        background: active ? "#FFFFFF" : "transparent",
-                        color: active ? "#1A1A1A" : "#777777",
-                        "box-shadow": active ? "0 1px 2px rgba(0,0,0,0.10)" : "none",
-                        border: "none",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
+                <For each={[5, 15, 60, 0]}>
+                  {(mins) => {
+                    const label = mins === 0 ? "manual" : mins === 60 ? "1 hour" : `${mins} min`;
+                    const active = () => syncInterval() === mins;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => handleIntervalChange(mins)}
+                        style={{
+                          padding: "5px 11px",
+                          "border-radius": "6px",
+                          "font-family": "var(--al-font-mono)",
+                          "font-size": "11.5px",
+                          background: active() ? "#FFFFFF" : "transparent",
+                          color: active() ? "#1A1A1A" : "#777777",
+                          "box-shadow": active() ? "0 1px 2px rgba(0,0,0,0.10)" : "none",
+                          border: "none",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  }}
+                </For>
               </div>
               <div style={{ flex: 1 }} />
               <Show when={syncStatus()}>
@@ -481,7 +604,224 @@ export const SettingsView: Component<SettingsViewProps> = (props) => {
             </div>
           </Show>
 
-          <Show when={activeNav() !== "accounts"}>
+          <Show when={activeNav() === "calendars"}>
+            <For each={props.calendars}>
+              {(cal) => (
+                <div
+                  style={{
+                    display: "flex",
+                    "align-items": "center",
+                    gap: "12px",
+                    padding: "12px 16px",
+                    border: "1px solid #E5E5E5",
+                    "border-radius": "11px",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "12px",
+                      height: "12px",
+                      "border-radius": "3px",
+                      background: cal.color,
+                      flex: "none",
+                    }}
+                  />
+                  <div style={{ display: "flex", "flex-direction": "column", gap: "2px", flex: 1 }}>
+                    <span style={{ "font-size": "14px", "font-weight": 500 }}>{cal.name}</span>
+                    <span
+                      style={{
+                        "font-family": "var(--al-font-mono)",
+                        "font-size": "10.5px",
+                        color: "#888888",
+                      }}
+                    >
+                      {accountName(cal.accountId)} · {cal.eventCount} events
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPendingDelete({
+                        kind: "calendar",
+                        id: cal.id,
+                        name: cal.name,
+                        detail: "Events and tasks on this calendar will be removed.",
+                      })
+                    }
+                    style={{
+                      height: "30px",
+                      padding: "0 12px",
+                      border: "1px solid #E0E0E0",
+                      "border-radius": "8px",
+                      background: "#FFFFFF",
+                      "font-size": "12px",
+                      color: "#C2410C",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </For>
+            <Show when={props.calendars.length === 0}>
+              <div style={{ "font-size": "13.5px", color: "#777777" }}>
+                No calendars yet. Add an account to create one.
+              </div>
+            </Show>
+          </Show>
+
+          <Show when={activeNav() === "notifications"}>
+            <div
+              style={{
+                display: "flex",
+                "flex-direction": "column",
+                gap: "22px",
+                "max-width": "560px",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  "align-items": "center",
+                  gap: "16px",
+                }}
+              >
+                <span
+                  style={{
+                    "font-family": "var(--al-font-mono)",
+                    "font-size": "10px",
+                    "letter-spacing": "0.08em",
+                    color: "#A0A0A0",
+                    width: "120px",
+                    flex: "none",
+                  }}
+                >
+                  EVENTS
+                </span>
+                {defaultAlertSelect("event")}
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  "align-items": "center",
+                  gap: "16px",
+                }}
+              >
+                <span
+                  style={{
+                    "font-family": "var(--al-font-mono)",
+                    "font-size": "10px",
+                    "letter-spacing": "0.08em",
+                    color: "#A0A0A0",
+                    width: "120px",
+                    flex: "none",
+                  }}
+                >
+                  ALL-DAY EVENTS
+                </span>
+                {defaultAlertSelect("allDay")}
+              </div>
+
+              <div
+                style={{
+                  "font-size": "12.5px",
+                  color: "#777777",
+                  background: "#FBFBFB",
+                  "border-radius": "8px",
+                  padding: "12px 14px",
+                  "line-height": 1.5,
+                }}
+              >
+                New events default to{" "}
+                <strong>{formatAlertOffset(props.defaultAlerts?.event)}</strong> for timed events
+                and <strong>{formatAlertOffset(props.defaultAlerts?.allDay)}</strong> for all-day
+                events. You can still add or remove alerts per event in the editor.
+              </div>
+            </div>
+          </Show>
+
+          <Show when={activeNav() === "general"}>
+            <div
+              style={{
+                border: "1px solid #E5E5E5",
+                "border-radius": "11px",
+                padding: "18px 20px",
+                display: "flex",
+                "flex-direction": "column",
+                gap: "16px",
+              }}
+            >
+              <div style={{ display: "flex", "align-items": "center", gap: "16px" }}>
+                <span
+                  style={{
+                    "font-family": "var(--al-font-mono)",
+                    "font-size": "10px",
+                    "letter-spacing": "0.08em",
+                    color: "#A0A0A0",
+                    width: "120px",
+                    flex: "none",
+                  }}
+                >
+                  YOUR EMAIL
+                </span>
+                <input
+                  type="email"
+                  placeholder="you@example.com"
+                  value={props.identity?.selfEmail ?? ""}
+                  onChange={(e) =>
+                    props.onSetIdentity?.({
+                      selfEmail: e.currentTarget.value.trim() || null,
+                      showDeclined: props.identity?.showDeclined ?? false,
+                    })
+                  }
+                  style={{
+                    height: "32px",
+                    padding: "0 10px",
+                    border: "1px solid #E0E0E0",
+                    "border-radius": "8px",
+                    "font-size": "12.5px",
+                    flex: 1,
+                  }}
+                />
+              </div>
+              <label
+                style={{
+                  display: "flex",
+                  "align-items": "center",
+                  gap: "10px",
+                  "font-size": "13px",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={props.identity?.showDeclined ?? false}
+                  onChange={(e) =>
+                    props.onSetIdentity?.({
+                      selfEmail: props.identity?.selfEmail ?? null,
+                      showDeclined: e.currentTarget.checked,
+                    })
+                  }
+                />
+                Show declined events
+              </label>
+              <div style={{ "font-size": "12.5px", color: "#777777", "line-height": 1.5 }}>
+                Events you have declined stay hidden unless this is on. Your email is matched
+                against attendee addresses.
+              </div>
+            </div>
+          </Show>
+
+          <Show
+            when={
+              activeNav() !== "accounts" &&
+              activeNav() !== "calendars" &&
+              activeNav() !== "notifications" &&
+              activeNav() !== "general"
+            }
+          >
             <div
               style={{
                 padding: "24px",
@@ -497,6 +837,85 @@ export const SettingsView: Component<SettingsViewProps> = (props) => {
           </Show>
         </div>
       </div>
+
+      <Show when={pendingDelete()}>
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.34)",
+            "z-index": 120,
+            display: "flex",
+            "align-items": "center",
+            "justify-content": "center",
+          }}
+          onClick={() => !deleteBusy() && setPendingDelete(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "420px",
+              background: "#FFFFFF",
+              "border-radius": "14px",
+              padding: "22px 24px 18px",
+              "box-shadow": "0 24px 60px -18px rgba(0,0,0,0.34)",
+            }}
+          >
+            <div style={{ "font-size": "17px", "font-weight": 600, "margin-bottom": "8px" }}>
+              Remove {pendingDelete()?.kind === "account" ? "account" : "calendar"}?
+            </div>
+            <div style={{ "font-size": "13.5px", color: "#575757", "line-height": 1.45 }}>
+              <strong>{pendingDelete()?.name}</strong> — {pendingDelete()?.detail} This only affects
+              Almanac’s local store.
+            </div>
+            <Show when={deleteError()}>
+              <div style={{ "font-size": "12.5px", color: "#C2410C", "margin-top": "10px" }}>
+                {deleteError()}
+              </div>
+            </Show>
+            <div
+              style={{
+                display: "flex",
+                "justify-content": "flex-end",
+                gap: "8px",
+                "margin-top": "18px",
+              }}
+            >
+              <button
+                type="button"
+                disabled={deleteBusy()}
+                onClick={() => setPendingDelete(null)}
+                style={{
+                  height: "32px",
+                  padding: "0 14px",
+                  border: "1px solid #E0E0E0",
+                  "border-radius": "8px",
+                  background: "#FFFFFF",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleteBusy()}
+                onClick={() => void confirmDelete()}
+                style={{
+                  height: "32px",
+                  padding: "0 14px",
+                  border: "none",
+                  "border-radius": "8px",
+                  background: "#C2410C",
+                  color: "#FFFFFF",
+                  cursor: "pointer",
+                }}
+              >
+                {deleteBusy() ? "Removing…" : "Remove"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Show>
     </div>
   );
 };

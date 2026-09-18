@@ -1,5 +1,7 @@
 import { Component, createMemo, For, Show } from "solid-js";
 import { Calendar, OccurrenceItem } from "../types/calendar";
+import { AttendeeBadge } from "../components/AttendeeBadge";
+import { AttendeeSummary } from "../headless/attendees";
 import {
   addMonths,
   buildMonthGrid,
@@ -19,6 +21,8 @@ export interface MonthViewProps {
   calendars: Calendar[];
   onEventClick?: (item: OccurrenceItem) => void;
   onCellClick?: (date: Date) => void;
+  /** Per-event attendee RSVP rollups, keyed by event id (for acceptance badges). */
+  attendeeSummaries?: ReadonlyMap<string, AttendeeSummary>;
 }
 
 export const MonthView: Component<MonthViewProps> = (props) => {
@@ -333,7 +337,7 @@ export const MonthView: Component<MonthViewProps> = (props) => {
                 <For each={chips()}>
                   {(item) => {
                     const cal = () => calendarMap().get(item.event.calendarId);
-                    const color = () => cal()?.color || "#1F6FEB";
+                    const color = () => item.event.color || cal()?.color || "#1F6FEB";
                     const tint = () => {
                       const c = color();
                       return c.startsWith("#") ? `${c}1A` : "rgba(31,111,235,0.10)";
@@ -392,6 +396,9 @@ export const MonthView: Component<MonthViewProps> = (props) => {
                         >
                           {item.event.title}
                         </span>
+                        <Show when={props.attendeeSummaries?.get(item.event.id)}>
+                          {(summary) => <AttendeeBadge summary={summary()} />}
+                        </Show>
                       </div>
                     );
                   }}
