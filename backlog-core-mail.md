@@ -262,7 +262,7 @@ provider.
 - [ ] Optimistic row updates instead of re-querying 500 rows plus settings after every action.
 - [x] Show star, attachment, and account-colour markers on rows.
 - [ ] Add a compact density (single-line rows, ~36 px) next to the current 80 px rows.
-- [ ] Quick filters: Unread, Starred, Has attachment (the small version of T0.5).
+- [x] Quick filters: Unread, Starred, Has attachment (the small version of T0.5).
 
 > **Blockers:** No external blocker identified. The store already supports the relevant search
 > operators, but the list still lacks chip state and query composition for quick filters.
