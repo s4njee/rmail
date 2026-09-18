@@ -291,11 +291,12 @@ provider.
 ### C1.9 Replies that go to the right people
 
 - [ ] Honour `Reply-To`; reply-all excludes every identity and alias, not just the primary address.
-- [ ] Forward uses a standard forwarded-message header block.
+- [x] Forward uses a standard forwarded-message header block.
 - [ ] For mailing lists, offer reply-to-list vs reply-to-sender (`List-Post`).
 
 > **Blockers:** The mailing-list branch needs representative `List-Post` fixtures and provider
-> validation. Reply-To and forwarding can proceed without an external dependency.
+> validation. `Reply-To` still needs a persisted parsed header and migration; it has no external
+> dependency.
 
 ### C1.10 Mail that renders like it does in Gmail
 

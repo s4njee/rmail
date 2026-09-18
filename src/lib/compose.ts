@@ -204,6 +204,14 @@ export async function openComposer(
   const myAddress = (myAccount?.address || "").toLowerCase();
 
   const settings = await getSettings();
+  const myAddresses = new Set(
+    [
+      myAddress,
+      ...(settings.identities || []).map((identity) => identity.email),
+    ]
+      .map((address) => address.trim().toLowerCase())
+      .filter(Boolean),
+  );
   // P1.2: if the original was addressed to one of our aliases, reply from
   // that alias (its signature included) instead of the account default.
   const addressedIdentity =
@@ -224,7 +232,7 @@ export async function openComposer(
   } else if (intent === "replyAll") {
     const rawTo = [original.sender_address, ...detail.to.map((r) => r.address)];
     to = rawTo
-      .filter((addr) => addr.toLowerCase() !== myAddress)
+      .filter((addr) => !myAddresses.has(addr.trim().toLowerCase()))
       .filter(
         (a, i, arr) =>
           arr.findIndex((x) => x.toLowerCase() === a.toLowerCase()) === i,
@@ -238,7 +246,7 @@ export async function openComposer(
       .map((r) => r.address)
       .filter(
         (addr) =>
-          addr.toLowerCase() !== myAddress &&
+          !myAddresses.has(addr.trim().toLowerCase()) &&
           !to.some((t) => t.toLowerCase() === addr.toLowerCase()),
       )
       .filter(
@@ -264,7 +272,8 @@ export async function openComposer(
     references = detail.references || detail.message_id_header || null;
   }
 
-  const quote = quotedBody(detail);
+  const quote =
+    intent === "forward" ? forwardedMessageBody(detail) : quotedBody(detail);
   let body = `\n\n${quote}`;
   let htmlSignature: string | null = null;
   let plainSignature: string | null = null;
@@ -337,6 +346,36 @@ function quotedBody(detail: MessageDetail): string {
     : detail.row.sender_address;
   const quote = detail.body.map((p) => `> ${p}`).join("\n");
   return `On ${date}, ${from} wrote:\n${quote}`;
+}
+
+function forwardedMessageBody(detail: MessageDetail): string {
+  const date = new Date(detail.row.received_at_ms).toLocaleString();
+  const from = detail.row.sender_name
+    ? `${detail.row.sender_name} <${detail.row.sender_address}>`
+    : detail.row.sender_address;
+  const recipients = detail.to
+    .map((recipient) =>
+      recipient.name
+        ? `${recipient.name} <${recipient.address}>`
+        : recipient.address,
+    )
+    .join(", ");
+  const cc = detail.cc
+    .map((recipient) =>
+      recipient.name
+        ? `${recipient.name} <${recipient.address}>`
+        : recipient.address,
+    )
+    .join(", ");
+  const headers = [
+    "---------- Forwarded message ---------",
+    `From: ${from}`,
+    `Date: ${date}`,
+    `Subject: ${detail.row.subject}`,
+    `To: ${recipients}`,
+    ...(cc ? [`Cc: ${cc}`] : []),
+  ];
+  return `${headers.join("\n")}\n\n${detail.body.join("\n\n")}`;
 }
 
 export function closeComposer(): void {
