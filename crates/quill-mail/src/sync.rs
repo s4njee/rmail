@@ -563,16 +563,19 @@ pub async fn sync_folder(
     let mut complete = true;
 
     if full {
-        // UIDVALIDITY changed (or no watermark). The folder's local rows are
-        // reconciled against the refetched set below; no upfront wipe, so an
-        // interrupted refetch leaves the previous rows in place.
+        // UIDVALIDITY makes UID identity invalid. Clear the previous local
+        // image before a full resync so a UID reused by the server cannot
+        // update or display an unrelated old message.
+        if last_validity != 0 {
+            store.clear_folder_for_uidvalidity_change(account.id, local_folder)?;
+        }
         if mailbox.exists > 0 {
             // Reconcile the complete mailbox using headers first. Body bytes
             // are fetched only for new/missing messages inside the cache
             // window, so old mail remains immediately usable as headers and is
             // fetched on demand when opened.
             let existing: HashSet<u32> = store
-                .folder_uids(account.id, local_folder)
+                .folder_uids(account.id, local_folder, uidvalidity)
                 .into_iter()
                 .collect();
             let missing: HashSet<u32> = store
@@ -705,10 +708,15 @@ pub async fn sync_folder(
             // Only reconcile expunges when the complete header stream arrived;
             // a partial stream must never delete unseen rows.
             if complete {
-                store.delete_messages_not_in(account.id, local_folder, &server_uids)?;
+                store.delete_messages_not_in(
+                    account.id,
+                    local_folder,
+                    uidvalidity,
+                    &server_uids,
+                )?;
             }
         } else {
-            store.delete_messages_not_in(account.id, local_folder, &[])?;
+            store.delete_messages_not_in(account.id, local_folder, uidvalidity, &[])?;
         }
     } else {
         // Incremental:
@@ -770,15 +778,16 @@ pub async fn sync_folder(
                                         }
                                         _ => false,
                                     });
-                                    let _ = store.update_message_flags_by_uid(
+                                    store.update_message_flags_by_uid(
                                         account.id,
                                         local_folder,
                                         uid,
+                                        uidvalidity,
                                         unread,
                                         flagged,
                                         answered,
                                         forwarded,
-                                    );
+                                    )?;
                                 }
                             }
                             Ok(None) => break,
@@ -792,14 +801,18 @@ pub async fn sync_folder(
                     // read; a partial stream would delete every message whose
                     // UID hadn't been seen yet.
                     if complete {
-                        let _ =
-                            store.delete_messages_not_in(account.id, local_folder, &server_uids);
+                        store.delete_messages_not_in(
+                            account.id,
+                            local_folder,
+                            uidvalidity,
+                            &server_uids,
+                        )?;
                     }
                 }
                 Err(_) => complete = false,
             }
         } else {
-            let _ = store.delete_messages_not_in(account.id, local_folder, &[]);
+            store.delete_messages_not_in(account.id, local_folder, uidvalidity, &[])?;
         }
     }
 

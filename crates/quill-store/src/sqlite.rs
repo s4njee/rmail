@@ -4729,15 +4729,20 @@ impl SqliteStore {
     /// All UIDs currently stored for an account+folder. Used by the sync's
     /// full-refetch path to avoid re-downloading bodies for messages it already
     /// has (a busy Inbox would otherwise refetch the whole folder each cycle).
-    pub fn folder_uids(&self, account_id: AccountId, folder: &str) -> Vec<u32> {
+    pub fn folder_uids(&self, account_id: AccountId, folder: &str, uidvalidity: u32) -> Vec<u32> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT uid FROM messages WHERE account_id = ?1 AND folder = ?2 AND uid IS NOT NULL")
+            .prepare(
+                "SELECT uid FROM messages WHERE account_id = ?1 AND folder = ?2 \
+                 AND uidvalidity = ?3 AND uid IS NOT NULL",
+            )
             .expect("folder uids query");
-        stmt.query_map(params![account_id, folder], |r| r.get::<_, i64>(0))
-            .expect("folder uid rows")
-            .map(|r| r.expect("folder uid") as u32)
-            .collect()
+        stmt.query_map(params![account_id, folder, uidvalidity], |r| {
+            r.get::<_, i64>(0)
+        })
+        .expect("folder uid rows")
+        .map(|r| r.expect("folder uid") as u32)
+        .collect()
     }
 
     pub fn get_sync_state(&self, account_id: AccountId, folder: &str) -> (i64, i64, i64) {
@@ -4781,6 +4786,7 @@ impl SqliteStore {
         account_id: AccountId,
         folder: &str,
         uid: u32,
+        uidvalidity: u32,
         unread: bool,
         flagged: bool,
         answered: bool,
@@ -4789,7 +4795,7 @@ impl SqliteStore {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE messages SET unread = ?1, flagged = ?2, answered = ?3, forwarded = ?4 \
-             WHERE account_id = ?5 AND folder = ?6 AND uid = ?7",
+             WHERE account_id = ?5 AND folder = ?6 AND uid = ?7 AND uidvalidity = ?8",
             params![
                 unread as i64,
                 flagged as i64,
@@ -4797,7 +4803,8 @@ impl SqliteStore {
                 forwarded as i64,
                 account_id,
                 folder,
-                uid
+                uid,
+                uidvalidity
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -5745,39 +5752,56 @@ impl SqliteStore {
         Ok(rows)
     }
 
-    /// Remove local messages for an account+folder whose uid is not in
-    /// `keep_uids` (used on a full refetch after the uidvalidity changed).
+    /// Remove the old local image before a UIDVALIDITY full resync. UID reuse
+    /// is legal after a validity reset, so retaining rows until an expunge
+    /// comparison can mix two unrelated messages with the same UID.
+    pub fn clear_folder_for_uidvalidity_change(
+        &self,
+        account_id: AccountId,
+        folder: &str,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM messages WHERE account_id = ?1 AND folder = ?2 AND uid IS NOT NULL",
+            params![account_id, folder],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Remove local messages for an account+folder+UIDVALIDITY whose UID is
+    /// not in `keep_uids`. The temp-table diff scales past SQLite's bind limit
+    /// and avoids constructing a `NOT IN (?, …)` statement.
     pub fn delete_messages_not_in(
         &self,
         account_id: AccountId,
         folder: &str,
+        uidvalidity: u32,
         keep_uids: &[u32],
     ) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
-        if keep_uids.is_empty() {
-            conn.execute(
-                "DELETE FROM messages WHERE account_id = ?1 AND folder = ?2 \
-                 AND deleted_at_ms IS NULL",
-                params![account_id, folder],
-            )
-            .map_err(|e| e.to_string())?;
-        } else {
-            let placeholders = keep_uids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-            let sql = format!(
-                "DELETE FROM messages WHERE account_id = ?1 AND folder = ?2 AND uid IS NOT NULL \
-                 AND deleted_at_ms IS NULL AND uid NOT IN ({placeholders})"
-            );
-            let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-            let mut params: Vec<rusqlite::types::Value> = vec![
-                Value::Integer(i64::from(account_id)),
-                Value::Text(folder.to_string()),
-            ];
-            for uid in keep_uids {
-                params.push((*uid as i64).into());
-            }
-            stmt.execute(rusqlite::params_from_iter(params.iter()))
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        tx.execute_batch(
+            "CREATE TEMP TABLE IF NOT EXISTS sync_keep_uids (uid INTEGER PRIMARY KEY); \
+             DELETE FROM sync_keep_uids;",
+        )
+        .map_err(|e| e.to_string())?;
+        {
+            let mut insert = tx
+                .prepare("INSERT OR IGNORE INTO sync_keep_uids (uid) VALUES (?1)")
                 .map_err(|e| e.to_string())?;
+            for uid in keep_uids {
+                insert.execute(params![uid]).map_err(|e| e.to_string())?;
+            }
         }
+        tx.execute(
+            "DELETE FROM messages WHERE account_id = ?1 AND folder = ?2 AND uidvalidity = ?3 \
+             AND uid IS NOT NULL AND deleted_at_ms IS NULL \
+             AND NOT EXISTS (SELECT 1 FROM sync_keep_uids k WHERE k.uid = messages.uid)",
+            params![account_id, folder, uidvalidity],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -8122,7 +8146,7 @@ mod tests {
 
         // Update flags by uid
         store
-            .update_message_flags_by_uid(1, "Inbox", 100, false, true, true, false)
+            .update_message_flags_by_uid(1, "Inbox", 100, 12345, false, true, true, false)
             .unwrap();
         let msg = store
             .page_messages(&MessageQuery {
@@ -8142,7 +8166,9 @@ mod tests {
         assert!(!msg.forwarded);
 
         // A full refetch (uidvalidity changed) keeps only the server's uids.
-        store.delete_messages_not_in(1, "Inbox", &[101]).unwrap();
+        store
+            .delete_messages_not_in(1, "Inbox", 12345, &[101])
+            .unwrap();
         assert_eq!(store.message_uids(1, "Inbox"), vec![101]);
 
         let page = store.page_messages(&MessageQuery {
@@ -8153,6 +8179,105 @@ mod tests {
             threaded: false,
         });
         assert!(page.items.iter().any(|r| r.subject == "Subject 2"));
+    }
+
+    #[test]
+    fn expunge_diff_scales_to_one_hundred_thousand_uids() {
+        let store = seeded();
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "WITH RECURSIVE u(uid) AS ( \
+                   VALUES(1) UNION ALL SELECT uid + 1 FROM u WHERE uid < 100000 \
+                 ) \
+                 INSERT INTO messages \
+                   (account_id, folder, server_folder, sender_name, sender_address, subject, snippet, \
+                    received_at_ms, uid, uidvalidity) \
+                 SELECT 1, 'Scale', 'Scale', 'sender', 'sender@example.com', \
+                   'scale row', '', uid, uid, 77 FROM u;",
+            )
+            .unwrap();
+        let keep: Vec<u32> = (1..=100_000).step_by(2).collect();
+        store.delete_messages_not_in(1, "Scale", 77, &keep).unwrap();
+        let remaining: i64 = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE account_id = 1 AND folder = 'Scale'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 50_000);
+    }
+
+    #[test]
+    fn uidvalidity_reset_clears_rows_and_flags_are_validity_scoped() {
+        let store = seeded();
+        let old_id = store
+            .upsert_fetched_message(
+                1,
+                "Validity",
+                "Validity",
+                9,
+                1,
+                "old",
+                "old@example.com",
+                "old",
+                "",
+                1,
+                true,
+                false,
+                false,
+                false,
+                false,
+            )
+            .unwrap();
+        assert_eq!(store.folder_uids(1, "Validity", 1), vec![9]);
+        store
+            .clear_folder_for_uidvalidity_change(1, "Validity")
+            .unwrap();
+        assert!(store.get_message(old_id).is_none());
+        assert!(store.folder_uids(1, "Validity", 1).is_empty());
+
+        let new_id = store
+            .upsert_fetched_message(
+                1,
+                "Validity",
+                "Validity",
+                9,
+                2,
+                "new",
+                "new@example.com",
+                "new",
+                "",
+                2,
+                true,
+                false,
+                false,
+                false,
+                false,
+            )
+            .unwrap();
+        assert!(store.folder_uids(1, "Validity", 1).is_empty());
+        assert_eq!(store.folder_uids(1, "Validity", 2), vec![9]);
+        store
+            .update_message_flags_by_uid(1, "Validity", 9, 1, false, true, true, true)
+            .unwrap();
+        let row = store.get_message(new_id).unwrap().row;
+        assert!(
+            row.unread,
+            "old UIDVALIDITY must not alter the replacement row"
+        );
+        store
+            .update_message_flags_by_uid(1, "Validity", 9, 2, false, true, true, true)
+            .unwrap();
+        let row = store.get_message(new_id).unwrap().row;
+        assert!(!row.unread);
+        assert!(row.flagged);
     }
 
     #[test]

@@ -167,11 +167,11 @@ a regression test; the protocol ones need the fake-server harness from C3.2.
 
 ### C0.10 No silent corruption at scale
 
-- [ ] Replace the `NOT IN (?,…)` expunge check with a temp-table diff (or chunking); never drop its
+- [x] Replace the `NOT IN (?,…)` expunge check with a temp-table diff (or chunking); never drop its
       error with `let _`.
-- [ ] Clear and resync a folder when UIDVALIDITY changes; key `folder_uids` and flag updates on
+- [x] Clear and resync a folder when UIDVALIDITY changes; key `folder_uids` and flag updates on
       `(folder, uid, uidvalidity)`.
-- [ ] Test with a 100k-UID folder and a forced UIDVALIDITY change.
+- [x] Test with a 100k-UID folder and a forced UIDVALIDITY change.
 
 ---
 
@@ -389,10 +389,8 @@ Snooze, send later, bulk selection, and undo exist.
 
 ## Remaining
 
-C0.1–C0.9 are complete. The remaining work is the mail-safety and everyday-use queue:
+C0.1–C0.10 are complete. The remaining work is the everyday-use queue:
 
-- **C0.10:** improve threading and scale, enable notifications, and make drafts roam without
-  risking silent corruption.
 - **C1:** close the provider and release-trust gaps: labels, quick filters, accessibility, signing,
   connection limits, and recovery drills.
 - **C2:** make the core loop fast and private: keyboard triage, all-mail offline search, tracker
