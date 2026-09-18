@@ -258,6 +258,46 @@ pub fn attachment_path(store: State<'_, SqliteStore>, id: AttachmentId) -> Optio
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+#[tauri::command]
+pub fn inline_attachment_paths(
+    store: State<'_, SqliteStore>,
+    message_id: MessageId,
+) -> std::collections::HashMap<String, String> {
+    store.inline_attachment_paths(message_id)
+}
+
+#[tauri::command]
+pub fn load_attachment_for_forward(
+    store: State<'_, SqliteStore>,
+    id: AttachmentId,
+) -> Result<OutgoingAttachment, String> {
+    store.outgoing_attachment(id)
+}
+
+fn safe_destination(
+    directory: &std::path::Path,
+    filename: &str,
+) -> Result<std::path::PathBuf, String> {
+    std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
+    let root = directory.canonicalize().map_err(|e| e.to_string())?;
+    let safe_name = quill_store::sqlite::sanitize_attachment_filename(filename);
+    let destination = root.join(safe_name);
+    if !destination.starts_with(&root) {
+        return Err("attachment destination escapes the selected directory".into());
+    }
+    if destination.exists() {
+        let resolved = destination.canonicalize().map_err(|e| e.to_string())?;
+        if !resolved.starts_with(&root) {
+            return Err("attachment destination escapes the selected directory".into());
+        }
+    }
+    Ok(destination)
+}
+
+fn unavailable_offline() -> String {
+    "attachment is unavailable offline; reconnect and open the message to download it".into()
+}
+
 /// Save an attachment to a target destination file path (Roadmap 3.3).
 #[tauri::command]
 pub fn save_attachment(
@@ -265,54 +305,63 @@ pub fn save_attachment(
     id: AttachmentId,
     destination_path: String,
 ) -> Result<(), String> {
-    let src_path = store.attachment_path(id);
-    let dest = std::path::Path::new(&destination_path);
-    if let Some(parent) = dest.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Some(src) = src_path {
-        if src.exists() {
-            std::fs::copy(&src, dest).map_err(|e| e.to_string())?;
-            return Ok(());
-        }
-    }
     let att = store.attachment(id).ok_or("attachment not found")?;
-    let bytes = if att.filename.ends_with(".pdf") {
-        quill_store::pdf::placeholder(att.size_bytes as usize)
-    } else {
-        format!("Placeholder content for {}", att.filename).into_bytes()
-    };
-    std::fs::write(dest, bytes).map_err(|e| e.to_string())?;
+    let src = store.attachment_path(id).ok_or_else(unavailable_offline)?;
+    let requested = std::path::Path::new(&destination_path);
+    let parent = requested
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let filename = requested
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(&att.filename);
+    let dest = safe_destination(parent, filename)?;
+    std::fs::copy(src, dest).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// Save all attachments of a message to a directory (Roadmap 3.3).
 #[tauri::command]
 pub fn save_all_attachments(
+    app: AppHandle,
     store: State<'_, SqliteStore>,
     message_id: MessageId,
-    destination_dir: String,
+    destination_dir: Option<String>,
 ) -> Result<u32, String> {
     let msg = store.get_message(message_id).ok_or("message not found")?;
-    let dir = std::path::Path::new(&destination_dir);
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let resolved_downloads;
+    let dir = if let Some(path) = destination_dir.as_deref() {
+        std::path::Path::new(path)
+    } else {
+        resolved_downloads = app.path().download_dir().map_err(|e| e.to_string())?;
+        &resolved_downloads
+    };
     let mut count = 0;
     for att in msg.attachments {
-        let dest = dir.join(&att.filename);
-        let src_path = store.attachment_path(att.id);
-        if let Some(src) = src_path {
-            if src.exists() {
-                let _ = std::fs::copy(&src, &dest);
-                count += 1;
-                continue;
+        let src = store
+            .attachment_path(att.id)
+            .ok_or_else(unavailable_offline)?;
+        let mut dest = safe_destination(dir, &att.filename)?;
+        if dest.exists() {
+            let stem = dest
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("attachment");
+            let ext = dest.extension().and_then(|s| s.to_str());
+            for suffix in 2..=10_000 {
+                let candidate = match ext {
+                    Some(ext) => format!("{stem} ({suffix}).{ext}"),
+                    None => format!("{stem} ({suffix})"),
+                };
+                let path = safe_destination(dir, &candidate)?;
+                if !path.exists() {
+                    dest = path;
+                    break;
+                }
             }
         }
-        let bytes = if att.filename.ends_with(".pdf") {
-            quill_store::pdf::placeholder(att.size_bytes as usize)
-        } else {
-            format!("Placeholder content for {}", att.filename).into_bytes()
-        };
-        let _ = std::fs::write(&dest, bytes);
+        std::fs::copy(src, dest).map_err(|e| e.to_string())?;
         count += 1;
     }
     Ok(count)

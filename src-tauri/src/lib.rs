@@ -120,6 +120,8 @@ pub fn run() {
             commands::page_messages,
             commands::get_message,
             commands::attachment_path,
+            commands::inline_attachment_paths,
+            commands::load_attachment_for_forward,
             commands::mark_read,
             commands::star,
             commands::mark_answered,

@@ -549,6 +549,18 @@ pub struct Attachment {
     pub on_disk: bool,
 }
 
+/// A decoded MIME part ready to be persisted in the attachment cache.
+/// Unlike [`Attachment`], this is an internal store/sync contract and never
+/// crosses the IPC boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachmentData {
+    pub filename: String,
+    pub content_type: String,
+    pub content_id: Option<String>,
+    pub is_inline: bool,
+    pub bytes: Vec<u8>,
+}
+
 /// The full message, fetched on selection. The body is plain-text paragraphs
 /// and/or sanitized HTML (Epic 7.3).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]

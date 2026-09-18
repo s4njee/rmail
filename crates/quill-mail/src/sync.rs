@@ -16,14 +16,14 @@ use std::collections::{BTreeMap, HashSet};
 
 use async_imap::types::{Fetch, Flag, Name, NameAttribute};
 use futures::TryStreamExt;
-use mail_parser::{Address, MessageParser, MimeHeaders};
+use mail_parser::{Address, MessageParser, MimeHeaders, PartType};
 use quill_store::folders::{
     classify_folder_kind, display_name_of, infer_namespace, local_name_for,
 };
 use quill_store::sanitize::snippet_from_bodies;
 use quill_store::sqlite::SqliteStore;
 use quill_store::types::{
-    Account, ActionType, Attachment, DiscoveredMailbox, FolderKind, MessageId,
+    Account, ActionType, AttachmentData, DiscoveredMailbox, FolderKind, MessageId,
     MessageProgressUpdate, MessageRow, OutgoingMessage, Recipient,
 };
 use tokio_util::compat::TokioAsyncReadCompatExt;
@@ -1335,7 +1335,7 @@ struct ParsedMessage {
     references: Option<String>,
     list_unsubscribe: Option<String>,
     list_unsubscribe_post: Option<String>,
-    attachments: Vec<Attachment>,
+    attachments: Vec<AttachmentData>,
 }
 
 /// Parse a full RFC 5322 message and pull out everything the store keeps.
@@ -1364,15 +1364,45 @@ fn parse_full_message(raw_body: &[u8]) -> Option<ParsedMessage> {
     let attachments = parsed
         .attachments()
         .enumerate()
-        .map(|(i, att)| Attachment {
-            id: (i + 1) as u32,
-            message_id: 0, // reassigned by the caller's insert
-            filename: att
-                .attachment_name()
-                .unwrap_or(&format!("attachment_{i}"))
-                .to_string(),
-            size_bytes: att.contents().len() as u64,
-            on_disk: false,
+        .map(|(i, att)| {
+            let content_type = att
+                .content_type()
+                .map(|ct| {
+                    format!(
+                        "{}/{}",
+                        ct.c_type,
+                        ct.c_subtype.as_deref().unwrap_or("octet-stream")
+                    )
+                })
+                .unwrap_or_else(|| "application/octet-stream".into());
+            // Some servers include a filename on an inline part, which this
+            // parser classifies as Binary. A Content-ID is the authoritative
+            // signal for body-addressable inline content in that case.
+            let is_inline =
+                matches!(&att.body, PartType::InlineBinary(_)) || att.content_id().is_some();
+            let generated_name = if is_inline {
+                let subtype = att
+                    .content_type()
+                    .and_then(|ct| ct.c_subtype.as_deref())
+                    .unwrap_or("bin");
+                format!("inline_{}.{}", i + 1, subtype)
+            } else {
+                format!("attachment_{}", i + 1)
+            };
+            AttachmentData {
+                filename: att.attachment_name().unwrap_or(&generated_name).to_string(),
+                content_type,
+                content_id: att.content_id().and_then(|cid| {
+                    let cid = cid
+                        .trim()
+                        .trim_start_matches('<')
+                        .trim_end_matches('>')
+                        .trim();
+                    (!cid.is_empty()).then(|| cid.to_string())
+                }),
+                is_inline,
+                bytes: att.contents().to_vec(),
+            }
         })
         .collect();
     Some(ParsedMessage {
@@ -1802,5 +1832,27 @@ mod tests {
         assert_eq!(parsed.cc.len(), 1);
         assert_eq!(parsed.bcc.len(), 0);
         assert_eq!(parsed.attachments.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_full_message_keeps_attachment_bytes_and_cid() {
+        let raw = concat!(
+            "From: sender@example.com\r\n",
+            "To: one@example.com\r\n",
+            "Subject: MIME\r\n",
+            "Content-Type: multipart/related; boundary=x\r\n\r\n",
+            "--x\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:logo\">\r\n",
+            "--x\r\nContent-Type: image/png\r\n",
+            "Content-Disposition: inline; filename=\"logo.png\"\r\n",
+            "Content-ID: <logo>\r\n",
+            "Content-Transfer-Encoding: base64\r\n\r\n",
+            "AQID\r\n--x--\r\n"
+        );
+        let parsed = parse_full_message(raw.as_bytes()).unwrap();
+        assert_eq!(parsed.attachments.len(), 1);
+        assert_eq!(parsed.attachments[0].filename, "logo.png");
+        assert_eq!(parsed.attachments[0].content_id.as_deref(), Some("logo"));
+        assert!(parsed.attachments[0].is_inline);
+        assert_eq!(parsed.attachments[0].bytes, vec![1, 2, 3]);
     }
 }

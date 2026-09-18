@@ -122,16 +122,16 @@ a regression test; the protocol ones need the fake-server harness from C3.2.
 
 ### C0.6 Attachments that are real files
 
-- [ ] Persist attachment parts when a body is fetched (or fetch a part on demand with
+- [x] Persist attachment parts when a body is fetched (or fetch a part on demand with
       `BODY.PEEK[<section>]`); set `on_disk` truthfully.
-- [ ] Delete the placeholder-writing code paths in `save_attachment` / `save_all_attachments`;
+- [x] Delete the placeholder-writing code paths in `save_attachment` / `save_all_attachments`;
       when a part is unavailable offline, say so.
-- [ ] Sanitise attachment filenames (strip separators, `..`, control and reserved names, cap
+- [x] Sanitise attachment filenames (strip separators, `..`, control and reserved names, cap
       length) and verify the resolved path stays inside the chosen directory.
-- [ ] Resolve the real Downloads directory via the Tauri path API (the literal `~/Downloads` at
+- [x] Resolve the real Downloads directory via the Tauri path API (the literal `~/Downloads` at
       `ReadingPane.tsx:202` is never expanded).
-- [ ] Rewrite `cid:` references to the stored inline parts so embedded images render.
-- [ ] Forward carries the original attachments.
+- [x] Rewrite `cid:` references to the stored inline parts so embedded images render.
+- [x] Forward carries the original attachments.
 
 ### C0.7 The recipient gets what you typed
 
@@ -389,9 +389,9 @@ Snooze, send later, bulk selection, and undo exist.
 
 ## Remaining
 
-C0.1–C0.5 are complete. The remaining work is the mail-safety and everyday-use queue:
+C0.1–C0.6 are complete. The remaining work is the mail-safety and everyday-use queue:
 
-- **C0.6–C0.10:** persist real attachments, make sending exactly-once and threaded, finish
+- **C0.7–C0.10:** make sending exactly-once and threaded, finish
   Gmail/OAuth onboarding, improve threading and scale, enable notifications, and make drafts roam.
 - **C1:** close the provider and release-trust gaps: labels, quick filters, accessibility, signing,
   connection limits, and recovery drills.

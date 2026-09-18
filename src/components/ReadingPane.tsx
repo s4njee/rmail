@@ -199,11 +199,15 @@ function AttachmentsSection(props: {
   const handleSaveAll = async () => {
     setSaveStatus("Saving...");
     try {
-      const count = await saveAllAttachments(props.messageId, "~/Downloads");
+      const count = await saveAllAttachments(props.messageId);
       setSaveStatus(count > 0 ? `Saved ${count} files` : "Saved to Downloads");
       setTimeout(() => setSaveStatus(null), 3000);
-    } catch {
-      setSaveStatus("Save failed");
+    } catch (error) {
+      setSaveStatus(
+        String(error).includes("unavailable offline")
+          ? "Unavailable offline"
+          : "Save failed",
+      );
       setTimeout(() => setSaveStatus(null), 3000);
     }
   };

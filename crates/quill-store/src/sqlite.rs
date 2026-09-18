@@ -16,6 +16,53 @@ use std::sync::Mutex;
 
 const PARAGRAPH_SEP: &str = "\n\n";
 
+/// Turn an untrusted MIME filename into one safe path component.
+pub fn sanitize_attachment_filename(filename: &str) -> String {
+    let mut clean: String = filename
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .map(|ch| match ch {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ => ch,
+        })
+        .collect();
+    while clean.contains("..") {
+        clean = clean.replace("..", "");
+    }
+    clean = clean.trim_matches([' ', '.']).to_string();
+    if clean.is_empty() {
+        clean = "attachment".into();
+    }
+
+    let stem = clean
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || stem
+            .strip_prefix("COM")
+            .or_else(|| stem.strip_prefix("LPT"))
+            .is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"));
+    if reserved {
+        clean.insert(0, '_');
+    }
+
+    const MAX_BYTES: usize = 180;
+    if clean.len() > MAX_BYTES {
+        let mut bytes = 0;
+        clean = clean
+            .chars()
+            .take_while(|ch| {
+                bytes += ch.len_utf8();
+                bytes <= MAX_BYTES
+            })
+            .collect();
+        clean = clean.trim_end_matches([' ', '.']).to_string();
+    }
+    clean
+}
+
 fn is_permanent_mailbox(folder: &str) -> bool {
     let lower = folder.to_ascii_lowercase();
     lower.contains("trash") || lower.contains("junk") || lower.contains("spam")
@@ -212,7 +259,7 @@ fn rollup_folder_counts(folders: &mut [Folder]) {
 }
 
 /// Forward-only migrations, indexed by target `user_version`.
-const MIGRATIONS: [&str; 27] = [
+const MIGRATIONS: [&str; 28] = [
     r#"
 CREATE TABLE accounts (
   id INTEGER PRIMARY KEY,
@@ -546,6 +593,13 @@ ALTER TABLE action_queue ADD COLUMN message_id_header TEXT;
 ALTER TABLE action_queue ADD COLUMN status TEXT NOT NULL DEFAULT 'pending';
 ALTER TABLE action_queue ADD COLUMN next_attempt_at_ms INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN location_pending INTEGER NOT NULL DEFAULT 0;
+"#,
+    // C0.6: retain MIME metadata needed for inline-CID rendering and
+    // forwarding the original decoded files.
+    r#"
+ALTER TABLE attachments ADD COLUMN content_type TEXT NOT NULL DEFAULT 'application/octet-stream';
+ALTER TABLE attachments ADD COLUMN content_id TEXT;
+ALTER TABLE attachments ADD COLUMN is_inline INTEGER NOT NULL DEFAULT 0;
 "#,
 ];
 
@@ -1364,7 +1418,8 @@ impl SqliteStore {
 
         let mut attachments = Vec::new();
         if let Ok(mut stmt) = conn.prepare(
-            "SELECT id, message_id, filename, size_bytes, on_disk FROM attachments WHERE message_id = ?1 ORDER BY id",
+            "SELECT id, message_id, filename, size_bytes, on_disk FROM attachments \
+             WHERE message_id = ?1 AND is_inline = 0 ORDER BY id",
         ) {
             if let Ok(iter) = stmt.query_map(params![id], |r| {
                 Ok(Attachment {
@@ -1376,6 +1431,15 @@ impl SqliteStore {
                 })
             }) {
                 attachments = iter.map(|a| a.expect("attachment")).collect();
+            }
+        }
+        for attachment in &mut attachments {
+            if attachment.on_disk {
+                let path = self
+                    .attachments_root
+                    .join(attachment.id.to_string())
+                    .join(sanitize_attachment_filename(&attachment.filename));
+                attachment.on_disk = path.is_file();
             }
         }
 
@@ -2567,11 +2631,89 @@ impl SqliteStore {
 
     pub fn attachment_path(&self, id: AttachmentId) -> Option<PathBuf> {
         let att = self.attachment(id)?;
-        Some(
-            self.attachments_root
-                .join(id.to_string())
-                .join(&att.filename),
-        )
+        if !att.on_disk {
+            return None;
+        }
+        let path = self
+            .attachments_root
+            .join(id.to_string())
+            .join(sanitize_attachment_filename(&att.filename));
+        path.is_file().then_some(path)
+    }
+
+    /// Cached inline MIME parts keyed by normalized Content-ID.
+    pub fn inline_attachment_paths(&self, message_id: MessageId) -> HashMap<String, String> {
+        let rows: Vec<(i64, String, String)> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = match conn.prepare(
+                "SELECT id, filename, content_id FROM attachments \
+                 WHERE message_id = ?1 AND is_inline = 1 AND on_disk = 1 \
+                 AND content_id IS NOT NULL",
+            ) {
+                Ok(stmt) => stmt,
+                Err(_) => return HashMap::new(),
+            };
+            let result = match stmt.query_map(params![message_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            }) {
+                Ok(rows) => rows.flatten().collect(),
+                Err(_) => return HashMap::new(),
+            };
+            result
+        };
+        rows.into_iter()
+            .filter_map(|(id, filename, content_id)| {
+                let path = self
+                    .attachments_root
+                    .join(id.to_string())
+                    .join(sanitize_attachment_filename(&filename));
+                path.is_file().then(|| {
+                    (
+                        content_id
+                            .trim()
+                            .trim_start_matches('<')
+                            .trim_end_matches('>')
+                            .to_string(),
+                        path.to_string_lossy().into_owned(),
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// Read one cached attachment in the SMTP-ready shape used by forwarding.
+    pub fn outgoing_attachment(&self, id: AttachmentId) -> Result<OutgoingAttachment, String> {
+        use base64::Engine as _;
+        let (filename, content_type, on_disk): (String, String, bool) = {
+            let conn = self.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT filename, content_type, on_disk FROM attachments WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, i64>(2)? != 0)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "attachment not found".to_string())?
+        };
+        if !on_disk {
+            return Err(
+                "attachment is unavailable offline; reconnect and open the message to download it"
+                    .into(),
+            );
+        }
+        let path = self
+            .attachments_root
+            .join(id.to_string())
+            .join(sanitize_attachment_filename(&filename));
+        let bytes = std::fs::read(path).map_err(|_| {
+            "attachment is unavailable offline; reconnect and open the message to download it"
+                .to_string()
+        })?;
+        Ok(OutgoingAttachment {
+            filename,
+            content_type,
+            data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        })
     }
 
     pub fn send(&self, _outgoing: &OutgoingMessage) -> Result<(), String> {
@@ -4475,13 +4617,26 @@ impl SqliteStore {
         to: &[Recipient],
         cc: &[Recipient],
         bcc: &[Recipient],
-        attachments: &[Attachment],
+        attachments: &[AttachmentData],
         message_id_header: Option<&str>,
         in_reply_to: Option<&str>,
         references: Option<&str>,
         list_unsubscribe: Option<&str>,
         list_unsubscribe_post: Option<&str>,
     ) -> Result<(), String> {
+        let old_attachment_ids: Vec<i64> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT id FROM attachments WHERE message_id = ?1")
+                .map_err(|e| e.to_string())?;
+            let result = stmt
+                .query_map(params![id], |row| row.get(0))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            result
+        };
+
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction().map_err(|e| e.to_string())?;
 
@@ -4525,16 +4680,26 @@ impl SqliteStore {
         tx.execute("DELETE FROM attachments WHERE message_id = ?1", params![id])
             .map_err(|e| e.to_string())?;
 
+        let mut pending_files = Vec::with_capacity(attachments.len());
         for a in attachments {
+            let filename = sanitize_attachment_filename(&a.filename);
             tx.execute(
-                "INSERT INTO attachments (message_id, filename, size_bytes, on_disk) \
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![id, a.filename, a.size_bytes as i64, a.on_disk as i64],
+                "INSERT INTO attachments (message_id, filename, size_bytes, on_disk, content_type, content_id, is_inline) \
+                 VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6)",
+                params![
+                    id,
+                    filename,
+                    a.bytes.len() as i64,
+                    a.content_type,
+                    a.content_id,
+                    a.is_inline as i64
+                ],
             )
             .map_err(|e| e.to_string())?;
+            pending_files.push((tx.last_insert_rowid(), filename, a.bytes.clone()));
         }
 
-        let has_attachments = !attachments.is_empty();
+        let has_attachments = attachments.iter().any(|a| !a.is_inline);
         tx.execute(
             "UPDATE messages SET has_attachments = ?1, \
              message_id_header = COALESCE(?2, message_id_header), \
@@ -4552,6 +4717,26 @@ impl SqliteStore {
         .map_err(|e| e.to_string())?;
 
         tx.commit().map_err(|e| e.to_string())?;
+        drop(conn);
+
+        // The database first records every new part as unavailable. Each file
+        // flips on_disk only after its bytes have been successfully written, so a
+        // full disk or interrupted write can never create a lying cache row.
+        for old_id in old_attachment_ids {
+            let _ = std::fs::remove_dir_all(self.attachments_root.join(old_id.to_string()));
+        }
+        for (attachment_id, filename, bytes) in pending_files {
+            let dir = self.attachments_root.join(attachment_id.to_string());
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            let path = dir.join(&filename);
+            std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+            let conn = self.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE attachments SET on_disk = 1 WHERE id = ?1",
+                params![attachment_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 
@@ -6137,8 +6322,9 @@ mod tests {
     use super::*;
 
     fn seeded() -> SqliteStore {
-        let store = SqliteStore::open_in_memory().unwrap();
+        let mut store = SqliteStore::open_in_memory().unwrap();
         let root = std::env::temp_dir().join(format!("quill-sqlite-{}", std::process::id()));
+        store.set_attachments_root(root.clone());
         store.seed_demo(&root).unwrap();
         store
     }
@@ -7980,13 +8166,22 @@ mod tests {
                     name: "Hidden".into(),
                     address: "bcc@example.com".into(),
                 }],
-                &[Attachment {
-                    id: 999,
-                    message_id: msg_id,
-                    filename: "doc.pdf".into(),
-                    size_bytes: 1024,
-                    on_disk: true,
-                }],
+                &[
+                    AttachmentData {
+                        filename: "../doc.pdf".into(),
+                        content_type: "application/pdf".into(),
+                        content_id: None,
+                        is_inline: false,
+                        bytes: vec![0; 1024],
+                    },
+                    AttachmentData {
+                        filename: "logo.png".into(),
+                        content_type: "image/png".into(),
+                        content_id: Some("logo@example".into()),
+                        is_inline: true,
+                        bytes: vec![1, 2, 3],
+                    },
+                ],
                 Some("<msg-123@example.com>"),
                 Some("<in-reply-to@example.com>"),
                 Some("<ref1@example.com> <ref2@example.com>"),
@@ -8025,7 +8220,31 @@ mod tests {
             Some("<ref1@example.com> <ref2@example.com>")
         );
         assert_eq!(detail.attachments.len(), 1);
-        assert_eq!(detail.attachments[0].filename, "doc.pdf");
+        assert_eq!(detail.attachments[0].filename, "_doc.pdf");
+        assert!(detail.attachments[0].on_disk);
+        let path = store.attachment_path(detail.attachments[0].id).unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), vec![0; 1024]);
+        let inline = store.inline_attachment_paths(msg_id);
+        assert!(inline
+            .get("logo@example")
+            .is_some_and(|path| std::fs::read(path).unwrap() == vec![1, 2, 3]));
+        let outgoing = store.outgoing_attachment(detail.attachments[0].id).unwrap();
+        assert_eq!(outgoing.content_type, "application/pdf");
+        assert!(!outgoing.data_base64.is_empty());
+    }
+
+    #[test]
+    fn attachment_filenames_are_single_safe_components() {
+        for hostile in ["../../etc/passwd", "..\\..\\evil.txt"] {
+            let clean = sanitize_attachment_filename(hostile);
+            assert!(!clean.contains(".."));
+            assert!(!clean.contains('/'));
+            assert!(!clean.contains('\\'));
+        }
+        assert_eq!(sanitize_attachment_filename("CON"), "_CON");
+        assert_eq!(sanitize_attachment_filename("\0\n"), "attachment");
+        assert!(sanitize_attachment_filename(&"x".repeat(500)).len() <= 180);
+        assert!(sanitize_attachment_filename(&"💌".repeat(100)).len() <= 180);
     }
 
     #[test]

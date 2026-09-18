@@ -9,6 +9,7 @@ import {
   deleteMessage,
   getSettings,
   latestDraft,
+  loadAttachmentForForward,
   saveDraft,
   scheduleSend,
   sendMessage,
@@ -161,6 +162,31 @@ export async function openComposer(
   detail: MessageDetail,
 ): Promise<void> {
   const original = detail.row;
+  let forwardedAttachments: ComposerAttachment[] = [];
+  let forwardAttachmentError = "";
+  if (intent === "forward" && detail.attachments.length > 0) {
+    const loaded = await Promise.allSettled(
+      detail.attachments.map((attachment) =>
+        loadAttachmentForForward(attachment.id),
+      ),
+    );
+    forwardedAttachments = loaded.flatMap((result, index) =>
+      result.status === "fulfilled"
+        ? [
+            {
+              name: result.value.filename,
+              size: detail.attachments[index].size_bytes,
+              type: result.value.content_type,
+              dataBase64: result.value.data_base64,
+            },
+          ]
+        : [],
+    );
+    if (forwardedAttachments.length !== detail.attachments.length) {
+      forwardAttachmentError =
+        "One or more attachments are unavailable offline. Reconnect and open the message before forwarding.";
+    }
+  }
   const accounts = useAccounts()();
   const myAccount = accounts.find((a) => a.id === original.account_id);
   const myAddress = (myAccount?.address || "").toLowerCase();
@@ -268,8 +294,8 @@ export async function openComposer(
     originalAccountId: original.account_id,
   });
   setDraftId(null);
-  setAttachments([]);
-  setSendError("");
+  setAttachments(forwardedAttachments);
+  setSendError(forwardAttachmentError);
   setOpen(true);
 }
 

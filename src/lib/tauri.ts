@@ -30,6 +30,7 @@ import type { NewAccount } from "./ipc/NewAccount";
 import type { OAuthInitPayload } from "./ipc/OAuthInitPayload";
 import type { OAuthWaitResult } from "./ipc/OAuthWaitResult";
 import type { OutgoingMessage } from "./ipc/OutgoingMessage";
+import type { OutgoingAttachment } from "./ipc/OutgoingAttachment";
 import type { ProviderPreset } from "./ipc/ProviderPreset";
 import type { QueuedAction } from "./ipc/QueuedAction";
 import type { RulePreview } from "./ipc/RulePreview";
@@ -578,8 +579,7 @@ export const deleteMessagePermanently = async (
   id: number,
   confirmed: boolean,
 ): Promise<void> => {
-  if (isTauri())
-    return invoke<void>("delete_permanently", { id, confirmed });
+  if (isTauri()) return invoke<void>("delete_permanently", { id, confirmed });
 };
 
 // P1.1: bulk triage + undo-delete
@@ -732,6 +732,26 @@ export const sendMessage = async (outgoing: OutgoingMessage): Promise<void> => {
 export const attachmentPath = async (id: number): Promise<string | null> => {
   if (isTauri()) return invoke<string | null>("attachment_path", { id });
   return null;
+};
+
+export const inlineAttachmentPaths = async (
+  messageId: number,
+): Promise<Record<string, string>> => {
+  if (isTauri()) {
+    return invoke<Record<string, string>>("inline_attachment_paths", {
+      messageId,
+    });
+  }
+  return {};
+};
+
+export const loadAttachmentForForward = async (
+  id: number,
+): Promise<OutgoingAttachment> => {
+  if (isTauri()) {
+    return invoke<OutgoingAttachment>("load_attachment_for_forward", { id });
+  }
+  throw new Error("attachment is unavailable offline");
 };
 
 // Calendar events
@@ -1024,12 +1044,12 @@ export const saveAttachment = async (
 
 export const saveAllAttachments = async (
   messageId: number,
-  destinationDir: string,
+  destinationDir?: string,
 ): Promise<number> => {
   if (isTauri()) {
     return invoke<number>("save_all_attachments", {
       messageId,
-      destinationDir,
+      destinationDir: destinationDir ?? null,
     });
   }
   return 1;
