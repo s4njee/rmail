@@ -1548,7 +1548,8 @@ impl SqliteStore {
     ) -> Vec<MessageDetail> {
         let conn = self.conn.lock().unwrap();
         let ids: Vec<MessageId> = if let Ok(mut stmt) = conn.prepare(
-            "SELECT id FROM messages WHERE account_id = ?1 AND thread_id = ?2 ORDER BY received_at_ms ASC",
+            "SELECT id FROM messages WHERE account_id = ?1 AND thread_id = ?2 \
+             AND deleted_at_ms IS NULL ORDER BY received_at_ms ASC",
         ) {
             stmt.query_map(params![account_id, thread_id], |r| r.get(0))
                 .map(|iter| iter.flatten().collect())
@@ -4886,6 +4887,19 @@ impl SqliteStore {
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let subject: String = tx
+            .query_row(
+                "SELECT subject FROM messages WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let thread_id = crate::threading::compute_thread_id_with_message_id(
+            message_id_header,
+            in_reply_to,
+            references,
+            &subject,
+        );
 
         tx.execute(
             "INSERT INTO bodies (message_id, plain, html, list_unsubscribe, list_unsubscribe_post) VALUES (?1, ?2, ?3, ?4, ?5) \
@@ -4951,13 +4965,14 @@ impl SqliteStore {
             "UPDATE messages SET has_attachments = ?1, \
              message_id_header = COALESCE(?2, message_id_header), \
              in_reply_to = COALESCE(?3, in_reply_to), \
-             references_header = COALESCE(?4, references_header) \
-             WHERE id = ?5",
+             references_header = COALESCE(?4, references_header), thread_id = ?5 \
+             WHERE id = ?6",
             params![
                 has_attachments as i64,
                 message_id_header,
                 in_reply_to,
                 references,
+                thread_id,
                 id
             ],
         )
@@ -5575,13 +5590,18 @@ impl SqliteStore {
             )
             .optional()
             .map_err(|e| e.to_string())?;
-        let thread_id = crate::threading::compute_thread_id(None, None, subject);
+        let thread_id = crate::threading::compute_thread_id_with_message_id(
+            message_id_header,
+            None,
+            None,
+            subject,
+        );
         if let Some(id) = existing {
             conn.execute(
                 "UPDATE messages SET sender_name = ?1, sender_address = ?2, subject = ?3, \
                  snippet = CASE WHEN ?4 <> '' THEN ?4 ELSE snippet END, received_at_ms = ?5, unread = ?6, flagged = ?7, \
                  answered = ?8, forwarded = ?9, has_attachments = CASE WHEN ?10 <> 0 THEN 1 ELSE has_attachments END, server_folder = ?11, \
-                 thread_id = COALESCE(thread_id, ?12), message_id_header = COALESCE(?13, message_id_header), \
+                 thread_id = ?12, message_id_header = COALESCE(?13, message_id_header), \
                  location_pending = 0 WHERE id = ?14",
                 params![
                     sender_name,
@@ -9140,6 +9160,76 @@ mod tests {
         });
         assert_eq!(page_flat.total, 2);
         assert_eq!(page_flat.items.len(), 2);
+    }
+
+    #[test]
+    fn fetched_reference_headers_rekey_a_conversation() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let account = test_account(&store);
+        let root = store
+            .upsert_fetched_message_with_message_id(
+                account.id,
+                "Inbox",
+                "INBOX",
+                1,
+                1,
+                "Alice",
+                "alice@example.test",
+                "Plan",
+                "root",
+                1,
+                true,
+                false,
+                false,
+                false,
+                false,
+                Some("<root@example.test>"),
+            )
+            .unwrap();
+        let reply = store
+            .upsert_fetched_message_with_message_id(
+                account.id,
+                "Inbox",
+                "INBOX",
+                2,
+                1,
+                "Bob",
+                "bob@example.test",
+                "Different subject",
+                "reply",
+                2,
+                true,
+                false,
+                false,
+                false,
+                false,
+                Some("<reply@example.test>"),
+            )
+            .unwrap();
+        store
+            .save_message_body_and_attachments(
+                reply,
+                "reply",
+                None,
+                &[],
+                &[],
+                &[],
+                &[],
+                Some("<reply@example.test>"),
+                Some("<root@example.test>"),
+                Some("<root@example.test>"),
+                None,
+                None,
+            )
+            .unwrap();
+
+        let root_thread = store.get_message(root).unwrap().thread_id.unwrap();
+        assert_eq!(
+            store.get_message(reply).unwrap().thread_id.as_deref(),
+            Some(root_thread.as_str())
+        );
+        store.delete(root).unwrap();
+        assert_eq!(store.get_thread_messages(account.id, &root_thread).len(), 1);
     }
 
     #[test]
