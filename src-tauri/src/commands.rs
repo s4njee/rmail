@@ -1439,6 +1439,8 @@ pub fn set_dock_badge(app: AppHandle, count: Option<i64>) -> Result<(), String> 
             let _ = window.set_badge_count(count);
         }
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (&app, &count);
     Ok(())
 }
 
@@ -1460,6 +1462,7 @@ pub async fn sync_account_now(app: AppHandle, account_id: AccountId) {
 /// mail- or calendar-controlled text (sender names, event titles, message
 /// bodies) close the string and execute the rest as AppleScript with the
 /// user's session privileges.
+#[cfg(target_os = "macos")]
 fn apple_script_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -1482,6 +1485,8 @@ pub fn show_notification(
             ))
             .spawn();
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (&title, &body);
     Ok(())
 }
 

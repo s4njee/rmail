@@ -386,7 +386,7 @@ pub fn run() {
             // to live in the config are spelled out so the two stay in one
             // place.
             #[cfg(not(target_os = "macos"))]
-            let mut builder = {
+            let builder = {
                 let mut b = tauri::WebviewWindowBuilder::new(
                     app,
                     "main",
