@@ -1,9 +1,5 @@
 import { For, Show } from "solid-js";
-import {
-  childrenOf,
-  folderCount,
-  isMailbox,
-} from "../lib/folders";
+import { childrenOf, folderCount, isMailbox } from "../lib/folders";
 import type { Folder } from "../lib/ipc/Folder";
 import "./Sidebar.css";
 
@@ -26,7 +22,8 @@ export function FolderTree(props: {
   return (
     <For each={nodes()}>
       {(folder) => {
-        const kids = () => childrenOf(props.folders, folder.id, props.accountId);
+        const kids = () =>
+          childrenOf(props.folders, folder.id, props.accountId);
         const hasKids = () => kids().length > 0;
         const rolled = () => hasKids() && !folder.expanded;
         const count = () => folderCount(folder, rolled());

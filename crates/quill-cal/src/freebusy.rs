@@ -114,8 +114,8 @@ mod tests {
             id: 1,
             account_id: 1,
             title: "Morning Sync".into(),
-            start_ms: 3_600_000 * 9,  // 09:00
-            end_ms: 3_600_000 * 10,   // 10:00
+            start_ms: 3_600_000 * 9, // 09:00
+            end_ms: 3_600_000 * 10,  // 10:00
             all_day: false,
             location: None,
             notes: None,
@@ -129,18 +129,13 @@ mod tests {
         }];
 
         // Query 08:00 to 11:00 in 30-min slots
-        let slots = compute_free_busy_slots(
-            &events,
-            3_600_000 * 8,
-            3_600_000 * 11,
-            1_800_000,
-        );
+        let slots = compute_free_busy_slots(&events, 3_600_000 * 8, 3_600_000 * 11, 1_800_000);
 
         assert_eq!(slots.len(), 6);
         assert!(!slots[0].busy); // 08:00 - 08:30 free
-        assert!(slots[1].busy);  // 08:30 - 09:00 busy (travel buffer)
-        assert!(slots[2].busy);  // 09:00 - 09:30 busy (event)
-        assert!(slots[3].busy);  // 09:30 - 10:00 busy (event)
+        assert!(slots[1].busy); // 08:30 - 09:00 busy (travel buffer)
+        assert!(slots[2].busy); // 09:00 - 09:30 busy (event)
+        assert!(slots[3].busy); // 09:30 - 10:00 busy (event)
         assert!(!slots[4].busy); // 10:00 - 10:30 free
         assert!(!slots[5].busy); // 10:30 - 11:00 free
     }

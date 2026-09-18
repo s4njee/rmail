@@ -22,10 +22,7 @@ pub fn list_folders(store: State<'_, SqliteStore>) -> Vec<Folder> {
 }
 
 #[tauri::command]
-pub fn create_folder(
-    store: State<'_, SqliteStore>,
-    spec: NewFolder,
-) -> Result<Folder, String> {
+pub fn create_folder(store: State<'_, SqliteStore>, spec: NewFolder) -> Result<Folder, String> {
     store.create_local_folder(spec.account_id, spec.parent_id, &spec.name)
 }
 
@@ -89,10 +86,7 @@ pub fn set_folder_view_settings(
 }
 
 #[tauri::command]
-pub fn record_folder_opened(
-    store: State<'_, SqliteStore>,
-    id: FolderId,
-) -> Result<(), String> {
+pub fn record_folder_opened(store: State<'_, SqliteStore>, id: FolderId) -> Result<(), String> {
     store.record_folder_opened(id)
 }
 
@@ -142,10 +136,7 @@ pub async fn get_message(
                         let handle = app.clone();
                         tokio::spawn(async move {
                             while let Some(update) = progress_rx.recv().await {
-                                let _ = handle.emit(
-                                    "store",
-                                    StoreEvent::MessageProgress(update),
-                                );
+                                let _ = handle.emit("store", StoreEvent::MessageProgress(update));
                             }
                         });
                         let _ = quill_mail::sync::fetch_message_body_full(
@@ -459,10 +450,7 @@ pub fn bulk_action(
 /// Restore a soft-deleted message and cancel its queued server Delete — the
 /// undo path (P1.1).
 #[tauri::command]
-pub fn restore_message(
-    store: State<'_, SqliteStore>,
-    id: MessageId,
-) -> Result<(), String> {
+pub fn restore_message(store: State<'_, SqliteStore>, id: MessageId) -> Result<(), String> {
     if let Some((account_id, _local_folder, Some(server_folder), uid)) =
         store.get_message_location(id)
     {
@@ -642,11 +630,10 @@ pub fn is_launch_at_login(app: AppHandle) -> bool {
 
 /// P1.6: assemble a stored message as an `.eml` string for export.
 #[tauri::command]
-pub fn export_message_eml(
-    store: State<'_, SqliteStore>,
-    id: MessageId,
-) -> Result<String, String> {
-    store.eml_for_message(id).ok_or_else(|| "message not found".to_string())
+pub fn export_message_eml(store: State<'_, SqliteStore>, id: MessageId) -> Result<String, String> {
+    store
+        .eml_for_message(id)
+        .ok_or_else(|| "message not found".to_string())
 }
 
 /// P1.6: import a raw `.eml` (or an mbox when `mbox` is set) into a folder,
@@ -824,10 +811,7 @@ pub fn delete_event(store: State<'_, SqliteStore>, id: EventId) -> Result<(), St
 /// P1.4 undo: restore an event exactly as captured (re-create a deleted event
 /// or overwrite an edited one).
 #[tauri::command]
-pub fn restore_event(
-    store: State<'_, SqliteStore>,
-    event: CalendarEvent,
-) -> Result<(), String> {
+pub fn restore_event(store: State<'_, SqliteStore>, event: CalendarEvent) -> Result<(), String> {
     store.restore_event(event)
 }
 
@@ -951,11 +935,7 @@ pub async fn test_connection_settings(
     let mut report = quill_mail::test::test_connection(&settings, password.as_deref()).await;
     // Attach provider-specific help to auth failures at the point of failure
     // (e.g. "iCloud requires an app-specific password…").
-    if report
-        .issues
-        .iter()
-        .any(|i| i.kind == ErrorKind::Auth)
-    {
+    if report.issues.iter().any(|i| i.kind == ErrorKind::Auth) {
         let domain = settings.email.rsplit('@').next().unwrap_or(&settings.email);
         if let Some(preset) = quill_mail::provider::preset_for_domain(domain) {
             for issue in report.issues.iter_mut() {
@@ -1112,7 +1092,11 @@ pub fn cancel_search_rebuild() -> Result<(), String> {
 pub fn search_index_status(store: State<'_, SqliteStore>) -> SearchIndexUpdate {
     let (total, indexed) = store.search_index_status();
     SearchIndexUpdate {
-        state: if total == indexed { "fresh".into() } else { "stale".into() },
+        state: if total == indexed {
+            "fresh".into()
+        } else {
+            "stale".into()
+        },
         indexed: indexed as u32,
         total: total as u32,
     }
@@ -1234,8 +1218,7 @@ pub fn get_oauth_init(
     // redirect is captured automatically (P0.2); on failure the caller falls
     // back to the paste-the-code flow.
     let r_uri = redirect_uri.unwrap_or_else(|| {
-        quill_mail::oauth::bind_loopback()
-            .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
+        quill_mail::oauth::bind_loopback().unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
     });
     // Dev/test creds from `oauth-config.json` (gitignored) when the form
     // doesn't supply them, so they only need entering once.
@@ -1375,9 +1358,7 @@ pub async fn reauthorize_account(
 
     let provider = match provider_str.to_lowercase().as_str() {
         "google" => quill_mail::oauth::OAuthProvider::Google,
-        "microsoft" | "microsoft365" | "outlook" => {
-            quill_mail::oauth::OAuthProvider::Microsoft365
-        }
+        "microsoft" | "microsoft365" | "outlook" => quill_mail::oauth::OAuthProvider::Microsoft365,
         other => return Err(format!("unsupported OAuth provider: {other}")),
     };
 
@@ -1606,11 +1587,7 @@ pub fn export_sieve_script(rules: Vec<quill_store::MailRule>) -> Result<String, 
 
 /// Mark a message as Junk or move back to Inbox (Roadmap 3.7).
 #[tauri::command]
-pub fn mark_junk(
-    store: State<'_, SqliteStore>,
-    id: MessageId,
-    junk: bool,
-) -> Result<(), String> {
+pub fn mark_junk(store: State<'_, SqliteStore>, id: MessageId, junk: bool) -> Result<(), String> {
     store.mark_junk(id, junk)
 }
 
@@ -1652,7 +1629,9 @@ pub async fn unsubscribe(
         return Err("no valid unsubscribe URI found in List-Unsubscribe header".to_string());
     }
 
-    let http_target = targets.iter().find(|u| u.starts_with("http://") || u.starts_with("https://"));
+    let http_target = targets
+        .iter()
+        .find(|u| u.starts_with("http://") || u.starts_with("https://"));
     let mailto_target = targets.iter().find(|u| u.starts_with("mailto:"));
 
     if let Some(&url) = http_target {
@@ -1671,9 +1650,14 @@ pub async fn unsubscribe(
                 .map_err(|e| format!("one-click unsubscribe POST to {url} failed: {e}"))?;
 
             if res.status().is_success() {
-                return Ok(format!("Unsubscribed successfully via One-Click POST to {url}."));
+                return Ok(format!(
+                    "Unsubscribed successfully via One-Click POST to {url}."
+                ));
             } else {
-                return Ok(format!("Server responded with status {}: {url}", res.status()));
+                return Ok(format!(
+                    "Server responded with status {}: {url}",
+                    res.status()
+                ));
             }
         } else {
             let res = client
@@ -1685,7 +1669,10 @@ pub async fn unsubscribe(
             if res.status().is_success() {
                 return Ok(format!("Unsubscribed successfully via {url}."));
             } else {
-                return Ok(format!("Server responded with status {}: {url}", res.status()));
+                return Ok(format!(
+                    "Server responded with status {}: {url}",
+                    res.status()
+                ));
             }
         }
     } else if let Some(&mailto) = mailto_target {
@@ -1733,10 +1720,7 @@ pub fn toggle_task(
 
 /// Delete a task by ID (Roadmap 4.5).
 #[tauri::command]
-pub fn delete_task(
-    store: State<'_, SqliteStore>,
-    id: u32,
-) -> Result<(), String> {
+pub fn delete_task(store: State<'_, SqliteStore>, id: u32) -> Result<(), String> {
     store.delete_task(id)
 }
 
@@ -1748,5 +1732,10 @@ pub fn query_free_busy(
     end_ms: i64,
     slot_duration_minutes: Option<u32>,
 ) -> Vec<quill_store::FreeBusySlot> {
-    quill_cal::query_store_free_busy(&store, start_ms, end_ms, slot_duration_minutes.unwrap_or(30))
+    quill_cal::query_store_free_busy(
+        &store,
+        start_ms,
+        end_ms,
+        slot_duration_minutes.unwrap_or(30),
+    )
 }

@@ -100,14 +100,14 @@ pub fn is_valid_log_level(level: &str) -> bool {
 /// lock could deadlock) and never touch the network.
 pub fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
-        let location = info
-            .location()
-            .map(|l| l.to_string())
-            .unwrap_or_default();
+        let location = info.location().map(|l| l.to_string()).unwrap_or_default();
         let message = panic_message(info);
         // Preserve the default hook's visible output so terminal runs still
         // see it (the default hook is replaced by this one).
-        eprintln!("thread '{}' panicked at {location}:\n{message}", thread_name());
+        eprintln!(
+            "thread '{}' panicked at {location}:\n{message}",
+            thread_name()
+        );
         if let Some(state) = DIAG.get() {
             let record = CrashRecord {
                 id: new_id(),
@@ -118,7 +118,9 @@ pub fn install_panic_hook() {
                 arch: std::env::consts::ARCH.into(),
                 thread: Some(thread_name()),
                 message: redact(&message),
-                stack: Some(redact(&std::backtrace::Backtrace::force_capture().to_string())),
+                stack: Some(redact(
+                    &std::backtrace::Backtrace::force_capture().to_string(),
+                )),
                 source: None,
                 line: None,
                 column: None,
@@ -188,7 +190,8 @@ pub fn init(app: &AppHandle) {
         };
         let client = http_client();
         if settings.crash_reporting_enabled && !CRASH_ENDPOINT.is_empty() {
-            let n = upload_pending(&client, &state.pending_dir, &state.sent_dir, CRASH_ENDPOINT).await;
+            let n =
+                upload_pending(&client, &state.pending_dir, &state.sent_dir, CRASH_ENDPOINT).await;
             if n > 0 {
                 log::info!("uploaded {n} pending crash report(s)");
             }
@@ -203,7 +206,8 @@ pub fn init(app: &AppHandle) {
 }
 
 fn diag_state() -> Result<&'static DiagState, String> {
-    DIAG.get().ok_or_else(|| "diagnostics not initialized".to_string())
+    DIAG.get()
+        .ok_or_else(|| "diagnostics not initialized".to_string())
 }
 
 /// Apply a `log_level` string ("error".."trace") to the `log` facade.
@@ -383,7 +387,9 @@ fn channel_of(version: &str) -> String {
 
 fn email_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"[A-Za-z0-9._%+'\-]+@[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)+").expect("valid"))
+    R.get_or_init(|| {
+        Regex::new(r"[A-Za-z0-9._%+'\-]+@[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)+").expect("valid")
+    })
 }
 
 fn secret_keyvalue_re() -> &'static Regex {
@@ -409,7 +415,10 @@ fn bearer_re() -> &'static Regex {
 
 fn jwt_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{4,}").expect("valid"))
+    R.get_or_init(|| {
+        Regex::new(r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{4,}")
+            .expect("valid")
+    })
 }
 
 fn long_token_re() -> &'static Regex {
@@ -426,14 +435,22 @@ pub fn redact(input: &str) -> String {
         let home = home.to_string_lossy();
         out = out.replace(&*home, "[redacted:path]");
     }
-    out = home_path_re().replace_all(&out, "[redacted:path]").into_owned();
-    out = email_re().replace_all(&out, "[redacted:email]").into_owned();
+    out = home_path_re()
+        .replace_all(&out, "[redacted:path]")
+        .into_owned();
+    out = email_re()
+        .replace_all(&out, "[redacted:email]")
+        .into_owned();
     out = secret_keyvalue_re()
         .replace_all(&out, "${1}${2}[redacted:token]${4}")
         .into_owned();
-    out = bearer_re().replace_all(&out, "[redacted:token]").into_owned();
+    out = bearer_re()
+        .replace_all(&out, "[redacted:token]")
+        .into_owned();
     out = jwt_re().replace_all(&out, "[redacted:token]").into_owned();
-    out = long_token_re().replace_all(&out, "[redacted:token]").into_owned();
+    out = long_token_re()
+        .replace_all(&out, "[redacted:token]")
+        .into_owned();
     out
 }
 
@@ -522,12 +539,18 @@ pub async fn send_test_report(app: AppHandle) -> Result<String, String> {
         if sent == 1 {
             return Ok(format!("Test report {id} sent to the configured endpoint."));
         }
-        return Ok(format!("Test report {id} queued — upload failed (kept locally)."));
+        return Ok(format!(
+            "Test report {id} queued — upload failed (kept locally)."
+        ));
     }
     if !settings.crash_reporting_enabled {
-        Ok(format!("Test report {id} written locally (crash reporting is off)."))
+        Ok(format!(
+            "Test report {id} written locally (crash reporting is off)."
+        ))
     } else {
-        Ok(format!("Test report {id} queued locally (no endpoint configured)."))
+        Ok(format!(
+            "Test report {id} queued locally (no endpoint configured)."
+        ))
     }
 }
 
@@ -601,7 +624,8 @@ mod tests {
     use super::*;
 
     fn test_state(tag: &str) -> DiagState {
-        let dir = std::env::temp_dir().join(format!("quill-diag-test-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("quill-diag-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         DiagState {
             app_version: "0.1.0".into(),
@@ -618,7 +642,10 @@ mod tests {
     fn sample_payload(message: &str) -> JsErrorPayload {
         JsErrorPayload {
             message: message.into(),
-            stack: Some("TypeError: undefined is not an object\n    at fn (file:///Users/me/app.js:12:3)".into()),
+            stack: Some(
+                "TypeError: undefined is not an object\n    at fn (file:///Users/me/app.js:12:3)"
+                    .into(),
+            ),
             source: Some("http://localhost:5173/index.tsx".into()),
             line: Some(12),
             column: Some(3),
@@ -669,7 +696,10 @@ mod tests {
         if let Some(home) = home_dir_path() {
             let home = home.to_string_lossy().into_owned();
             let input = format!("{home}/projects/rmail/src/main.rs:42");
-            assert_eq!(redact(&input), "[redacted:path]/projects/rmail/src/main.rs:42");
+            assert_eq!(
+                redact(&input),
+                "[redacted:path]/projects/rmail/src/main.rs:42"
+            );
         }
     }
 
@@ -701,7 +731,10 @@ mod tests {
         let json = std::fs::read_to_string(&path).unwrap();
         assert!(json.contains(r#""kind": "js_error""#));
         assert!(!json.contains('@'), "record leaked an email: {json}");
-        assert!(!json.contains("Users/me"), "stack leaked a home path: {json}");
+        assert!(
+            !json.contains("Users/me"),
+            "stack leaked a home path: {json}"
+        );
         cleanup(&state);
     }
 
@@ -800,9 +833,8 @@ mod tests {
             let (mut stream, _) = listener.accept().unwrap();
             let req = read_http_request(&mut stream);
             let _ = tx.send(req);
-            let _ = stream.write_all(
-                b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
-            );
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
         });
         (format!("http://{addr}"), rx)
     }
@@ -825,7 +857,10 @@ mod tests {
             let req = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
             assert!(req.starts_with("POST "), "expected POST, got: {req}");
             let body = req.split("\r\n\r\n").nth(1).unwrap_or("");
-            assert!(body.contains(r#""kind": "js_error""#), "body not a crash record: {body}");
+            assert!(
+                body.contains(r#""kind": "js_error""#),
+                "body not a crash record: {body}"
+            );
             assert!(!body.contains('@'), "body leaked an email: {body}");
             cleanup(&state);
         });

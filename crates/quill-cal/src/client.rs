@@ -50,7 +50,10 @@ impl CalDavClient {
     fn headers(&self) -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert(reqwest::header::AUTHORIZATION, self.auth_header.clone());
-        headers.insert(reqwest::header::USER_AGENT, HeaderValue::from_static("Quill-CalDAV/1.0"));
+        headers.insert(
+            reqwest::header::USER_AGENT,
+            HeaderValue::from_static("Quill-CalDAV/1.0"),
+        );
         headers
     }
 
@@ -66,15 +69,22 @@ impl CalDavClient {
 </D:propfind>"#;
 
         let mut url = self.base_url.clone();
-        let mut resp = self.send_webdav("PROPFIND", &url, Some("0"), Some(xml), "application/xml").await?;
+        let mut resp = self
+            .send_webdav("PROPFIND", &url, Some("0"), Some(xml), "application/xml")
+            .await?;
 
         if !resp.status().is_success() {
             // Try with /.well-known/caldav
             url = format!("{}/.well-known/caldav", self.base_url);
-            resp = self.send_webdav("PROPFIND", &url, Some("0"), Some(xml), "application/xml").await?;
+            resp = self
+                .send_webdav("PROPFIND", &url, Some("0"), Some(xml), "application/xml")
+                .await?;
         }
 
-        let body = resp.text().await.map_err(|e| format!("failed to read propfind response: {e}"))?;
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| format!("failed to read propfind response: {e}"))?;
 
         // Extract calendar-home-set or principal href
         if let Some(home) = extract_xml_tag_content(&body, "calendar-home-set") {
@@ -87,7 +97,15 @@ impl CalDavClient {
             if let Some(href) = extract_xml_tag_content(&principal, "href") {
                 let principal_url = self.resolve_url(&href);
                 // Query principal URL for calendar-home-set
-                let p_resp = self.send_webdav("PROPFIND", &principal_url, Some("0"), Some(xml), "application/xml").await?;
+                let p_resp = self
+                    .send_webdav(
+                        "PROPFIND",
+                        &principal_url,
+                        Some("0"),
+                        Some(xml),
+                        "application/xml",
+                    )
+                    .await?;
                 let p_body = p_resp.text().await.map_err(|e| e.to_string())?;
                 if let Some(home) = extract_xml_tag_content(&p_body, "calendar-home-set") {
                     if let Some(href) = extract_xml_tag_content(&home, "href") {
@@ -114,7 +132,15 @@ impl CalDavClient {
   </D:prop>
 </D:propfind>"#;
 
-        let resp = self.send_webdav("PROPFIND", home_url, Some("1"), Some(xml), "application/xml").await?;
+        let resp = self
+            .send_webdav(
+                "PROPFIND",
+                home_url,
+                Some("1"),
+                Some(xml),
+                "application/xml",
+            )
+            .await?;
         let body = resp.text().await.map_err(|e| e.to_string())?;
         Ok(parse_multistatus_calendars(&body, home_url))
     }
@@ -134,7 +160,15 @@ impl CalDavClient {
   </C:filter>
 </C:calendar-query>"#;
 
-        let resp = self.send_webdav("REPORT", calendar_url, Some("1"), Some(xml), "application/xml").await?;
+        let resp = self
+            .send_webdav(
+                "REPORT",
+                calendar_url,
+                Some("1"),
+                Some(xml),
+                "application/xml",
+            )
+            .await?;
         let body = resp.text().await.map_err(|e| e.to_string())?;
         Ok(parse_multistatus_events(&body))
     }
@@ -166,7 +200,8 @@ impl CalDavClient {
             return Err("conflict: 412 Precondition Failed".into());
         }
 
-        if !status.is_success() && status != StatusCode::NO_CONTENT && status != StatusCode::CREATED {
+        if !status.is_success() && status != StatusCode::NO_CONTENT && status != StatusCode::CREATED
+        {
             return Err(format!("PUT returned status {status}"));
         }
 
@@ -186,12 +221,18 @@ impl CalDavClient {
         if let Some(etag_val) = etag {
             req = req.header(IF_MATCH, etag_val);
         }
-        let resp = req.send().await.map_err(|e| format!("DELETE failed: {e}"))?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("DELETE failed: {e}"))?;
         let status = resp.status();
         if status == StatusCode::PRECONDITION_FAILED {
             return Err("conflict: 412 Precondition Failed".into());
         }
-        if !status.is_success() && status != StatusCode::NOT_FOUND && status != StatusCode::NO_CONTENT {
+        if !status.is_success()
+            && status != StatusCode::NOT_FOUND
+            && status != StatusCode::NO_CONTENT
+        {
             return Err(format!("DELETE returned status {status}"));
         }
         Ok(())
@@ -216,7 +257,9 @@ impl CalDavClient {
             req = req.header(CONTENT_TYPE, content_type).body(b.to_string());
         }
 
-        req.send().await.map_err(|e| format!("WebDAV request {method_str} failed: {e}"))
+        req.send()
+            .await
+            .map_err(|e| format!("WebDAV request {method_str} failed: {e}"))
     }
 
     fn resolve_url(&self, path_or_url: &str) -> String {
@@ -328,7 +371,11 @@ pub fn parse_multistatus_calendars(xml: &str, base: &str) -> Vec<CalDavCollectio
 
         let display_name = unescape_xml(
             &extract_xml_tag_content(chunk, "displayname").unwrap_or_else(|| {
-                href.trim_matches('/').split('/').next_back().unwrap_or("Calendar").to_string()
+                href.trim_matches('/')
+                    .split('/')
+                    .next_back()
+                    .unwrap_or("Calendar")
+                    .to_string()
             }),
         );
 
@@ -410,7 +457,10 @@ mod tests {
         let list = parse_multistatus_calendars(xml, "https://cal.example.com");
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].display_name, "Work Calendar");
-        assert_eq!(list[0].href, "https://cal.example.com/caldav/user/home/work/");
+        assert_eq!(
+            list[0].href,
+            "https://cal.example.com/caldav/user/home/work/"
+        );
         assert_eq!(list[0].ctag.as_deref(), Some("ctag-12345"));
         assert_eq!(list[0].sync_token.as_deref(), Some("sync-token-999"));
     }
@@ -425,8 +475,14 @@ mod tests {
 </multistatus>"#;
         let list = parse_multistatus_calendars(xml, "https://cal.example.com/caldav/user/home/");
         assert_eq!(list.len(), 2);
-        assert_eq!(list[0].href, "https://cal.example.com/caldav/user/home/personal/");
-        assert_eq!(list[1].href, "https://cal.example.com/caldav/user/home/work/");
+        assert_eq!(
+            list[0].href,
+            "https://cal.example.com/caldav/user/home/personal/"
+        );
+        assert_eq!(
+            list[1].href,
+            "https://cal.example.com/caldav/user/home/work/"
+        );
         assert_eq!(list[1].display_name, "Team & Company");
     }
 

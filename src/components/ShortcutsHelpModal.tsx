@@ -42,8 +42,8 @@ export function ShortcutsHelpModal() {
             </For>
           </ul>
           <p class="shortcuts-help__conflict">
-            The app suppresses the browser shortcuts that would lose state:
-            {" "}{SUPPRESSED}. Bindings shown here are app-wide.
+            The app suppresses the browser shortcuts that would lose state:{" "}
+            {SUPPRESSED}. Bindings shown here are app-wide.
           </p>
         </div>
       </Modal>

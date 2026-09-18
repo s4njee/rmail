@@ -17,11 +17,11 @@ use std::collections::{BTreeMap, HashSet};
 use async_imap::types::{Fetch, Flag, Name, NameAttribute};
 use futures::TryStreamExt;
 use mail_parser::{Address, MessageParser, MimeHeaders};
-use quill_store::sanitize::snippet_from_bodies;
-use quill_store::sqlite::SqliteStore;
 use quill_store::folders::{
     classify_folder_kind, display_name_of, infer_namespace, local_name_for,
 };
+use quill_store::sanitize::snippet_from_bodies;
+use quill_store::sqlite::SqliteStore;
 use quill_store::types::{
     Account, ActionType, Attachment, DiscoveredMailbox, FolderKind, MessageId,
     MessageProgressUpdate, MessageRow, OutgoingMessage, Recipient,
@@ -702,7 +702,8 @@ pub async fn sync_folder(
                     // read; a partial stream would delete every message whose
                     // UID hadn't been seen yet.
                     if complete {
-                        let _ = store.delete_messages_not_in(account.id, local_folder, &server_uids);
+                        let _ =
+                            store.delete_messages_not_in(account.id, local_folder, &server_uids);
                     }
                 }
                 Err(_) => complete = false,
@@ -1070,7 +1071,7 @@ pub async fn replay_pending_actions(
                     Ok(())
                 }
                 Err(e) => Err(format!("create folder {}: {e}", action.folder)),
-            }
+            },
             ActionType::RenameFolder => {
                 let dest = action
                     .payload
@@ -1176,7 +1177,10 @@ fn parse_full_message(raw_body: &[u8]) -> Option<ParsedMessage> {
         // mail-parser decodes RFC 2047 encoded-words in headers, so this is
         // the subject as a human should read it (e.g. "🚘 …" rather than
         // "=?UTF-8?Q?=F0=9F=9A=98…?=").
-        subject: parsed.subject().map(ToString::to_string).unwrap_or_default(),
+        subject: parsed
+            .subject()
+            .map(ToString::to_string)
+            .unwrap_or_default(),
         plain_body,
         html_body,
         to: parsed.to().map(address_list).unwrap_or_default(),
@@ -1279,9 +1283,10 @@ fn envelope_row(
         .map(|p| p.subject.clone())
         .filter(|s| !s.is_empty())
         .or_else(|| {
-            envelope.subject.as_ref().map(|s| {
-                quill_store::sanitize::decode_rfc2047(&String::from_utf8_lossy(s))
-            })
+            envelope
+                .subject
+                .as_ref()
+                .map(|s| quill_store::sanitize::decode_rfc2047(&String::from_utf8_lossy(s)))
         })
         .unwrap_or_default();
     let received_at_ms = fetch
@@ -1453,10 +1458,7 @@ mod tests {
         assert_eq!(detect_folder_kind("Junk Mail", &[]), FolderKind::Junk);
         assert_eq!(detect_folder_kind("Spam", &[]), FolderKind::Junk);
         assert_eq!(detect_folder_kind("Receipts", &[]), FolderKind::Custom);
-        assert_eq!(
-            detect_folder_kind("Work/Projects", &[]),
-            FolderKind::Custom
-        );
+        assert_eq!(detect_folder_kind("Work/Projects", &[]), FolderKind::Custom);
         assert_eq!(
             canonical_folder_name("Work/Projects", FolderKind::Custom),
             "Work/Projects"
@@ -1525,8 +1527,14 @@ mod tests {
             "<body><p>Hi both, attached is the redlined lease.</p></body></html>"
         );
         let s = snippet_from_bodies("", Some(html));
-        assert!(s.contains("Hi both"), "snippet should carry the body text: {s:?}");
-        assert!(!s.contains("<!DOCTYPE"), "markup must not leak into the snippet");
+        assert!(
+            s.contains("Hi both"),
+            "snippet should carry the body text: {s:?}"
+        );
+        assert!(
+            !s.contains("<!DOCTYPE"),
+            "markup must not leak into the snippet"
+        );
         assert!(!s.contains("<p>"), "markup must not leak into the snippet");
     }
 

@@ -142,11 +142,7 @@ mod file_store {
         let _guard = LOCK.lock().map_err(|e| e.to_string())?;
         let path = path()?;
         let file = load(&path);
-        if let Some(secret) = file
-            .services
-            .get(service)
-            .and_then(|m| m.get(account))
-        {
+        if let Some(secret) = file.services.get(service).and_then(|m| m.get(account)) {
             return Ok(secret.clone());
         }
 

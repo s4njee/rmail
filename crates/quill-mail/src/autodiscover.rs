@@ -9,7 +9,7 @@
 
 use hickory_resolver::proto::rr::RData;
 use hickory_resolver::TokioResolver;
-use quill_store::types::{DiscoveryStep, DiscoveredSettings, Endpoint};
+use quill_store::types::{DiscoveredSettings, DiscoveryStep, Endpoint};
 
 use crate::provider::preset_for_domain;
 
@@ -53,7 +53,11 @@ pub async fn discover(domain: &str) -> DiscoveredSettings {
             steps,
         };
     }
-    steps.push(step("preset", "skip", "No known provider matches this domain"));
+    steps.push(step(
+        "preset",
+        "skip",
+        "No known provider matches this domain",
+    ));
 
     // 2. DNS SRV (RFC 6186 / 6764).
     let mut imap = None;
@@ -71,7 +75,11 @@ pub async fn discover(domain: &str) -> DiscoveredSettings {
             "ok",
             "Found mail servers via DNS SRV records",
         )],
-        _ => vec![step("dns_srv", "skip", "No DNS SRV records for this domain")],
+        _ => vec![step(
+            "dns_srv",
+            "skip",
+            "No DNS SRV records for this domain",
+        )],
     });
 
     // 3. Thunderbird / Mozilla autoconfig — fills any service SRV didn't.
@@ -150,8 +158,8 @@ async fn fetch_autoconfig(
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
 
-    let attempts: Vec<(String, Result<String, String>)> = futures::future::join_all(
-        urls.into_iter().map(|url| {
+    let attempts: Vec<(String, Result<String, String>)> =
+        futures::future::join_all(urls.into_iter().map(|url| {
             let client = client.clone();
             async move {
                 let resp = match client.get(&url).send().await {
@@ -168,9 +176,8 @@ async fn fetch_autoconfig(
                 };
                 (url, outcome)
             }
-        }),
-    )
-    .await;
+        }))
+        .await;
 
     for (url, outcome) in attempts {
         match outcome {
@@ -260,10 +267,7 @@ pub fn parse_autoconfig(xml: &str) -> (Option<Endpoint>, Option<Endpoint>) {
                         .attributes()
                         .filter_map(|a| a.ok())
                         .find(|a| a.key.as_ref() == b"type")
-                        .and_then(|a| {
-                            a.normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                                .ok()
-                        })
+                        .and_then(|a| a.normalized_value(quick_xml::XmlVersion::Implicit1_0).ok())
                         .map(|v| v == "imap")
                         .unwrap_or(false);
                     server_kind = if is_imap { Some("imap") } else { None };

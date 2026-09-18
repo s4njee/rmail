@@ -12,7 +12,8 @@ export function ContextMenu() {
     if (e.key === "Escape") closeContextMenu();
   };
   const onPointerDown = (e: MouseEvent) => {
-    if (!(e.target as HTMLElement)?.closest(".context-menu")) closeContextMenu();
+    if (!(e.target as HTMLElement)?.closest(".context-menu"))
+      closeContextMenu();
   };
   const onScroll = () => closeContextMenu();
 

@@ -5,7 +5,7 @@ replace a user's existing daily driver. [ROADMAP.md](ROADMAP.md) describes the b
 direction, while [plan2.md](plan2.md) records the original implementation plan. This file is the
 shorter, stricter queue for reaching a trustworthy public release.
 
-[backlog-thunderbird.md](backlog-thunderbird.md) is the companion *feature-parity* queue: what a
+[backlog-thunderbird.md](backlog-thunderbird.md) is the companion _feature-parity_ queue: what a
 Thunderbird user needs before they can switch and stay switched (folder tree, profile migration,
 Local Folders/POP, tags, list columns, HTML compose, address book, junk learning, encryption).
 This file takes priority when the two compete — parity on top of unproven sync is worse than
@@ -95,16 +95,16 @@ and provider combination, with results attached to the release.
 - [ ] Finish production Google and Microsoft OAuth registration, redirect handling, token refresh,
       consent-screen review, and documented release credentials. Never require a client secret in a
       desktop build when PKCE is supported.
-      *(Loopback redirect capture, token refresh, and PKCE-without-secret for public clients are
+      _(Loopback redirect capture, token refresh, and PKCE-without-secret for public clients are
       implemented; real client registration + consent review + shipped release credentials still
-      need the production Google/Microsoft apps — see `docs/provider-quirks.md` §5.)*
+      need the production Google/Microsoft apps — see `docs/provider-quirks.md` §5.)_
 - [ ] Verify app-password flows for iCloud, Gmail fallback, Fastmail, and common hosted-mail
       providers; provide exact provider-specific help at the point of failure.
-      *(Provider-specific help renders at the failure point; verification against real iCloud/
-      Fastmail/Yahoo accounts is pending user dogfood.)*
+      _(Provider-specific help renders at the failure point; verification against real iCloud/
+      Fastmail/Yahoo accounts is pending user dogfood.)_
 - [ ] Test account editing, expired/revoked credentials, password changes, MFA changes, server
       moves, temporary lockouts, and reauthorization without deleting local data.
-      *(Edit + OAuth "Reconnect sign-in" exist; the recovery drill needs real-account testing.)*
+      _(Edit + OAuth "Reconnect sign-in" exist; the recovery drill needs real-account testing.)_
 - [x] Make connection errors actionable: identify the failing service and server, preserve the
       user's inputs, distinguish TLS/auth/network/rate-limit errors, and offer Retry or Edit Settings.
       (`quill-mail::error` taxonomy + `test_connection_settings`; Retry in the add form, inputs
@@ -337,7 +337,7 @@ onboarding, accessibility, and release gates above.
 - [x] Add recipient autocomplete from mail history, ranked by recency and frequency, with no network
       dependency.
       (`suggest_recipients`/`recent_recipients` over the recipients + sender history, `GROUP BY
-      lower(address)`; composer `AddressInput` dropdown, fully offline.)
+lower(address)`; composer `AddressInput` dropdown, fully offline.)
 - [x] Show which identity/account will send before compose and warn on likely wrong-account replies.
       (From row is always visible; a dismissible warning appears when a reply's From account
       differs from the original message's account.)
@@ -345,9 +345,9 @@ onboarding, accessibility, and release gates above.
       (Recent recipients on an empty field; a ✕ on any suggestion hides it permanently;
       contact-group CRUD in Settings → Contacts.)
 - [ ] Add optional CardDAV sync only after local autocomplete and merge/deduplication are proven.
-      *(Local autocomplete + merge/dedup (by lower(address)) are implemented; CardDAV sync stays
+      _(Local autocomplete + merge/dedup (by lower(address)) are implemented; CardDAV sync stays
       deferred until those are exercised against a release build — the local model is
-      CardDAV-ready.)*
+      CardDAV-ready.)_
 - [x] Preserve display names, Unicode, aliases, and per-identity signatures through reply/forward.
       (Reply/forward keep `Name <address>` and quoted names; replies to an alias now select that
       identity + its signature automatically.)
@@ -373,7 +373,7 @@ onboarding, accessibility, and release gates above.
 
 > **Implementation report (2026-08-15).** Search operators parse inside the store so the frontend
 > passes the raw query unchanged: `from/to/cc/subject` (LIKE), `has:attachment`, `is:unread|read|
-> starred|unstarred`, `before/after` (ISO dates + today/yesterday/tomorrow), `in:` (folder),
+starred|unstarred`, `before/after` (ISO dates + today/yesterday/tomorrow), `in:` (folder),
 > `account:` (by address or id), and `calendar:`/`before/after` on the event side. Saved searches
 > are a small table + sidebar rows. Index freshness is surfaced in Settings → General with a
 > cancellable batched rebuild that emits `StoreEvent::SearchIndex` progress. Rule safety: a dry-run
@@ -403,10 +403,10 @@ onboarding, accessibility, and release gates above.
       `duplicate_event` + a Duplicate action; `Calendar.readOnly` disables editing — auto-marking
       subscription calendars read-only awaits subscription events carrying a source tag.)
 - [ ] Finish task/VTODO agenda integration if tasks remain a product feature.
-      *(Tasks already list/toggle in the sidebar + agenda; deferred.)*
+      _(Tasks already list/toggle in the sidebar + agenda; deferred.)_
 - [ ] Improve attendee autocomplete, availability explanation, and invitation delivery status.
-      *(Attendees is the separate rcalendar P0 story; availability "find a time" already exists;
-      delivery status follows iTIP.)*
+      _(Attendees is the separate rcalendar P0 story; availability "find a time" already exists;
+      delivery status follows iTIP.)_
 
 > **Implementation report (2026-08-15).** Calendar editing polish across the rcalendar package and
 > the rmail integration. Undo: `lib/calendar.ts` + CalendarView capture pre-edit snapshots and a
@@ -420,7 +420,7 @@ onboarding, accessibility, and release gates above.
 > `crates/quill-store/src/{sqlite.rs,types.rs}` (migration 23, restore/duplicate), `commands.rs`,
 > `lib/calendar{Adapter,.ts}`, `components/calendar/{CalendarView,EventDetail}.tsx`,
 > `components/CalendarUndoBar.tsx`, and `rcalendar/packages/calendar-ui/src/{types,components/
-> EventEditorModal,views/WeekView,views/DayView,headless/layout}.{ts,tsx}` (rebuilt into dist).
+EventEditorModal,views/WeekView,views/DayView,headless/layout}.{ts,tsx}` (rebuilt into dist).
 > Recurring-scope undo and attendee/iTIP remain follow-ups. User to verify in the real app.
 
 ### P1.5 Desktop integration and comfort
@@ -455,18 +455,19 @@ onboarding, accessibility, and release gates above.
 > suppressed browser shortcuts. Session restoration: the active folder/account + calendar date/view
 > and per-filter scroll persist (localStorage), and `latest_draft` (`save_draft`'s inverse) reopens
 > the most recent unfinished composer via `openDraftMessage`. Printing: a `@media print` stylesheet
-> + `⌘P`/Print buttons. OS integration: `mailto:`/`webcal:` deep links (opens a pre-filled composer
-> via `StoreEvent::Mailto`), `.eml`/`.ics` bundle associations, a system tray (Show/New Message/
-> Quit), and `tauri-plugin-autostart` launch-at-login (Settings toggles) + `docs/background-mode.md`.
-> Dark palettes: a `[data-color-scheme="dark"]` override in both `tokens.css` files (additive — the
-> token guard stays green), stamped pre-paint by the Rust init script, toggled in Appearance; MailBody
-> forces light-on-dark defaults for HTML mail without rewriting mail-set colors or images. Key files:
-> `src/lib/{keymap,theme,shortcuts,compose,mail,store-events}.ts`, `components/{ShortcutsHelpModal,
-> MailBody,MessageList}.tsx`, `components/settings/{AppearanceSection,GeneralSection}.tsx`,
-> `src-tauri/{lib.rs,commands.rs,settings.rs,tauri.conf.json,capabilities/default.json}`, the rcalendar
-> tokens.css. Still needs release verification: OS deep-link/file-association registration and the
-> tray on a built bundle; dark-mode tuning on the long tail of secondary tokens. User to verify in
-> the real app.
+>
+> - `⌘P`/Print buttons. OS integration: `mailto:`/`webcal:` deep links (opens a pre-filled composer
+>   via `StoreEvent::Mailto`), `.eml`/`.ics` bundle associations, a system tray (Show/New Message/
+>   Quit), and `tauri-plugin-autostart` launch-at-login (Settings toggles) + `docs/background-mode.md`.
+>   Dark palettes: a `[data-color-scheme="dark"]` override in both `tokens.css` files (additive — the
+>   token guard stays green), stamped pre-paint by the Rust init script, toggled in Appearance; MailBody
+>   forces light-on-dark defaults for HTML mail without rewriting mail-set colors or images. Key files:
+>   `src/lib/{keymap,theme,shortcuts,compose,mail,store-events}.ts`, `components/{ShortcutsHelpModal,
+MailBody,MessageList}.tsx`, `components/settings/{AppearanceSection,GeneralSection}.tsx`,
+>   `src-tauri/{lib.rs,commands.rs,settings.rs,tauri.conf.json,capabilities/default.json}`, the rcalendar
+>   tokens.css. Still needs release verification: OS deep-link/file-association registration and the
+>   tray on a built bundle; dark-mode tuning on the long tail of secondary tokens. User to verify in
+>   the real app.
 
 ### P1.6 Import, export, backup, and ownership
 
@@ -514,29 +515,29 @@ onboarding, accessibility, and release gates above.
 ## P2 — competitive polish
 
 - [ ] Add native standalone compose windows and optional multi-window message/event views.
-      *(Needs a Tauri multi-window surface; gated — the single-window shell is stable.)*
+      _(Needs a Tauri multi-window surface; gated — the single-window shell is stable.)_
 - [x] Add event templates, message templates, and reusable recipient groups.
-      *(Reusable recipient groups ship: the composer's autocomplete suggests contact groups
+      _(Reusable recipient groups ship: the composer's autocomplete suggests contact groups
       (`suggest_groups`) and expands a selected group to its members. Event/message templates are
-      still open.)*
+      still open.)_
 - [ ] Add calendar attachment support and provider-native video-meeting creation where available.
-      *(Needs an events attachment model + the provider video API; gated.)*
+      _(Needs an events attachment model + the provider video API; gated.)_
 - [ ] Add working-location, out-of-office, and focus-time event types after interop behavior is
       defined.
-      *(Needs an `event_type` on the events schema; gated on the recurrence/schema work.)*
+      _(Needs an `event_type` on the events schema; gated on the recurrence/schema work.)_
 - [ ] Add locale packs, RTL layout, locale-aware parsing, and translator tooling.
-      *(Needs a locale framework; gated.)*
+      _(Needs a locale framework; gated.)_
 - [ ] Add JMAP for providers that support it after extracting and stabilizing the mail transport
       boundary.
-      *(Gated on the transport boundary extraction — the mail path is IMAP/SMTP today.)*
+      _(Gated on the transport boundary extraction — the mail path is IMAP/SMTP today.)_
 - [ ] Add PGP/S/MIME read and verification before considering compose encryption or key management.
-      *(Needs a crypto stack; gated.)*
+      _(Needs a crypto stack; gated.)_
 - [ ] Evaluate mobile only as a separate product surface with an explicit background-sync and push
       strategy.
-      *(A separate product surface; not code here.)*
+      _(A separate product surface; not code here.)_
 - [ ] Consider plugins, automation, or AI-assisted workflows only after the privacy and permissions
       model is designed and the core client has stable usage data.
-      *(Explicitly gated on the privacy model + usage data.)*
+      _(Explicitly gated on the privacy model + usage data.)_
 
 > **Implementation report (2026-08-15).** Reusable recipient groups: `SqliteStore::suggest_groups`
 > (name LIKE) + a `suggest_groups` command; the composer's `AddressInput` autocomplete now merges

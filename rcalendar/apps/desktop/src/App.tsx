@@ -83,9 +83,9 @@ export const App: Component = () => {
   });
   const [editorReminders, setEditorReminders] = createSignal<Reminder[]>([]);
   const [editorAttendees, setEditorAttendees] = createSignal<Attendee[]>([]);
-  const [attendeeSummaries, setAttendeeSummaries] = createSignal<ReadonlyMap<string, AttendeeSummary>>(
-    new Map(),
-  );
+  const [attendeeSummaries, setAttendeeSummaries] = createSignal<
+    ReadonlyMap<string, AttendeeSummary>
+  >(new Map());
   const [identity, setIdentity] = createSignal<IdentitySettings>({
     selfEmail: null,
     showDeclined: false,

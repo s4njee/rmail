@@ -8,11 +8,11 @@ source of installers.
 
 `.github/workflows/release.yml` builds on every `v*` tag (or manual dispatch):
 
-| Platform | Artifacts | Notes |
-| -------- | --------- | ----- |
-| macOS    | universal `.app` + `.dmg` | arm64 + x86_64 in one binary; signed + notarized when the Apple secrets are set |
-| Windows  | MSI + NSIS | WebView2 download-bootstrapper (`tauri.conf.json` → `bundle.windows.webviewInstallMode`) |
-| Linux    | AppImage + `.deb` | Flatpak manifest is a WIP — see `linux/README.md` |
+| Platform | Artifacts                 | Notes                                                                                    |
+| -------- | ------------------------- | ---------------------------------------------------------------------------------------- |
+| macOS    | universal `.app` + `.dmg` | arm64 + x86_64 in one binary; signed + notarized when the Apple secrets are set          |
+| Windows  | MSI + NSIS                | WebView2 download-bootstrapper (`tauri.conf.json` → `bundle.windows.webviewInstallMode`) |
+| Linux    | AppImage + `.deb`         | Flatpak manifest is a WIP — see `linux/README.md`                                        |
 
 It creates a **draft GitHub release** with the installers attached — add
 changelog notes, then publish.

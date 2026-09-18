@@ -407,7 +407,11 @@ export const AgendaView: Component<AgendaViewProps> = (props) => {
                             {item.title}
                           </span>
 
-                          <Show when={item.rawEvent && props.attendeeSummaries?.get(item.rawEvent.event.id)}>
+                          <Show
+                            when={
+                              item.rawEvent && props.attendeeSummaries?.get(item.rawEvent.event.id)
+                            }
+                          >
                             {(summary) => <AttendeeBadge summary={summary()} />}
                           </Show>
 

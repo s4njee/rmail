@@ -75,15 +75,15 @@ SRV (`_imaps`/`_imap`/`_submission`/`_carddavs`), Thunderbird/Mozilla autoconfig
 and standard guesses (`imap.<domain>` etc.) for everything else. Every probe is
 recorded and shown in the UI, and the manual form is always editable.
 
-| Provider      | Auth            | IMAP / SMTP                                  | CalDAV             | App-password help in-app? |
-| ------------- | --------------- | -------------------------------------------- | ------------------ | ------------------------- |
-| Gmail         | OAuth (PKCE)    | imap.gmail.com / smtp.gmail.com              | — (via Google API) | Fallback help text        |
-| Microsoft 365 | OAuth (PKCE)    | outlook.office365.com / smtp.office365.com   | — (via Graph API)  | —                         |
-| iCloud Mail   | App password    | imap.mail.me.com / smtp.mail.me.com          | p05-caldav.icloud.com | Yes                       |
-| Fastmail      | App password    | imap.fastmail.com / smtp.fastmail.com        | caldav.fastmail.com | Yes                       |
-| Yahoo / AOL   | App password    | imap.mail.yahoo.com / imap.aol.com           | —                  | Yes                       |
-| Zoho          | Password        | imap.zoho.com / smtp.zoho.com                | caldav.zoho.com    | Yes                       |
-| Proton Mail   | Password (Bridge) | 127.0.0.1:1143 / 127.0.0.1:1025            | —                  | Bridge instructions       |
+| Provider      | Auth              | IMAP / SMTP                                | CalDAV                | App-password help in-app? |
+| ------------- | ----------------- | ------------------------------------------ | --------------------- | ------------------------- |
+| Gmail         | OAuth (PKCE)      | imap.gmail.com / smtp.gmail.com            | — (via Google API)    | Fallback help text        |
+| Microsoft 365 | OAuth (PKCE)      | outlook.office365.com / smtp.office365.com | — (via Graph API)     | —                         |
+| iCloud Mail   | App password      | imap.mail.me.com / smtp.mail.me.com        | p05-caldav.icloud.com | Yes                       |
+| Fastmail      | App password      | imap.fastmail.com / smtp.fastmail.com      | caldav.fastmail.com   | Yes                       |
+| Yahoo / AOL   | App password      | imap.mail.yahoo.com / imap.aol.com         | —                     | Yes                       |
+| Zoho          | Password          | imap.zoho.com / smtp.zoho.com              | caldav.zoho.com       | Yes                       |
+| Proton Mail   | Password (Bridge) | 127.0.0.1:1143 / 127.0.0.1:1025            | —                     | Bridge instructions       |
 
 **App passwords:** iCloud, Yahoo, AOL, and Fastmail no longer accept the
 regular account password for IMAP/SMTP. Quill shows provider-specific steps at

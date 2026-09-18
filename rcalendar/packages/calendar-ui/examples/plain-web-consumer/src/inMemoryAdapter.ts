@@ -287,10 +287,7 @@ export class InMemoryCalendarDataSource implements CalendarDataSource {
     });
   }
 
-  async findAvailableSlots(
-    date: string,
-    durationMinutes: number,
-  ): Promise<AvailableSlot[]> {
+  async findAvailableSlots(date: string, durationMinutes: number): Promise<AvailableSlot[]> {
     const start = new Date(`${date}T09:00:00Z`);
     const end = new Date(`${date}T18:00:00Z`);
     const durationMs = durationMinutes * 60_000;

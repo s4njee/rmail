@@ -151,7 +151,9 @@ export function calendarList(): Calendar[] {
   return list;
 }
 
-const [calendarSources, setCalendarSources] = createSignal<CalendarSource[]>([]);
+const [calendarSources, setCalendarSources] = createSignal<CalendarSource[]>(
+  [],
+);
 
 /** Distinct source calendars present in the store (Roadmap 4.4). */
 export function useCalendarSources(): () => CalendarSource[] {
@@ -253,7 +255,10 @@ export async function saveEvent(event: CalendarEvent): Promise<void> {
 
 export async function createNewEvent(event: CalendarEvent): Promise<void> {
   const created = await createEvent(event);
-  recordCalendarUndo({ label: `Created "${created.title}"`, createdEventId: created.id });
+  recordCalendarUndo({
+    label: `Created "${created.title}"`,
+    createdEventId: created.id,
+  });
 }
 
 export async function removeEvent(id: number): Promise<void> {

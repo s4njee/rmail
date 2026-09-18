@@ -55,30 +55,26 @@ pub async fn test_connection(
 
     // 2. TCP connect with a timeout.
     let addr = format!("{}:{}", server, settings.port);
-    let tcp = match tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        tokio::net::TcpStream::connect(&addr),
-    )
-    .await
-    {
-        Ok(Ok(stream)) => stream,
-        Ok(Err(e)) => {
-            issues.push(error::issue(
-                service,
-                &server,
-                &format!("couldn't connect to {addr}: {e}"),
-            ));
-            return report(false, false, issues, String::new());
-        }
-        Err(_) => {
-            issues.push(error::issue(
-                service,
-                &server,
-                &format!("connection to {addr} timed out"),
-            ));
-            return report(false, false, issues, String::new());
-        }
-    };
+    let tcp =
+        match tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::TcpStream::connect(&addr)).await {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(e)) => {
+                issues.push(error::issue(
+                    service,
+                    &server,
+                    &format!("couldn't connect to {addr}: {e}"),
+                ));
+                return report(false, false, issues, String::new());
+            }
+            Err(_) => {
+                issues.push(error::issue(
+                    service,
+                    &server,
+                    &format!("connection to {addr} timed out"),
+                ));
+                return report(false, false, issues, String::new());
+            }
+        };
 
     // 3. TLS handshake when enabled.
     let stream: BoxStream = if settings.tls {
@@ -136,18 +132,35 @@ async fn test_imap(
         return report(true, false, issues.clone(), String::new());
     }
     match password {
-        Some(password) if !password.is_empty() => match client.login(&settings.email, password).await {
-            Ok(_) => report(true, true, issues.clone(), "Connected and authenticated".into()),
-            Err((e, _)) => {
-                issues.push(error::issue(
-                    Service::Imap,
-                    server,
-                    &format!("login for {}: {e}", settings.email),
-                ));
-                report(true, false, issues.clone(), "reachable, but authentication failed".into())
+        Some(password) if !password.is_empty() => {
+            match client.login(&settings.email, password).await {
+                Ok(_) => report(
+                    true,
+                    true,
+                    issues.clone(),
+                    "Connected and authenticated".into(),
+                ),
+                Err((e, _)) => {
+                    issues.push(error::issue(
+                        Service::Imap,
+                        server,
+                        &format!("login for {}: {e}", settings.email),
+                    ));
+                    report(
+                        true,
+                        false,
+                        issues.clone(),
+                        "reachable, but authentication failed".into(),
+                    )
+                }
             }
-        },
-        _ => report(true, false, issues.clone(), "Connected (no password supplied)".into()),
+        }
+        _ => report(
+            true,
+            false,
+            issues.clone(),
+            "Connected (no password supplied)".into(),
+        ),
     }
 }
 
@@ -170,10 +183,7 @@ async fn test_smtp(
         return report(true, false, issues.clone(), String::new());
     }
     let mut ehlo = String::new();
-    let _ = reader
-        .read_line(&mut ehlo)
-        .await
-        .map_err(|e| e.to_string());
+    let _ = reader.read_line(&mut ehlo).await.map_err(|e| e.to_string());
     // Consume the rest of a multiline 250 response.
     while ehlo.trim_end().ends_with('-') {
         ehlo.clear();
@@ -201,20 +211,33 @@ async fn test_smtp(
             line.clear();
             // 235 = authentication succeeded.
             match reader.read_line(&mut line).await {
-                Ok(_) if line.starts_with("235") => {
-                    report(true, true, issues.clone(), "Connected and authenticated".into())
-                }
+                Ok(_) if line.starts_with("235") => report(
+                    true,
+                    true,
+                    issues.clone(),
+                    "Connected and authenticated".into(),
+                ),
                 _ => {
                     issues.push(error::issue(
                         Service::Smtp,
                         server,
                         &format!("SMTP authentication rejected ({})", line.trim()),
                     ));
-                    report(true, false, issues.clone(), "reachable, but authentication failed".into())
+                    report(
+                        true,
+                        false,
+                        issues.clone(),
+                        "reachable, but authentication failed".into(),
+                    )
                 }
             }
         }
-        _ => report(true, false, issues.clone(), "Connected (no password supplied)".into()),
+        _ => report(
+            true,
+            false,
+            issues.clone(),
+            "Connected (no password supplied)".into(),
+        ),
     }
 }
 
@@ -233,8 +256,17 @@ async fn test_caldav_reachability(settings: &TestConnectionSettings) -> Connecti
     match client.get(&url).send().await {
         Ok(resp) => {
             let status = resp.status();
-            if status.is_success() || status.is_redirection() || status.as_u16() == 401 || status.as_u16() == 403 {
-                report(true, false, Vec::new(), format!("CalDAV server reachable (HTTP {status})"))
+            if status.is_success()
+                || status.is_redirection()
+                || status.as_u16() == 401
+                || status.as_u16() == 403
+            {
+                report(
+                    true,
+                    false,
+                    Vec::new(),
+                    format!("CalDAV server reachable (HTTP {status})"),
+                )
             } else {
                 let issues = vec![error::issue(
                     Service::CalDav,
@@ -297,6 +329,9 @@ mod tests {
         .await;
         assert!(!report.ok);
         assert!(!report.issues.is_empty());
-        assert_eq!(report.issues[0].kind, quill_store::types::ErrorKind::Connect);
+        assert_eq!(
+            report.issues[0].kind,
+            quill_store::types::ErrorKind::Connect
+        );
     }
 }

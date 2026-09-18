@@ -63,7 +63,10 @@ pub fn parse_itip_invite(ics: &str, user_email: &str) -> Option<CalendarInvite> 
                 }
             }
             "ORGANIZER" => {
-                let email = val.trim_start_matches("mailto:").trim_start_matches("MAILTO:").to_string();
+                let email = val
+                    .trim_start_matches("mailto:")
+                    .trim_start_matches("MAILTO:")
+                    .to_string();
                 organizer_email = email;
                 for param in key_part.split(';').skip(1) {
                     if let Some((pk, pv)) = param.split_once('=') {
@@ -74,7 +77,10 @@ pub fn parse_itip_invite(ics: &str, user_email: &str) -> Option<CalendarInvite> 
                 }
             }
             "ATTENDEE" => {
-                let email = val.trim_start_matches("mailto:").trim_start_matches("MAILTO:").to_string();
+                let email = val
+                    .trim_start_matches("mailto:")
+                    .trim_start_matches("MAILTO:")
+                    .to_string();
                 let mut name: Option<String> = None;
                 let mut partstat = "NEEDS-ACTION".to_string();
                 let mut role: Option<String> = None;
@@ -130,7 +136,11 @@ pub fn parse_itip_invite(ics: &str, user_email: &str) -> Option<CalendarInvite> 
         method,
         uid,
         sequence,
-        title: if title.is_empty() { "Untitled Event".into() } else { title },
+        title: if title.is_empty() {
+            "Untitled Event".into()
+        } else {
+            title
+        },
         start_ms,
         end_ms,
         all_day,
@@ -169,10 +179,16 @@ pub fn generate_imip_reply(
     let end_dt = DateTime::from_timestamp_millis(invite.end_ms).unwrap_or_default();
 
     if invite.all_day {
-        out.push_str(&format!("DTSTART;VALUE=DATE:{}\r\n", start_dt.format("%Y%m%d")));
+        out.push_str(&format!(
+            "DTSTART;VALUE=DATE:{}\r\n",
+            start_dt.format("%Y%m%d")
+        ));
         out.push_str(&format!("DTEND;VALUE=DATE:{}\r\n", end_dt.format("%Y%m%d")));
     } else {
-        out.push_str(&format!("DTSTART:{}\r\n", start_dt.format("%Y%m%dT%H%M%SZ")));
+        out.push_str(&format!(
+            "DTSTART:{}\r\n",
+            start_dt.format("%Y%m%dT%H%M%SZ")
+        ));
         out.push_str(&format!("DTEND:{}\r\n", end_dt.format("%Y%m%dT%H%M%SZ")));
     }
 
@@ -266,8 +282,8 @@ fn resolve_datetime(key_part: &str, val: &str) -> Option<(bool, i64, Option<Stri
         .find(|(k, _)| k.eq_ignore_ascii_case("TZID"))
         .map(|(_, v)| v.trim_matches('"').to_string());
     let has_z = val.ends_with('Z');
-    let naive = chrono::NaiveDateTime::parse_from_str(val.trim_end_matches('Z'), "%Y%m%dT%H%M%S")
-        .ok()?;
+    let naive =
+        chrono::NaiveDateTime::parse_from_str(val.trim_end_matches('Z'), "%Y%m%dT%H%M%S").ok()?;
     let dt = match tzid.as_deref() {
         Some(name) => naive
             .and_local_timezone(name.parse::<Tz>().ok()?)
@@ -368,7 +384,13 @@ END:VCALENDAR";
             timezone: None,
         };
 
-        let reply = generate_imip_reply(&invite, "work@quill.app", "David", "ACCEPTED", Some("Looking forward to it"));
+        let reply = generate_imip_reply(
+            &invite,
+            "work@quill.app",
+            "David",
+            "ACCEPTED",
+            Some("Looking forward to it"),
+        );
         assert!(reply.contains("METHOD:REPLY"));
         assert!(reply.contains("UID:meet-12345"));
         assert!(reply.contains("PARTSTAT=ACCEPTED"));

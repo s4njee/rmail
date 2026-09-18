@@ -36,12 +36,12 @@ Verified by reading the tree, not by trusting `scrum.md` checkmarks.
 
 ### Corrections to the previous backlog
 
-| Prior claim | Reality |
-| --- | --- |
+| Prior claim                                   | Reality                                                                                                                                                              |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | "Reminders + notifications — already covered" | **Nothing fires.** A `reminders` table and `Store` methods exist; there is no Tauri command, no editor field, no notification plugin, no scheduler. End-to-end dead. |
-| "In-flight uncommitted WIP" | Working tree is **clean**; all 171 `rcalendar` files are tracked and committed. |
-| "Google sync is a stub" | It is **real HTTP** (`reqwest`), but **pull-only** despite its "two-way" doc comment, and auth is a hand-pasted token. |
-| "Tasks are covered" | Tasks exist as a model + sidebar list, but have no due-time UI, no editor, no recurrence, and no alerts. |
+| "In-flight uncommitted WIP"                   | Working tree is **clean**; all 171 `rcalendar` files are tracked and committed.                                                                                      |
+| "Google sync is a stub"                       | It is **real HTTP** (`reqwest`), but **pull-only** despite its "two-way" doc comment, and auth is a hand-pasted token.                                               |
+| "Tasks are covered"                           | Tasks exist as a model + sidebar list, but have no due-time UI, no editor, no recurrence, and no alerts.                                                             |
 
 ### Broken or dead as wired today
 
@@ -56,71 +56,71 @@ These were small fixes with outsized value and are now done (T0.1–T0.4).
 
 ---
 
-## 2. Tier 0 — repair what's already built  *(P0)*
+## 2. Tier 0 — repair what's already built _(P0)_
 
 Ordered by value-per-hour. All are hours, not days.
 
 - [x] **T0.1 — Wire Year view.** Import `YearView` in `App.tsx`, add the `<Match>`, add the `6`
-  shortcut, and make year cells click through to Day/Month.
+      shortcut, and make year cells click through to Day/Month.
 - [x] **T0.2 — Stop dropping `travelTimeMinutes` and `color`.** Add both to the Rust `Event` and
-  `EventDraft`, add a migration for the two columns, persist them, and pass them through
-  `tauriAdapter.saveEvent`. Then render the per-event color override in all views (today every
-  view uses the calendar color).
+      `EventDraft`, add a migration for the two columns, persist them, and pass them through
+      `tauriAdapter.saveEvent`. Then render the per-event color override in all views (today every
+      view uses the calendar color).
 - [x] **T0.3 — Make recurrence and timezone editable.** Extend `OccurrenceChanges` with `rrule` and
-  `tz`, decide the semantics for `this`/`future` scopes (a `future` split should carry the new
-  rule; a `this` override should not change the series), and add golden tests for both.
+      `tz`, decide the semantics for `this`/`future` scopes (a `future` split should carry the new
+      rule; a `this` override should not change the series), and add golden tests for both.
 - [x] **T0.4 — Round-trip audit of every editor field.** Add one test that fills every control in
-  `EventEditorModal`, saves, reloads, and asserts equality. This class of bug (T0.2) should be
-  impossible to reintroduce.
+      `EventEditorModal`, saves, reloads, and asserts equality. This class of bug (T0.2) should be
+      impossible to reintroduce.
 
 ---
 
-## 3. Tier 1 — macOS Calendar parity  *(the floor)*
+## 3. Tier 1 — macOS Calendar parity _(the floor)_
 
-### 3.1 Alerts & notifications — the largest single gap  *(P0)*
+### 3.1 Alerts & notifications — the largest single gap _(P0)_
 
 Apple Calendar's core promise is that it tells you about things. Almanac currently cannot.
 
 - [x] **T1.1 — Reminder plumbing.** `list_reminders` / `save_reminder` / `delete_reminder` Tauri
-  commands; `CalendarDataSource` extended; editor surfaces an "Alert" row with the standard
-  presets (at time of event, 5/15/30 min, 1 hour, 1 day, 1 week before, custom).
+      commands; `CalendarDataSource` extended; editor surfaces an "Alert" row with the standard
+      presets (at time of event, 5/15/30 min, 1 hour, 1 day, 1 week before, custom).
 - [x] **T1.2 — Multiple alerts per event.** The schema already supported it
-  (`reminders.event_id` is a plain FK); the editor now allows adding/removing several.
+      (`reminders.event_id` is a plain FK); the editor now allows adding/removing several.
 - [x] **T1.3 — Delivery.** `tauri-plugin-notification` added and granted in
-  `capabilities/default.json`; a backend scheduler (`notify.rs`) polls and fires native
-  notifications, with app-was-asleep catch-up, permission handling, and click-through.
-  *(Process-close survival — launch-at-login/background — still depends on T1.44.)*
+      `capabilities/default.json`; a backend scheduler (`notify.rs`) polls and fires native
+      notifications, with app-was-asleep catch-up, permission handling, and click-through.
+      _(Process-close survival — launch-at-login/background — still depends on T1.44.)_
 - [x] **T1.4 — Default alerts per calendar.** "Events / All-day events" defaults stored in
-  settings, editable in the Settings→Notifications tab, and pre-filled into newly created events.
+      settings, editable in the Settings→Notifications tab, and pre-filled into newly created events.
 - [x] **T1.5 — All-day alert semantics.** All-day alerts fire relative to a configured day start
-  (default 9am), not midnight (`notify.rs::trigger_at`, covered by unit tests).
+      (default 9am), not midnight (`notify.rs::trigger_at`, covered by unit tests).
 - [x] **T1.6 — Snooze.** `snooze_reminder` command + scheduler re-fire; snooze 5/15 min actions
-  surface in an in-app banner on delivery (native per-notification action buttons are not
-  cross-platform in the underlying plugin).
+      surface in an in-app banner on delivery (native per-notification action buttons are not
+      cross-platform in the underlying plugin).
 
-### 3.2 Attendees & invitations  *(P0 for the model, P1 for transport)*
+### 3.2 Attendees & invitations _(P0 for the model, P1 for transport)_
 
 - [x] **T1.7 — Attendee model.** `Attendee { email, display_name, role, partstat, rsvp, is_organizer }`
-  on `Event`, plus an `attendees` table. Wired through core → store → commands → UI.
+      on `Event`, plus an `attendees` table. Wired through core → store → commands → UI.
 - [x] **T1.8 — Editor UI.** Invitee picker with autocomplete, per-attendee RSVP chips, and an
-  accepted/declined/pending count on the event block.
+      accepted/declined/pending count on the event block.
 - [x] **T1.9 — iCal round-trip for people.** `ATTENDEE`/`ORGANIZER` parse on import and write on
-  export; `TRANSP` (busy/free) round-trips with them.
-- [x] **T1.10 — iTIP/iMIP send + receive** *(P1)*. `METHOD:REQUEST/REPLY/CANCEL` generate and
-  apply; invitations land in an on-disk outbox (`imip-outbox/`) and `ALMANAC_MAIL_COMMAND`
-  (or `mailto:`) rather than a new SMTP stack. Incoming iTIP is applied on ICS import.
-- [x] **T1.11 — Availability & free/busy** *(P1)*. Busy/free flag per event (`TRANSP`); Find a
-  time is driven by expanded occurrences via `find_available_slots`.
-- [x] **T1.12 — Show/hide declined events** *(P1)*. Settings → General: identity email +
-  "Show declined events". Events the user declined stay hidden unless opted in.
+      export; `TRANSP` (busy/free) round-trips with them.
+- [x] **T1.10 — iTIP/iMIP send + receive** _(P1)_. `METHOD:REQUEST/REPLY/CANCEL` generate and
+      apply; invitations land in an on-disk outbox (`imip-outbox/`) and `ALMANAC_MAIL_COMMAND`
+      (or `mailto:`) rather than a new SMTP stack. Incoming iTIP is applied on ICS import.
+- [x] **T1.11 — Availability & free/busy** _(P1)_. Busy/free flag per event (`TRANSP`); Find a
+      time is driven by expanded occurrences via `find_available_slots`.
+- [x] **T1.12 — Show/hide declined events** _(P1)_. Settings → General: identity email +
+      "Show declined events". Events the user declined stay hidden unless opted in.
 
-### 3.3 Accounts & subscriptions  *(P1)*
+### 3.3 Accounts & subscriptions _(P1)_
 
 - **T1.13 — CalDAV / iCloud.** `AccountKind::Caldav` exists in the enum and nowhere else.
   Implement discovery, `REPORT` sync, and ETag-based conflict handling. This is what makes the
   app usable for Apple-ecosystem users.
 - **T1.14 — Real Google OAuth.** Replace the pasted-token flow
-  (`GoogleConnectModal.tsx:190` — *"leave empty for demo sync"*) with a proper PKCE loopback
+  (`GoogleConnectModal.tsx:190` — _"leave empty for demo sync"_) with a proper PKCE loopback
   flow, refresh-token rotation, and **credentials in the OS keychain** — today the token is
   written in plaintext to the SQLite `settings` table (`sync/google.rs`).
 - **T1.15 — Two-way Google sync.** Current implementation only pulls Google → local. Push local
@@ -130,9 +130,9 @@ Apple Calendar's core promise is that it tells you about things. Almanac current
   `Calendar.readOnly` flag already exists in TS and needs backend support.
 - **T1.17 — Holidays & birthdays calendars.** Holiday subscription per region; birthdays sourced
   from Contacts.
-- **T1.18 — Exchange / EWS** *(P3)*.
+- **T1.18 — Exchange / EWS** _(P3)_.
 
-### 3.4 Recurrence engine depth  *(P1)*
+### 3.4 Recurrence engine depth _(P1)_
 
 The hand-rolled parser (`recurrence.rs`) supports `FREQ`, `INTERVAL`, `BYDAY`, `BYMONTHDAY`,
 `UNTIL`, `COUNT` — and **explicitly rejects `BYDAY` ordinals** (`recurrence.rs:180`).
@@ -145,7 +145,7 @@ The hand-rolled parser (`recurrence.rs`) supports `FREQ`, `INTERVAL`, `BYDAY`, `
   none/daily/weekly/monthly/yearly plus weekday checkboxes.
 - **T1.22 — `RECURRENCE-ID` on import/export** so per-instance overrides survive a round trip.
 
-### 3.5 Editing, views & interaction  *(P1)*
+### 3.5 Editing, views & interaction _(P1)_
 
 - **T1.23 — Undo/redo (⌘Z).** Currently a mis-drag is unrecoverable. Needs a command stack over
   the mutation path.
@@ -161,7 +161,7 @@ The hand-rolled parser (`recurrence.rs`) supports `FREQ`, `INTERVAL`, `BYDAY`, `
 - **T1.32 — Conference-link detection.** Parse Zoom/Meet/Teams/Webex URLs out of location/notes
   and offer a one-click Join button.
 
-### 3.6 Settings & display  *(P1)*
+### 3.6 Settings & display _(P1)_
 
 `SettingsView` has seven section tabs but few real controls. **None** of the following exist
 anywhere in the codebase (verified by grep):
@@ -177,7 +177,7 @@ anywhere in the codebase (verified by grep):
 - **T1.40 — Secondary timezone rail** in the time-grid views.
 - **T1.41 — Print** — day/week/month layouts.
 
-### 3.7 Platform integration  *(P1)*
+### 3.7 Platform integration _(P1)_
 
 - **T1.42 — Native menu bar** — File/Edit/View/Window with proper roles and shortcuts. The app is
   frameless and currently ships no menu.
@@ -188,9 +188,9 @@ anywhere in the codebase (verified by grep):
 
 ---
 
-## 4. Tier 2 — Fantastical-class  *(the target)*
+## 4. Tier 2 — Fantastical-class _(the target)_
 
-### 4.1 Natural-language input — Fantastical's signature  *(P1)*
+### 4.1 Natural-language input — Fantastical's signature _(P1)_
 
 - **T2.1 — Full NL event parser.** "Lunch with Sam tomorrow 1pm at Zuni /work" → title, attendee,
   time, location, calendar. The date half already exists in `search.rs:21` (`parse_date_query`);
@@ -200,25 +200,25 @@ anywhere in the codebase (verified by grep):
   shown as editable chips — this is what makes the feature trustworthy.
 - **T2.3 — Quick-add window** on a global hotkey, callable from anywhere in the OS.
 
-### 4.2 Calendar sets  *(P2)*
+### 4.2 Calendar sets _(P2)_
 
 - **T2.4 — Named calendar sets** (Work / Home / Travel) that toggle groups of calendars at once.
 - **T2.5 — Automatic set switching** by time of day or location.
 
-### 4.3 Unified events + tasks  *(P2)*
+### 4.3 Unified events + tasks _(P2)_
 
 - **T2.6 — Tasks as first-class citizens** — due times, alerts, recurrence, an editor, and
   inline display in the day/week grid rather than only the sidebar list.
 - **T2.7 — Reminders.app / CalDAV VTODO sync.** `ical.rs` handles `VEVENT` only.
 
-### 4.4 Scheduling  *(P2)*
+### 4.4 Scheduling _(P2)_
 
 - **T2.8 — Proposals** — send several candidate times and let invitees vote.
 - **T2.9 — Openings / booking pages** — publish availability windows for external booking.
 - **T2.10 — Time-to-leave alerts** combining travel time (T0.2) with location (T1.31).
 - **T2.11 — Meeting templates.**
 
-### 4.5 Interface  *(P2)*
+### 4.5 Interface _(P2)_
 
 - **T2.12 — DayTicker** — the scrubbable date strip with per-day event-density dots.
 - **T2.13 — Weather + sunrise/sunset** in day and week views.
@@ -228,7 +228,7 @@ anywhere in the codebase (verified by grep):
 - **T2.17 — Configurable multi-day view** (N days), generalizing the fixed 3-day view.
 - **T2.18 — Conflict / overlap badges.**
 
-### 4.6 Reach  *(P3)*
+### 4.6 Reach _(P3)_
 
 - **T2.19 — iOS / iPadOS app** — the `calendar-core` seam and the existing
   `crates/calendar-core/src/wasm.rs` make this plausible.
@@ -240,20 +240,20 @@ anywhere in the codebase (verified by grep):
 
 ## 5. Cross-cutting engineering
 
-### Quality  *(P0–P1)*
+### Quality _(P0–P1)_
 
-- **X.1 — CI is unexercised** *(P0)*. `.github/workflows/ci.yml` is well-formed (seam check, fmt,
+- **X.1 — CI is unexercised** _(P0)_. `.github/workflows/ci.yml` is well-formed (seam check, fmt,
   clippy, tests, example run) but has never run — the repo has no GitHub remote. Push and prove it.
-- **X.2 — No UI test coverage** *(P0)*. Vitest covers only `layout`, `dragEngine`, `seams`, and a
+- **X.2 — No UI test coverage** _(P0)_. Vitest covers only `layout`, `dragEngine`, `seams`, and a
   version constant. Nothing tests a view or a modal. Add component tests, starting with the
   editor round-trip (T0.4).
-- **X.3 — No end-to-end test** *(P1)*. One test that drives the real Tauri app through
+- **X.3 — No end-to-end test** _(P1)_. One test that drives the real Tauri app through
   create → edit → recur → alert.
-- **X.4 — Error handling is `console.error`** *(P1)*. Every failure path in `App.tsx` logs to the
+- **X.4 — Error handling is `console.error`** _(P1)_. Every failure path in `App.tsx` logs to the
   console and shows the user nothing. Add a real error surface and toasts.
-- **X.5 — Data safety** *(P1)*. Backup/restore, DB integrity checks, and a migration rollback path.
+- **X.5 — Data safety** _(P1)_. Backup/restore, DB integrity checks, and a migration rollback path.
 
-### Performance  *(P1)*
+### Performance _(P1)_
 
 - **X.6 — Occurrence loading is unbounded.** `loadOccurrences()` fetches a 3-month window and
   re-fetches on every `focusedDate` or `calendars` change, with no caching, debouncing, or
@@ -261,7 +261,7 @@ anywhere in the codebase (verified by grep):
 - **X.7 — No virtualization** in Agenda or the time grids.
 - **X.8 — Search is unindexed** — add SQLite FTS5.
 
-### Accessibility & i18n  *(P1 — Apple Calendar is fully accessible)*
+### Accessibility & i18n _(P1 — Apple Calendar is fully accessible)_
 
 - **X.9 — VoiceOver / screen-reader pass**, ARIA roles on the grids, and a full keyboard
   navigation model (arrow-key movement between cells, not just view switching).
@@ -269,7 +269,7 @@ anywhere in the codebase (verified by grep):
 - **X.11 — Locale-aware formatting** — dates, times, first-day-of-week from system locale.
 - **X.12 — Alternate calendar systems** (Hebrew, Islamic, Chinese) — Apple Calendar ships these.
 
-### Distribution  *(P1)*
+### Distribution _(P1)_
 
 - **X.13 — Code signing and notarization** for macOS.
 - **X.14 — Auto-update** (`tauri-plugin-updater`).
@@ -281,15 +281,15 @@ anywhere in the codebase (verified by grep):
 
 ## 6. Suggested sequencing
 
-| Milestone | Contents | Why this order |
-| --- | --- | --- |
-| **M1 — Repair** | Tier 0 (T0.1–T0.4), X.1, X.2 | Days of work. Fixes silent data loss and a dead view, and turns on the safety net before building on top. |
-| **M2 — It tells you things** | T1.1–T1.6, T1.42–T1.44 | Alerts are the single biggest gap vs. Apple Calendar. Without them the app is a viewer, not a calendar. |
-| **M3 — It talks to your accounts** | T1.13–T1.16, T1.19–T1.22 | CalDAV/iCloud + real OAuth + ordinal recurrence make it usable as a daily driver. |
-| **M4 — It feels like a Mac app** | T1.23–T1.41, X.4, X.6 | Undo, context menus, settings, print, dark mode. **Apple Calendar parity reached here.** |
-| **M5 — People** | T1.7–T1.12 | Attendees and invitations — the largest remaining structural gap. |
-| **M6 — Fantastical-class** | T2.1–T2.3, T2.12, T2.14, T2.15 | Natural language first; it is the feature people actually switch for. |
-| **M7 — Reach** | T2.4–T2.11, X.9–X.16 | Sets, scheduling, accessibility, i18n, shipping. |
+| Milestone                          | Contents                       | Why this order                                                                                            |
+| ---------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| **M1 — Repair**                    | Tier 0 (T0.1–T0.4), X.1, X.2   | Days of work. Fixes silent data loss and a dead view, and turns on the safety net before building on top. |
+| **M2 — It tells you things**       | T1.1–T1.6, T1.42–T1.44         | Alerts are the single biggest gap vs. Apple Calendar. Without them the app is a viewer, not a calendar.   |
+| **M3 — It talks to your accounts** | T1.13–T1.16, T1.19–T1.22       | CalDAV/iCloud + real OAuth + ordinal recurrence make it usable as a daily driver.                         |
+| **M4 — It feels like a Mac app**   | T1.23–T1.41, X.4, X.6          | Undo, context menus, settings, print, dark mode. **Apple Calendar parity reached here.**                  |
+| **M5 — People**                    | T1.7–T1.12                     | Attendees and invitations — the largest remaining structural gap.                                         |
+| **M6 — Fantastical-class**         | T2.1–T2.3, T2.12, T2.14, T2.15 | Natural language first; it is the feature people actually switch for.                                     |
+| **M7 — Reach**                     | T2.4–T2.11, X.9–X.16           | Sets, scheduling, accessibility, i18n, shipping.                                                          |
 
 **If you only do one thing:** M1, then T1.1–T1.3. A calendar that loses typed input and never
 notifies you is not yet competing with the app that ships free on the machine.
@@ -301,4 +301,4 @@ notifies you is not yet competing with the app that ships free on the machine.
 - Move an item to **In flight** when started; archive it when shipped (`scrum.md` is the delivery
   record).
 - When a claim here about the code is acted on, re-verify it — several items above exist
-  *because* the previous backlog trusted status notes instead of the source.
+  _because_ the previous backlog trusted status notes instead of the source.

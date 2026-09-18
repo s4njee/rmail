@@ -487,7 +487,8 @@ export const WeekView: Component<WeekViewProps> = (props) => {
                 <For each={dayAllDay()}>
                   {(item) => {
                     const cal = () => calendarMap().get(item.event.calendarId);
-                    const color = () => item.event.color || cal()?.color || "var(--al-accent, #1F6FEB)";
+                    const color = () =>
+                      item.event.color || cal()?.color || "var(--al-accent, #1F6FEB)";
 
                     return (
                       <div
@@ -664,9 +665,7 @@ export const WeekView: Component<WeekViewProps> = (props) => {
                           height: `${GRID_CONFIG.rowPitch - 1}px`,
                           "border-bottom": "1px solid var(--al-grid-hour, #F2F2F2)",
                           cursor: "pointer",
-                          background: outside
-                            ? "var(--al-outside-hours, #F6F7F9)"
-                            : "transparent",
+                          background: outside ? "var(--al-outside-hours, #F6F7F9)" : "transparent",
                         }}
                       />
                     );
@@ -677,8 +676,7 @@ export const WeekView: Component<WeekViewProps> = (props) => {
                 <For each={dayEvents()}>
                   {(pe) => {
                     const cal = () => calendarMap().get(pe.item.event.calendarId);
-                    const color = () =>
-                      pe.item.event.color || cal()?.color || "#1F6FEB";
+                    const color = () => pe.item.event.color || cal()?.color || "#1F6FEB";
                     const conflicted = () =>
                       showConflicts() && dayConflicts().has(pe.item.event.id);
                     const tint = () => {

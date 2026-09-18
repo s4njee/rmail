@@ -147,9 +147,7 @@ function AddressInput(props: AddressInputProps) {
   const dismissSuggestion = async (s: ContactSuggestion) => {
     await hideRecipient(s.address);
     setSuggestions((prev) =>
-      prev.filter(
-        (x) => x.kind !== "recipient" || x.s.address !== s.address,
-      ),
+      prev.filter((x) => x.kind !== "recipient" || x.s.address !== s.address),
     );
   };
 

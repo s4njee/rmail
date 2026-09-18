@@ -31,7 +31,11 @@ pub fn parse_mbox(raw: &str) -> Vec<&str> {
             }
             start = line_start;
         }
-        i = if line_end < raw.len() { line_end + 1 } else { line_end };
+        i = if line_end < raw.len() {
+            line_end + 1
+        } else {
+            line_end
+        };
     }
     if start < raw.len() {
         messages.push(&raw[start..]);

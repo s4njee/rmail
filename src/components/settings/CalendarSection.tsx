@@ -276,7 +276,12 @@ export function CalendarSection() {
           style={{ display: "flex", "flex-direction": "column", gap: "8px" }}
         >
           <Show when={sources().length === 0}>
-            <p style={{ "font-size": "12px", color: "var(--color-text-faint, #94A1AF)" }}>
+            <p
+              style={{
+                "font-size": "12px",
+                color: "var(--color-text-faint, #94A1AF)",
+              }}
+            >
               No synced calendars yet — use "Sync Cal" in Settings → Accounts.
             </p>
           </Show>
@@ -320,14 +325,20 @@ export function CalendarSection() {
                   <button
                     type="button"
                     class="btn btn--secondary btn--sm"
-                    onClick={() => setHiddenFromSidebar(calId, !hiddenFromSidebar())}
+                    onClick={() =>
+                      setHiddenFromSidebar(calId, !hiddenFromSidebar())
+                    }
                   >
-                    {hiddenFromSidebar() ? "Add to sidebar" : "Remove from sidebar"}
+                    {hiddenFromSidebar()
+                      ? "Add to sidebar"
+                      : "Remove from sidebar"}
                   </button>
                   <button
                     type="button"
                     class="btn btn--secondary btn--sm"
-                    onClick={() => void handleRemoveSource(src.accountId, src.source)}
+                    onClick={() =>
+                      void handleRemoveSource(src.accountId, src.source)
+                    }
                   >
                     Remove
                   </button>
@@ -400,7 +411,9 @@ export function CalendarSection() {
                   <button
                     type="button"
                     class="btn btn--secondary btn--sm"
-                    onClick={() => void handleRestoreSource(src.accountId, src.source)}
+                    onClick={() =>
+                      void handleRestoreSource(src.accountId, src.source)
+                    }
                   >
                     Restore
                   </button>

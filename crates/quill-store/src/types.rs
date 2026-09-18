@@ -299,13 +299,7 @@ pub struct Folder {
 impl Folder {
     /// A unified special-folder row (ids 1..=8). Counts are own-only; there
     /// are no children to roll up.
-    pub fn unified(
-        id: FolderId,
-        name: &str,
-        kind: FolderKind,
-        unread: u32,
-        total: u32,
-    ) -> Self {
+    pub fn unified(id: FolderId, name: &str, kind: FolderKind, unread: u32, total: u32) -> Self {
         Self {
             id,
             account_id: None,

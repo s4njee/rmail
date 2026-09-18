@@ -47,8 +47,23 @@ fn msg(
     attachments: Vec<Attachment>,
 ) -> Message {
     msg_full(
-        id, account_id, folder, from, subject, snippet, day_offset, hour, minute,
-        unread, flagged, false, false, body, body_html, to, attachments,
+        id,
+        account_id,
+        folder,
+        from,
+        subject,
+        snippet,
+        day_offset,
+        hour,
+        minute,
+        unread,
+        flagged,
+        false,
+        false,
+        body,
+        body_html,
+        to,
+        attachments,
     )
 }
 

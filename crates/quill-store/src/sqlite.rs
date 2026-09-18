@@ -16,12 +16,7 @@ use std::sync::Mutex;
 
 const PARAGRAPH_SEP: &str = "\n\n";
 
-type MessageWithThreadHeaders = (
-    MessageRow,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-);
+type MessageWithThreadHeaders = (MessageRow, Option<String>, Option<String>, Option<String>);
 type StoredDraftRow = (i64, i64, String, Option<String>, Option<String>);
 
 // -- P1.3 search-operator parsing ---------------------------------------
@@ -60,8 +55,7 @@ fn search_tokens(raw: &str) -> Vec<String> {
 
 /// The recognized search operators (P1.3).
 const SEARCH_OPERATORS: &[&str] = &[
-    "from", "to", "cc", "subject", "has", "is", "before", "after", "in",
-    "account", "calendar",
+    "from", "to", "cc", "subject", "has", "is", "before", "after", "in", "account", "calendar",
 ];
 
 /// Split `op:value` — returns `(op, unquoted_value)` when the op is known.
@@ -164,8 +158,7 @@ fn describe_rule_action(action: &RuleAction) -> String {
 /// The subject + recipient list from a serialized OutgoingMessage for the
 /// Scheduled view — display fields only; the body stays in the payload.
 fn scheduled_display(payload: &str) -> (String, Vec<String>) {
-    let v: serde_json::Value =
-        serde_json::from_str(payload).unwrap_or(serde_json::Value::Null);
+    let v: serde_json::Value = serde_json::from_str(payload).unwrap_or(serde_json::Value::Null);
     let subject = v
         .get("subject")
         .and_then(|s| s.as_str())
@@ -193,11 +186,8 @@ fn now_ms() -> i64 {
 /// Add each folder's own counts to every ancestor so a collapsed parent
 /// still shows unread/total for its hidden children.
 fn rollup_folder_counts(folders: &mut [Folder]) {
-    let index: HashMap<FolderId, usize> = folders
-        .iter()
-        .enumerate()
-        .map(|(i, f)| (f.id, i))
-        .collect();
+    let index: HashMap<FolderId, usize> =
+        folders.iter().enumerate().map(|(i, f)| (f.id, i)).collect();
     // Leaves first: a child is always listed after its parent in the default
     // sort, so walk reversed and push counts up.
     let order: Vec<usize> = (0..folders.len()).rev().collect();
@@ -210,8 +200,7 @@ fn rollup_folder_counts(folders: &mut [Folder]) {
             if let Some(&pi) = index.get(&pid) {
                 folders[pi].unread_count_tree =
                     folders[pi].unread_count_tree.saturating_add(unread);
-                folders[pi].total_count_tree =
-                    folders[pi].total_count_tree.saturating_add(total);
+                folders[pi].total_count_tree = folders[pi].total_count_tree.saturating_add(total);
             }
         }
     }
@@ -662,7 +651,12 @@ impl SqliteStore {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
         let mut repaired = false;
-        for col in ["calendar_source", "calendar_name", "calendar_color", "color"] {
+        for col in [
+            "calendar_source",
+            "calendar_name",
+            "calendar_color",
+            "color",
+        ] {
             if !event_cols.iter().any(|c| c == col) {
                 conn.execute_batch(&format!("ALTER TABLE events ADD COLUMN {col} TEXT;"))
                     .map_err(|e| e.to_string())?;
@@ -818,7 +812,9 @@ impl SqliteStore {
                 .map_err(|e| e.to_string())?;
             for (id, subject) in rows {
                 let tid = crate::threading::compute_thread_id(None, None, &subject);
-                update.execute(params![tid, id]).map_err(|e| e.to_string())?;
+                update
+                    .execute(params![tid, id])
+                    .map_err(|e| e.to_string())?;
             }
             conn.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('code_migration_thread_id', '1')",
@@ -943,13 +939,7 @@ impl SqliteStore {
                         .query_row(sql, params![now], |r| Ok((r.get(0)?, r.get(1)?)))
                         .unwrap_or((0, 0)),
                 };
-                Folder::unified(
-                    (i + 1) as FolderId,
-                    name,
-                    kind,
-                    unread as u32,
-                    total as u32,
-                )
+                Folder::unified((i + 1) as FolderId, name, kind, unread as u32, total as u32)
             })
             .collect()
     }
@@ -1009,9 +999,7 @@ impl SqliteStore {
                     total_count: total,
                     unread_count_tree: unread,
                     total_count_tree: total,
-                    parent_id: r
-                        .get::<_, Option<i64>>(5)?
-                        .map(|id| id as FolderId),
+                    parent_id: r.get::<_, Option<i64>>(5)?.map(|id| id as FolderId),
                     server_name: Some(r.get(2)?),
                     delimiter: r.get(7)?,
                     subscribed: r.get::<_, i64>(8)? != 0,
@@ -1044,60 +1032,60 @@ impl SqliteStore {
 
         let (mut where_sql, mut outer_where_sql, mut params): (String, String, Vec<Value>) =
             match folder {
-            Some("Starred") => {
-                if let Some(account) = query.account_id {
-                    (
-                        format!("flagged = 1 AND account_id = {account}"),
-                        format!("m.flagged = 1 AND m.account_id = {account}"),
-                        vec![],
-                    )
-                } else {
-                    (
-                        "flagged = 1".to_string(),
-                        "m.flagged = 1".to_string(),
-                        vec![],
-                    )
+                Some("Starred") => {
+                    if let Some(account) = query.account_id {
+                        (
+                            format!("flagged = 1 AND account_id = {account}"),
+                            format!("m.flagged = 1 AND m.account_id = {account}"),
+                            vec![],
+                        )
+                    } else {
+                        (
+                            "flagged = 1".to_string(),
+                            "m.flagged = 1".to_string(),
+                            vec![],
+                        )
+                    }
                 }
-            }
-            // P1.1 Snoozed: the inverse of the hidden filter — show rows whose
-            // snooze has not yet elapsed. The `now` bound param is appended
-            // below with the deleted filter, sharing the same `?1` slot.
-            Some("Snoozed") => {
-                if let Some(account) = query.account_id {
-                    (
-                        format!("snoozed_until_ms > ?1 AND account_id = {account}"),
-                        format!("m.snoozed_until_ms > ?1 AND m.account_id = {account}"),
-                        vec![],
-                    )
-                } else {
-                    (
-                        "snoozed_until_ms > ?1".to_string(),
-                        "m.snoozed_until_ms > ?1".to_string(),
-                        vec![],
-                    )
+                // P1.1 Snoozed: the inverse of the hidden filter — show rows whose
+                // snooze has not yet elapsed. The `now` bound param is appended
+                // below with the deleted filter, sharing the same `?1` slot.
+                Some("Snoozed") => {
+                    if let Some(account) = query.account_id {
+                        (
+                            format!("snoozed_until_ms > ?1 AND account_id = {account}"),
+                            format!("m.snoozed_until_ms > ?1 AND m.account_id = {account}"),
+                            vec![],
+                        )
+                    } else {
+                        (
+                            "snoozed_until_ms > ?1".to_string(),
+                            "m.snoozed_until_ms > ?1".to_string(),
+                            vec![],
+                        )
+                    }
                 }
-            }
-            Some(f) => {
-                let mut inner = String::from("folder = ?1");
-                let mut outer = String::from("m.folder = ?1");
-                let p: Vec<Value> = vec![Value::Text(f.to_string())];
-                if let Some(account) = query.account_id {
-                    inner.push_str(&format!(" AND account_id = {account}"));
-                    outer.push_str(&format!(" AND m.account_id = {account}"));
+                Some(f) => {
+                    let mut inner = String::from("folder = ?1");
+                    let mut outer = String::from("m.folder = ?1");
+                    let p: Vec<Value> = vec![Value::Text(f.to_string())];
+                    if let Some(account) = query.account_id {
+                        inner.push_str(&format!(" AND account_id = {account}"));
+                        outer.push_str(&format!(" AND m.account_id = {account}"));
+                    }
+                    (inner, outer, p)
                 }
-                (inner, outer, p)
-            }
-            None => {
-                let mut inner = String::from("1 = 1");
-                let mut outer = String::from("1 = 1");
-                let p: Vec<Value> = vec![];
-                if let Some(account) = query.account_id {
-                    inner.push_str(&format!(" AND account_id = {account}"));
-                    outer.push_str(&format!(" AND m.account_id = {account}"));
+                None => {
+                    let mut inner = String::from("1 = 1");
+                    let mut outer = String::from("1 = 1");
+                    let p: Vec<Value> = vec![];
+                    if let Some(account) = query.account_id {
+                        inner.push_str(&format!(" AND account_id = {account}"));
+                        outer.push_str(&format!(" AND m.account_id = {account}"));
+                    }
+                    (inner, outer, p)
                 }
-                (inner, outer, p)
-            }
-        };
+            };
 
         // P1.1 hidden-message filter: soft-deleted rows are gone from every
         // view, and a snoozed row stays out of its folder until its time
@@ -1172,7 +1160,10 @@ impl SqliteStore {
             all_params.push(Value::Integer(i64::from(query.limit)));
             all_params.push(Value::Integer(i64::from(query.offset)));
             let rows: Vec<MessageRow> = stmt
-                .query_map(rusqlite::params_from_iter(all_params.iter()), Self::read_row)
+                .query_map(
+                    rusqlite::params_from_iter(all_params.iter()),
+                    Self::read_row,
+                )
                 .expect("page rows")
                 .map(|r| r.expect("page row"))
                 .collect();
@@ -1815,7 +1806,8 @@ impl SqliteStore {
             )
             .map_err(|e| e.to_string())?;
         for &id in ids {
-            stmt.execute(params![until_ms, id]).map_err(|e| e.to_string())?;
+            stmt.execute(params![until_ms, id])
+                .map_err(|e| e.to_string())?;
         }
         Ok(())
     }
@@ -1898,7 +1890,9 @@ impl SqliteStore {
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };
-        let rows = stmt.query_map(params![now], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)));
+        let rows = stmt.query_map(params![now], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        });
         match rows {
             Ok(rows) => rows.flatten().collect(),
             Err(_) => Vec::new(),
@@ -1907,11 +1901,8 @@ impl SqliteStore {
 
     pub fn cancel_scheduled(&self, id: i64) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "DELETE FROM scheduled_messages WHERE id = ?1",
-            params![id],
-        )
-        .map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM scheduled_messages WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -1925,7 +1916,9 @@ impl SqliteStore {
     /// Escape `%`, `_` and the LIKE escape char so a typed query can't
     /// wildcard unexpectedly.
     fn escape_like(s: &str) -> String {
-        s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+        s.replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
     }
 
     /// The history rows a suggestion is built from: every recipient we've seen
@@ -2018,7 +2011,12 @@ impl SqliteStore {
             Err(_) => return Vec::new(),
         };
         let rows = stmt
-            .query_map([], |r| Ok(ContactGroup { id: r.get(0)?, name: r.get(1)? }))
+            .query_map([], |r| {
+                Ok(ContactGroup {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                })
+            })
             .map_err(|_| ());
         match rows {
             Ok(rows) => rows.flatten().collect(),
@@ -2058,7 +2056,12 @@ impl SqliteStore {
             Err(_) => return Vec::new(),
         };
         let rows = stmt
-            .query_map(params![pattern, limit], |r| Ok(ContactGroup { id: r.get(0)?, name: r.get(1)? }))
+            .query_map(params![pattern, limit], |r| {
+                Ok(ContactGroup {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                })
+            })
             .map_err(|_| ());
         match rows {
             Ok(rows) => rows.flatten().collect(),
@@ -2966,7 +2969,9 @@ impl SqliteStore {
 
     pub fn list_tasks(&self, account_id: Option<AccountId>) -> Vec<CalendarTask> {
         let conn = self.conn.lock().unwrap();
-        let mut query = "SELECT id, account_id, title, due_at_ms, completed_at_ms, priority FROM tasks".to_string();
+        let mut query =
+            "SELECT id, account_id, title, due_at_ms, completed_at_ms, priority FROM tasks"
+                .to_string();
         if account_id.is_some() {
             query.push_str(" WHERE account_id = ?1");
         }
@@ -3504,7 +3509,14 @@ impl SqliteStore {
             for (folder, server_folder) in extras {
                 if matches!(
                     folder.as_str(),
-                    "Inbox" | "Starred" | "Drafts" | "Sent" | "Archive" | "Junk" | "Trash" | "Snoozed"
+                    "Inbox"
+                        | "Starred"
+                        | "Drafts"
+                        | "Sent"
+                        | "Archive"
+                        | "Junk"
+                        | "Trash"
+                        | "Snoozed"
                 ) {
                     continue;
                 }
@@ -3565,11 +3577,8 @@ impl SqliteStore {
         } else {
             delimiter
         };
-        let server_name = crate::folders::child_server_name(
-            parent_server.as_deref(),
-            name,
-            &delimiter,
-        );
+        let server_name =
+            crate::folders::child_server_name(parent_server.as_deref(), name, &delimiter);
         let local_name = crate::folders::local_name_for(&server_name, FolderKind::Custom);
         let display_name = name.to_string();
         let ns = if namespace.is_empty() {
@@ -3639,11 +3648,8 @@ impl SqliteStore {
             .clone()
             .ok_or_else(|| "folder has no server name".to_string())?;
         let parent = crate::folders::parent_server_name(&server, &folder.delimiter);
-        let new_server = crate::folders::child_server_name(
-            parent.as_deref(),
-            new_name,
-            &folder.delimiter,
-        );
+        let new_server =
+            crate::folders::child_server_name(parent.as_deref(), new_name, &folder.delimiter);
         self.rewrite_folder_path(account_id, &server, &new_server, &folder.delimiter)?;
         let _ = self.enqueue_action(
             account_id,
@@ -3698,11 +3704,8 @@ impl SqliteStore {
         } else {
             (None, folder.delimiter.clone())
         };
-        let new_server = crate::folders::child_server_name(
-            parent_server.as_deref(),
-            &folder.name,
-            &delimiter,
-        );
+        let new_server =
+            crate::folders::child_server_name(parent_server.as_deref(), &folder.name, &delimiter);
         self.rewrite_folder_path(account_id, &server, &new_server, &delimiter)?;
         let _ = self.enqueue_action(
             account_id,
@@ -3811,13 +3814,7 @@ impl SqliteStore {
             )
             .map_err(|e| e.to_string())?;
         }
-        let _ = self.enqueue_action(
-            account_id,
-            ActionType::DeleteFolder,
-            &server,
-            None,
-            None,
-        );
+        let _ = self.enqueue_action(account_id, ActionType::DeleteFolder, &server, None, None);
         Ok(())
     }
 
@@ -3910,17 +3907,11 @@ impl SqliteStore {
 
     /// Resolve a move destination (local path or display name) to the local
     /// storage key and the IMAP mailbox name for this account.
-    pub fn resolve_move_destination(
-        &self,
-        account_id: AccountId,
-        dest: &str,
-    ) -> (String, String) {
+    pub fn resolve_move_destination(&self, account_id: AccountId, dest: &str) -> (String, String) {
         let folders = self.account_folders();
         if let Some(f) = folders.iter().find(|f| {
             f.account_id == Some(account_id)
-                && (f.path == dest
-                    || f.server_name.as_deref() == Some(dest)
-                    || f.name == dest)
+                && (f.path == dest || f.server_name.as_deref() == Some(dest) || f.name == dest)
         }) {
             return (
                 f.path.clone(),
@@ -4005,9 +3996,11 @@ impl SqliteStore {
     /// from the first message mapped to the display Archive folder. Callers
     /// fall back to "Archive" when nothing is known.
     pub fn archive_folder_name(&self, account_id: AccountId) -> Option<String> {
-        if let Some(f) = self.account_folders().into_iter().find(|f| {
-            f.account_id == Some(account_id) && f.kind == FolderKind::Archive
-        }) {
+        if let Some(f) = self
+            .account_folders()
+            .into_iter()
+            .find(|f| f.account_id == Some(account_id) && f.kind == FolderKind::Archive)
+        {
             return f.server_name;
         }
         let conn = self.conn.lock().unwrap();
@@ -4258,43 +4251,40 @@ impl SqliteStore {
         if let Some(id) = arg {
             qparams.push(rusqlite::types::Value::Integer(i64::from(id)));
         }
-        let rows = stmt.query_map(
-            rusqlite::params_from_iter(qparams.iter()),
-            |r| {
-                let type_str: String = r.get(2)?;
-                let action_type = match type_str.as_str() {
-                    "mark_read" => ActionType::MarkRead,
-                    "mark_unread" => ActionType::MarkUnread,
-                    "star" => ActionType::Star,
-                    "unstar" => ActionType::Unstar,
-                    "archive" => ActionType::Archive,
-                    "delete" => ActionType::Delete,
-                    "move" => ActionType::Move,
-                    "mark_junk" => ActionType::MarkJunk,
-                    "mark_not_junk" => ActionType::MarkNotJunk,
-                    "mark_answered" => ActionType::MarkAnswered,
-                    "mark_forwarded" => ActionType::MarkForwarded,
-                    "send" => ActionType::Send,
-                    "create_folder" => ActionType::CreateFolder,
-                    "rename_folder" => ActionType::RenameFolder,
-                    "delete_folder" => ActionType::DeleteFolder,
-                    "subscribe_folder" => ActionType::SubscribeFolder,
-                    "unsubscribe_folder" => ActionType::UnsubscribeFolder,
-                    _ => ActionType::MarkRead,
-                };
-                Ok(QueuedAction {
-                    id: r.get(0)?,
-                    account_id: r.get(1)?,
-                    action_type,
-                    folder: r.get(3)?,
-                    uid: r.get(4)?,
-                    payload: r.get(5)?,
-                    created_at_ms: r.get(6)?,
-                    retries: r.get::<_, i64>(7)? as u32,
-                    last_error: r.get(8)?,
-                })
-            },
-        );
+        let rows = stmt.query_map(rusqlite::params_from_iter(qparams.iter()), |r| {
+            let type_str: String = r.get(2)?;
+            let action_type = match type_str.as_str() {
+                "mark_read" => ActionType::MarkRead,
+                "mark_unread" => ActionType::MarkUnread,
+                "star" => ActionType::Star,
+                "unstar" => ActionType::Unstar,
+                "archive" => ActionType::Archive,
+                "delete" => ActionType::Delete,
+                "move" => ActionType::Move,
+                "mark_junk" => ActionType::MarkJunk,
+                "mark_not_junk" => ActionType::MarkNotJunk,
+                "mark_answered" => ActionType::MarkAnswered,
+                "mark_forwarded" => ActionType::MarkForwarded,
+                "send" => ActionType::Send,
+                "create_folder" => ActionType::CreateFolder,
+                "rename_folder" => ActionType::RenameFolder,
+                "delete_folder" => ActionType::DeleteFolder,
+                "subscribe_folder" => ActionType::SubscribeFolder,
+                "unsubscribe_folder" => ActionType::UnsubscribeFolder,
+                _ => ActionType::MarkRead,
+            };
+            Ok(QueuedAction {
+                id: r.get(0)?,
+                account_id: r.get(1)?,
+                action_type,
+                folder: r.get(3)?,
+                uid: r.get(4)?,
+                payload: r.get(5)?,
+                created_at_ms: r.get(6)?,
+                retries: r.get::<_, i64>(7)? as u32,
+                last_error: r.get(8)?,
+            })
+        });
         rows.map(|iter| iter.flatten().collect())
             .unwrap_or_default()
     }
@@ -4847,7 +4837,11 @@ impl SqliteStore {
                  WHERE message_id = ?1 ORDER BY position",
             )
             .ok()?;
-        let rows = stmt.query_map(params![id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).ok()?;
+        let rows = stmt
+            .query_map(params![id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .ok()?;
         for row in rows.flatten() {
             match row.0.as_str() {
                 "to" => to.push(row.1),
@@ -5016,10 +5010,20 @@ impl SqliteStore {
             Err(_) => return Vec::new(),
         };
         let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?)))
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                ))
+            })
             .map_err(|_| ());
-        let rows: Vec<StoredDraftRow> =
-            match rows { Ok(r) => r.flatten().collect(), Err(_) => return Vec::new() };
+        let rows: Vec<StoredDraftRow> = match rows {
+            Ok(r) => r.flatten().collect(),
+            Err(_) => return Vec::new(),
+        };
         rows.into_iter()
             .filter_map(|(id, account_id, subject, in_reply_to, references)| {
                 let body: String = conn
@@ -5073,9 +5077,21 @@ impl SqliteStore {
             Err(_) => return Vec::new(),
         };
         let rows = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+            .query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            })
             .map_err(|_| ());
-        match rows { Ok(r) => r.flatten().collect(), Err(_) => Vec::new() }
+        match rows {
+            Ok(r) => r.flatten().collect(),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// P1.6 backup: a JSON bundle of the LOCAL-ONLY data (never OS-keychain
@@ -5096,8 +5112,11 @@ impl SqliteStore {
             let mut stmt = conn
                 .prepare("SELECT address FROM hidden_recipients")
                 .map_err(|e| e.to_string())?;
-            let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(|e| e.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?
         };
         Ok(serde_json::json!({
             "version": 1,
@@ -5143,9 +5162,15 @@ impl SqliteStore {
             for g in groups {
                 if let Ok(cg) = serde_json::from_value::<ContactGroup>(g.clone()) {
                     if let Ok(gid) = self.create_contact_group(&cg.name) {
-                        if let Some(members) = v.get("contact_group_members").and_then(|x| x.as_array()) {
+                        if let Some(members) =
+                            v.get("contact_group_members").and_then(|x| x.as_array())
+                        {
                             for m in members {
-                                if let Ok((old_id, suggestions)) = serde_json::from_value::<(i64, Vec<ContactSuggestion>)>(m.clone()) {
+                                if let Ok((old_id, suggestions)) =
+                                    serde_json::from_value::<(i64, Vec<ContactSuggestion>)>(
+                                        m.clone(),
+                                    )
+                                {
                                     if old_id == cg.id {
                                         for s in suggestions {
                                             let _ = self.add_contact_to_group(gid, &s.address);
@@ -5168,7 +5193,12 @@ impl SqliteStore {
         if let Some(subs) = v.get("subscriptions").and_then(|x| x.as_array()) {
             for s in subs {
                 if let Ok(sub) = serde_json::from_value::<CalendarSubscription>(s.clone()) {
-                    let _ = self.create_subscription(&sub.name, &sub.url, &sub.color, sub.refresh_interval_min);
+                    let _ = self.create_subscription(
+                        &sub.name,
+                        &sub.url,
+                        &sub.color,
+                        sub.refresh_interval_min,
+                    );
                 }
             }
         }
@@ -5424,7 +5454,10 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         for col in ["calendar_source", "calendar_name", "calendar_color"] {
-            assert!(cols.contains(&col.to_string()), "missing repaired column {col}");
+            assert!(
+                cols.contains(&col.to_string()),
+                "missing repaired column {col}"
+            );
         }
         drop(conn);
         // list_events now works against the repaired schema (this re-locks the
@@ -5923,7 +5956,10 @@ mod tests {
         assert!(att_dir.exists());
 
         store.delete_attachments_for_account(acc.id);
-        assert!(!att_dir.exists(), "attachment files must be deleted on removal");
+        assert!(
+            !att_dir.exists(),
+            "attachment files must be deleted on removal"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -5961,7 +5997,11 @@ mod tests {
 
         store.restore_message(target).unwrap();
         assert!(
-            store.page_messages(&query).items.iter().any(|r| r.id == target),
+            store
+                .page_messages(&query)
+                .items
+                .iter()
+                .any(|r| r.id == target),
             "restored message must return to the list"
         );
     }
@@ -6083,7 +6123,11 @@ mod tests {
         let wake = now_ms() + 3_600_000;
         store.set_snoozed(&[target], wake).unwrap();
         assert!(
-            !store.page_messages(&inbox).items.iter().any(|r| r.id == target),
+            !store
+                .page_messages(&inbox)
+                .items
+                .iter()
+                .any(|r| r.id == target),
             "snoozed message must leave the inbox"
         );
         assert!(
@@ -6101,7 +6145,11 @@ mod tests {
         let returned = store.clear_due_snoozes(wake).unwrap();
         assert!(returned >= 1);
         assert!(
-            store.page_messages(&inbox).items.iter().any(|r| r.id == target),
+            store
+                .page_messages(&inbox)
+                .items
+                .iter()
+                .any(|r| r.id == target),
             "returned message must reappear in the inbox"
         );
         assert!(
@@ -6232,12 +6280,10 @@ mod tests {
             store.suggest_recipients("bob", 10).is_empty(),
             "hidden recipient must not be suggested"
         );
-        assert!(
-            store
-                .recent_recipients(10)
-                .iter()
-                .all(|s| s.address.to_lowercase() != "bob@example.com")
-        );
+        assert!(store
+            .recent_recipients(10)
+            .iter()
+            .all(|s| s.address.to_lowercase() != "bob@example.com"));
 
         // LIKE wildcards in the query are literal.
         let sugs = store.suggest_recipients("%", 10);
@@ -6270,20 +6316,29 @@ mod tests {
 
         let gid = store.create_contact_group("Team").unwrap();
         assert!(gid > 0);
-        store.add_contact_to_group(gid, "alice@example.com").unwrap();
+        store
+            .add_contact_to_group(gid, "alice@example.com")
+            .unwrap();
         store.add_contact_to_group(gid, "bob@example.com").unwrap();
-        store.add_contact_to_group(gid, "alice@example.com").unwrap(); // dedup
+        store
+            .add_contact_to_group(gid, "alice@example.com")
+            .unwrap(); // dedup
 
         let members = store.contact_group_members(gid);
         assert_eq!(members.len(), 2);
-        let alice = members.iter().find(|m| m.address == "alice@example.com").unwrap();
+        let alice = members
+            .iter()
+            .find(|m| m.address == "alice@example.com")
+            .unwrap();
         assert_eq!(alice.name, "Alice", "member names join from history");
 
         let groups = store.list_contact_groups();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "Team");
 
-        store.remove_contact_from_group(gid, "bob@example.com").unwrap();
+        store
+            .remove_contact_from_group(gid, "bob@example.com")
+            .unwrap();
         assert_eq!(store.contact_group_members(gid).len(), 1);
 
         store.delete_contact_group(gid).unwrap();
@@ -6429,14 +6484,20 @@ mod tests {
         store.delete_event(local_event.id).unwrap();
         let search_id = store.list_saved_searches()[0].id;
         store.delete_saved_search(search_id).unwrap();
-        assert!(!store.list_events(0, i64::MAX / 2).iter().any(|e| e.id == local_event.id));
+        assert!(!store
+            .list_events(0, i64::MAX / 2)
+            .iter()
+            .any(|e| e.id == local_event.id));
 
         store.restore_local_data(&backup).unwrap();
         assert!(store
             .list_events(0, i64::MAX / 2)
             .iter()
             .any(|e| e.id == local_event.id));
-        assert!(store.list_saved_searches().iter().any(|s| s.name == "Unread"));
+        assert!(store
+            .list_saved_searches()
+            .iter()
+            .any(|s| s.name == "Unread"));
     }
 
     /// Downgrade safety (E2.2): a database stamped by a newer app version must
@@ -6481,7 +6542,10 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .filter(|n| n.contains(".bak-"))
             .collect();
-        assert!(!backups.is_empty(), "expected a pre-migration backup, got {backups:?}");
+        assert!(
+            !backups.is_empty(),
+            "expected a pre-migration backup, got {backups:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -6540,19 +6604,17 @@ mod tests {
         // P1.1: delete is soft — hidden from the list, still resolvable by id
         // so the action can be undone.
         assert!(store.get_message(id).is_some());
-        assert!(
-            !store
-                .page_messages(&MessageQuery {
-                    folder: Some("Inbox".into()),
-                    account_id: None,
-                    offset: 0,
-                    limit: 500,
-                    threaded: false,
-                })
-                .items
-                .iter()
-                .any(|r| r.id == id)
-        );
+        assert!(!store
+            .page_messages(&MessageQuery {
+                folder: Some("Inbox".into()),
+                account_id: None,
+                offset: 0,
+                limit: 500,
+                threaded: false,
+            })
+            .items
+            .iter()
+            .any(|r| r.id == id));
     }
 
     #[test]
@@ -6602,7 +6664,10 @@ mod tests {
         assert!(event.id > 0);
         assert_eq!(store.list_events(0, 3000).len(), 1);
         assert_eq!(store.list_events(0, 3000)[0].alarm_minutes_before, Some(15));
-        assert_eq!(store.list_events(0, 3000)[0].timezone.as_deref(), Some("America/New_York"));
+        assert_eq!(
+            store.list_events(0, 3000)[0].timezone.as_deref(),
+            Some("America/New_York")
+        );
         assert_eq!(store.list_events(0, 3000)[0].travel_time_minutes, Some(30));
         assert_eq!(
             store.list_events(0, 3000)[0].color.as_deref(),
@@ -6647,7 +6712,10 @@ mod tests {
             "color updates too"
         );
         assert_eq!(store.list_events(0, 3000)[0].alarm_minutes_before, Some(30));
-        assert_eq!(store.list_events(0, 3000)[0].timezone.as_deref(), Some("Europe/London"));
+        assert_eq!(
+            store.list_events(0, 3000)[0].timezone.as_deref(),
+            Some("Europe/London")
+        );
         assert_eq!(store.list_events(0, 3000)[0].travel_time_minutes, Some(45));
 
         store.delete_event(event.id).unwrap();
@@ -6666,19 +6734,15 @@ mod tests {
 
         // Undo-delete: delete, then restore the captured event.
         store.delete_event(original.id).unwrap();
-        assert!(
-            store
-                .list_events(0, i64::MAX / 2)
-                .iter()
-                .all(|e| e.id != original.id)
-        );
+        assert!(store
+            .list_events(0, i64::MAX / 2)
+            .iter()
+            .all(|e| e.id != original.id));
         store.restore_event(original.clone()).unwrap();
-        assert!(
-            store
-                .list_events(0, i64::MAX / 2)
-                .iter()
-                .any(|e| e.id == original.id && e.title == original.title)
-        );
+        assert!(store
+            .list_events(0, i64::MAX / 2)
+            .iter()
+            .any(|e| e.id == original.id && e.title == original.title));
 
         // Undo-edit: overwrite with the pre-edit snapshot.
         let edited = CalendarEvent {
@@ -7115,13 +7179,42 @@ mod tests {
                 "INSERT INTO messages (id, account_id, folder, sender_name, sender_address, \
                  subject, snippet, received_at_ms, unread, flagged, has_attachments) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, '', ?7, ?8, ?9, ?10)",
-                params![id, acc.id, folder, name, address, subject, id as i64, unread, flagged, has_att],
+                params![
+                    id, acc.id, folder, name, address, subject, id as i64, unread, flagged, has_att
+                ],
             )
             .unwrap();
         };
-        insert(1, "Inbox", "Alice Adams", "alice@example.com", "Quarterly report", 1, 0, 1);
-        insert(2, "Sent", "Bob Brown", "bob@example.com", "Weekly status", 0, 1, 0);
-        insert(3, "Inbox", "Alice Adams", "alice@example.com", "Hello world", 1, 0, 0);
+        insert(
+            1,
+            "Inbox",
+            "Alice Adams",
+            "alice@example.com",
+            "Quarterly report",
+            1,
+            0,
+            1,
+        );
+        insert(
+            2,
+            "Sent",
+            "Bob Brown",
+            "bob@example.com",
+            "Weekly status",
+            0,
+            1,
+            0,
+        );
+        insert(
+            3,
+            "Inbox",
+            "Alice Adams",
+            "alice@example.com",
+            "Hello world",
+            1,
+            0,
+            0,
+        );
         {
             let conn = store.conn.lock().unwrap();
             conn.execute(
@@ -7163,7 +7256,11 @@ mod tests {
         assert_eq!(run("is:starred"), vec![2], "starred filter");
         assert_eq!(run("in:sent"), vec![2], "in is case-insensitive");
         assert_eq!(run("before:2030-01-01").len(), 3, "before a future date");
-        assert_eq!(run("after:2030-01-01"), Vec::<u32>::new(), "after a future date");
+        assert_eq!(
+            run("after:2030-01-01"),
+            Vec::<u32>::new(),
+            "after a future date"
+        );
         assert_eq!(run("account:me@example.com").len(), 3, "account by address");
         assert_eq!(run("account:unknown@example.com"), Vec::<u32>::new());
 
@@ -7197,7 +7294,10 @@ mod tests {
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].name, "Unread");
         assert_eq!(list[0].query, "is:unread");
-        assert!(store.save_search("Unread", "x").is_err(), "names are unique");
+        assert!(
+            store.save_search("Unread", "x").is_err(),
+            "names are unique"
+        );
         store.delete_saved_search(id).unwrap();
         assert_eq!(store.list_saved_searches().len(), 1);
     }
@@ -7281,7 +7381,9 @@ mod tests {
         assert_eq!(store.get_message(1).unwrap().row.folder, "Inbox");
 
         // Apply, then revert.
-        let applied = store.apply_rules_to_folder(acc.id, "Inbox", &rules).unwrap();
+        let applied = store
+            .apply_rules_to_folder(acc.id, "Inbox", &rules)
+            .unwrap();
         assert_eq!(applied, 1);
         assert_eq!(store.get_message(1).unwrap().row.folder, "Archive");
 
@@ -7294,18 +7396,19 @@ mod tests {
     #[test]
     fn test_conversation_threading_and_thread_actions() {
         let store = SqliteStore::open_in_memory().unwrap();
-        let acct = store.create_account(
-            &NewAccount {
-                address: "thread@example.com".into(),
-                protocol: "IMAP".into(),
-                server: "imap.example.com".into(),
-                port: 993,
-                tls: true,
-                sync_mode: "every 2 min".into(),
-            },
-            "#3b5bdb".into(),
-        )
-        .unwrap();
+        let acct = store
+            .create_account(
+                &NewAccount {
+                    address: "thread@example.com".into(),
+                    protocol: "IMAP".into(),
+                    server: "imap.example.com".into(),
+                    port: 993,
+                    tls: true,
+                    sync_mode: "every 2 min".into(),
+                },
+                "#3b5bdb".into(),
+            )
+            .unwrap();
 
         // Insert two messages with same subject / thread root
         let msg1_id = store
@@ -7396,18 +7499,19 @@ mod tests {
         // contributed zero bound params while the SQL hardcoded "LIMIT ?2
         // OFFSET ?3", panicking with rusqlite InvalidParameterCount.
         let store = SqliteStore::open_in_memory().unwrap();
-        let acct = store.create_account(
-            &NewAccount {
-                address: "no-folder@example.com".into(),
-                protocol: "IMAP".into(),
-                server: "imap.example.com".into(),
-                port: 993,
-                tls: true,
-                sync_mode: "every 2 min".into(),
-            },
-            "#0f766e".into(),
-        )
-        .unwrap();
+        let acct = store
+            .create_account(
+                &NewAccount {
+                    address: "no-folder@example.com".into(),
+                    protocol: "IMAP".into(),
+                    server: "imap.example.com".into(),
+                    port: 993,
+                    tls: true,
+                    sync_mode: "every 2 min".into(),
+                },
+                "#0f766e".into(),
+            )
+            .unwrap();
 
         for uid in 1..=3u32 {
             store
@@ -7456,35 +7560,75 @@ mod tests {
     #[test]
     fn test_prune_messages_before() {
         let store = SqliteStore::open_in_memory().unwrap();
-        let acct = store.create_account(
-            &NewAccount {
-                address: "prune@example.com".into(),
-                protocol: "IMAP".into(),
-                server: "imap.example.com".into(),
-                port: 993,
-                tls: true,
-                sync_mode: "every 2 min".into(),
-            },
-            "#0f766e".into(),
-        )
-        .unwrap();
+        let acct = store
+            .create_account(
+                &NewAccount {
+                    address: "prune@example.com".into(),
+                    protocol: "IMAP".into(),
+                    server: "imap.example.com".into(),
+                    port: 993,
+                    tls: true,
+                    sync_mode: "every 2 min".into(),
+                },
+                "#0f766e".into(),
+            )
+            .unwrap();
 
         store
             .upsert_fetched_message(
-                acct.id, "Inbox", "INBOX", 1, 1, "Old", "old@example.com", "Old Mail", "", 1_000_000,
-                true, false, false, false, false,
+                acct.id,
+                "Inbox",
+                "INBOX",
+                1,
+                1,
+                "Old",
+                "old@example.com",
+                "Old Mail",
+                "",
+                1_000_000,
+                true,
+                false,
+                false,
+                false,
+                false,
             )
             .unwrap();
         store
             .upsert_fetched_message(
-                acct.id, "Inbox", "INBOX", 2, 1, "Mid", "mid@example.com", "Mid Mail", "", 2_000_000,
-                true, false, false, false, false,
+                acct.id,
+                "Inbox",
+                "INBOX",
+                2,
+                1,
+                "Mid",
+                "mid@example.com",
+                "Mid Mail",
+                "",
+                2_000_000,
+                true,
+                false,
+                false,
+                false,
+                false,
             )
             .unwrap();
         store
             .upsert_fetched_message(
-                acct.id, "Inbox", "INBOX", 3, 1, "New", "new@example.com", "New Mail", "", 3_000_000,
-                true, false, false, false, false,
+                acct.id,
+                "Inbox",
+                "INBOX",
+                3,
+                1,
+                "New",
+                "new@example.com",
+                "New Mail",
+                "",
+                3_000_000,
+                true,
+                false,
+                false,
+                false,
+                false,
             )
             .unwrap();
 
@@ -7505,18 +7649,19 @@ mod tests {
     #[test]
     fn test_answered_forwarded_flags_and_roundtrip() {
         let store = SqliteStore::open_in_memory().unwrap();
-        let acct = store.create_account(
-            &NewAccount {
-                address: "flags@example.com".into(),
-                protocol: "IMAP".into(),
-                server: "imap.example.com".into(),
-                port: 993,
-                tls: true,
-                sync_mode: "every 2 min".into(),
-            },
-            "#3b5bdb".into(),
-        )
-        .unwrap();
+        let acct = store
+            .create_account(
+                &NewAccount {
+                    address: "flags@example.com".into(),
+                    protocol: "IMAP".into(),
+                    server: "imap.example.com".into(),
+                    port: 993,
+                    tls: true,
+                    sync_mode: "every 2 min".into(),
+                },
+                "#3b5bdb".into(),
+            )
+            .unwrap();
 
         let msg_id = store
             .upsert_fetched_message(
@@ -7689,6 +7834,9 @@ mod tests {
                 None,
             )
             .unwrap();
-        assert!(store.list_messages_missing_bodies(acct.id).unwrap().is_empty());
+        assert!(store
+            .list_messages_missing_bodies(acct.id)
+            .unwrap()
+            .is_empty());
     }
 }

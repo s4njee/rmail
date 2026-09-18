@@ -447,7 +447,9 @@ export class QuillCalendarDataSource implements CalendarDataSource {
   }
 
   async saveReminder(_draft: ReminderDraft): Promise<Reminder> {
-    throw new Error("Multiple calendar reminders are not supported by Quill yet");
+    throw new Error(
+      "Multiple calendar reminders are not supported by Quill yet",
+    );
   }
 
   async deleteReminder(_id: string): Promise<void> {
@@ -533,7 +535,9 @@ export class QuillCalendarDataSource implements CalendarDataSource {
   }
 
   async setDefaultAlerts(_alerts: DefaultAlerts): Promise<void> {
-    throw new Error("Default calendar alerts are not configurable in Quill yet");
+    throw new Error(
+      "Default calendar alerts are not configurable in Quill yet",
+    );
   }
 
   async search(query: string): Promise<SearchResults> {

@@ -165,7 +165,11 @@ pub fn smtp_host_for(imap_host: &str) -> String {
     let h = imap_host.to_lowercase();
     if h.contains("gmail") {
         "smtp.gmail.com".into()
-    } else if h.contains("outlook") || h.contains("hotmail") || h.contains("office365") || h.contains("live") {
+    } else if h.contains("outlook")
+        || h.contains("hotmail")
+        || h.contains("office365")
+        || h.contains("live")
+    {
         "smtp.office365.com".into()
     } else if h.contains("yahoo") {
         "smtp.mail.yahoo.com".into()

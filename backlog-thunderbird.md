@@ -3,7 +3,7 @@
 This backlog answers one question: **what has to be true before a Thunderbird user can move to
 Quill and stay moved?**
 
-It is deliberately separate from [backlog.md](backlog.md), which is the *trust* backlog — sync
+It is deliberately separate from [backlog.md](backlog.md), which is the _trust_ backlog — sync
 correctness, security, release engineering, accessibility. That work makes Quill safe to ship.
 It does not make Quill a Thunderbird replacement, because none of it addresses the features a
 Thunderbird user reaches for in the first hour and finds missing. Both backlogs must land;
@@ -47,24 +47,24 @@ Quill can replace Thunderbird when that user can:
 
 Verified against the tree at `1c2a91d`, not against the status checkboxes in the other documents.
 
-| Thunderbird capability | Quill today |
-| --- | --- |
-| Nested per-account folder tree | **Present (T0.1).** `folders` table + `FolderKind::Custom`; sidebar renders unified specials plus a per-account nested tree. Live 500-folder timing still open. |
-| Custom folders | **Reachable (T0.1).** Unknown kinds are `Custom` and keep their server name; discovery no longer drops them onto Inbox. |
-| Message list sorting / columns / grouping | **Absent.** `MessageQuery` (`types.rs:430`) is `folder / account_id / offset / limit / threaded` — no sort key, direction, or filter. No column code in `MessageList.tsx`. |
-| Quick filter bar | Absent. |
-| Tags / IMAP keywords | **Absent** everywhere; `MessageRow` (`types.rs:315`) has no tags, size, or priority. |
-| Address book | **Absent as an entity.** Only `ContactSuggestion` (autocomplete over mail history) and `ContactGroup` (`types.rs:151`, `:163`). No contact records, vCard, CardDAV, or LDAP. |
-| HTML compose + spellcheck | **Absent.** `OutgoingMessage.body_html` (`types.rs:449`) exists on the wire but nothing produces it; `Composer.tsx` is a plain `<textarea>` with no formatting or dictionary. |
-| POP3 | **Absent.** The string appears only in `autodiscover.rs`; there is no POP transport. |
-| Local Folders (server-less account) | Absent. Every message row requires an `account_id` bound to a real server. |
-| Thunderbird profile import | **Partial and unsafe at scale.** `quill_mail::import` handles `.eml`/mbox into one chosen account+folder; `parse_mbox` (`import.rs:13`) takes `&str`, so it reads the entire archive into memory. No hierarchy, no address book, no filters, no cancel. |
-| Junk filtering | Folder mapping and mark-as-junk only; no adaptive/Bayesian classifier, junk score, or scam heuristics. |
-| OpenPGP / S/MIME | Absent (`backlog.md` P2 defers it as "gated on a crypto stack"). |
-| NNTP, RSS/Atom feeds, chat | Absent. |
-| Localisation | Absent — no string externalisation anywhere in `src/`. |
+| Thunderbird capability                    | Quill today                                                                                                                                                                                                                                             |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Nested per-account folder tree            | **Present (T0.1).** `folders` table + `FolderKind::Custom`; sidebar renders unified specials plus a per-account nested tree. Live 500-folder timing still open.                                                                                         |
+| Custom folders                            | **Reachable (T0.1).** Unknown kinds are `Custom` and keep their server name; discovery no longer drops them onto Inbox.                                                                                                                                 |
+| Message list sorting / columns / grouping | **Absent.** `MessageQuery` (`types.rs:430`) is `folder / account_id / offset / limit / threaded` — no sort key, direction, or filter. No column code in `MessageList.tsx`.                                                                              |
+| Quick filter bar                          | Absent.                                                                                                                                                                                                                                                 |
+| Tags / IMAP keywords                      | **Absent** everywhere; `MessageRow` (`types.rs:315`) has no tags, size, or priority.                                                                                                                                                                    |
+| Address book                              | **Absent as an entity.** Only `ContactSuggestion` (autocomplete over mail history) and `ContactGroup` (`types.rs:151`, `:163`). No contact records, vCard, CardDAV, or LDAP.                                                                            |
+| HTML compose + spellcheck                 | **Absent.** `OutgoingMessage.body_html` (`types.rs:449`) exists on the wire but nothing produces it; `Composer.tsx` is a plain `<textarea>` with no formatting or dictionary.                                                                           |
+| POP3                                      | **Absent.** The string appears only in `autodiscover.rs`; there is no POP transport.                                                                                                                                                                    |
+| Local Folders (server-less account)       | Absent. Every message row requires an `account_id` bound to a real server.                                                                                                                                                                              |
+| Thunderbird profile import                | **Partial and unsafe at scale.** `quill_mail::import` handles `.eml`/mbox into one chosen account+folder; `parse_mbox` (`import.rs:13`) takes `&str`, so it reads the entire archive into memory. No hierarchy, no address book, no filters, no cancel. |
+| Junk filtering                            | Folder mapping and mark-as-junk only; no adaptive/Bayesian classifier, junk score, or scam heuristics.                                                                                                                                                  |
+| OpenPGP / S/MIME                          | Absent (`backlog.md` P2 defers it as "gated on a crypto stack").                                                                                                                                                                                        |
+| NNTP, RSS/Atom feeds, chat                | Absent.                                                                                                                                                                                                                                                 |
+| Localisation                              | Absent — no string externalisation anywhere in `src/`.                                                                                                                                                                                                  |
 
-Everything else Thunderbird users depend on that Quill *does* have — multi-account IMAP/SMTP,
+Everything else Thunderbird users depend on that Quill _does_ have — multi-account IMAP/SMTP,
 threading, search with operators, saved searches, rules, signatures and identities, snooze/send
 later, undo, calendar with CalDAV and invitations, notifications, printing, dark mode — is real
 code and should not be re-litigated here.
@@ -75,7 +75,7 @@ code and should not be re-litigated here.
 
 ### T0.1 Make the folder tree real
 
-The single largest gap. A Thunderbird user's organisation *is* their folder tree, and Quill
+The single largest gap. A Thunderbird user's organisation _is_ their folder tree, and Quill
 currently cannot display one.
 
 - [x] Replace the hardcoded `folders()` array with a persisted folder table keyed by account,
@@ -95,8 +95,8 @@ currently cannot display one.
       actions, and the bulk action bar.
 - [ ] Verify a mailbox with 500+ folders nested five deep opens, scrolls, and syncs within the
       `backlog.md` P0.7 performance budgets.
-      *(Store list + 5-deep parent walk is covered by `five_hundred_folders_list_in_one_pass`;
-      a release-build UI/sync timing pass against a real 500-folder mailbox is still open.)*
+      _(Store list + 5-deep parent walk is covered by `five_hundred_folders_list_in_one_pass`;
+      a release-build UI/sync timing pass against a real 500-folder mailbox is still open.)_
 
 **Exit:** A migrated user sees their whole hierarchy, opens any folder, and reorganises it from
 Quill without touching another client.

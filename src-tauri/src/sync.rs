@@ -316,11 +316,7 @@ pub async fn flush_due_scheduled(app: &AppHandle) {
         return;
     }
     for (id, account_id, _send_at, payload) in due {
-        let Some(account) = store
-            .accounts()
-            .into_iter()
-            .find(|a| a.id == account_id)
-        else {
+        let Some(account) = store.accounts().into_iter().find(|a| a.id == account_id) else {
             let _ = store.cancel_scheduled(id);
             continue;
         };
@@ -382,7 +378,15 @@ async fn sync_one(app: &AppHandle, account: &Account, replay_actions: bool) {
     });
 
     let store = app.state::<SqliteStore>();
-    match sync_account(&store, account, &credential, Some(progress_tx), replay_actions).await {
+    match sync_account(
+        &store,
+        account,
+        &credential,
+        Some(progress_tx),
+        replay_actions,
+    )
+    .await
+    {
         Ok(outcome) => {
             log::info!(
                 "synced account {} ({} folders, {} messages)",

@@ -189,7 +189,9 @@ export function Sidebar() {
             },
           ]),
       {
-        label: folder.favourite ? "Remove from favourites" : "Add to favourites",
+        label: folder.favourite
+          ? "Remove from favourites"
+          : "Add to favourites",
         onSelect: () =>
           void setFolderFavourite(folder.id, !folder.favourite).then(
             refreshMail,
@@ -376,187 +378,193 @@ export function Sidebar() {
           </Show>
 
           <Show when={!jump().trim()}>
-          <h2 class="sidebar__label">Unified</h2>
-          <nav class="sidebar__folders" aria-label="Folders">
-            <For each={unifiedFolders(folders())}>
-              {(folder) => {
-                const count = () => folderCount(folder, false);
-                return (
-                  <button
-                    type="button"
-                    class="sidebar__row"
-                    classList={{ "is-selected": isFolderActive(folder.id) }}
-                    aria-current={isFolderActive(folder.id) ? "true" : undefined}
-                    onClick={() => selectFolder(folder.id)}
-                    onDragOver={(e) => handleFolderDragOver(folder, e)}
-                    onDrop={(e) => handleFolderDrop(folder, e)}
-                  >
-                    <span class="sidebar__dot" aria-hidden="true" />
-                    <span class="sidebar__row-text">{folder.name}</span>
-                    <Show when={count()}>
-                      {(c) => (
-                        <span
-                          class="sidebar__count tabular"
-                          classList={{ "is-unread": c().unread }}
-                        >
-                          {c().text}
-                        </span>
-                      )}
-                    </Show>
-                  </button>
-                );
-              }}
-            </For>
-          </nav>
-
-          <Show when={favourites(folders()).length > 0}>
-            <h2 class="sidebar__label sidebar__label--accounts">Favourites</h2>
-            <nav class="sidebar__folders" aria-label="Favourite folders">
-              <For each={favourites(folders())}>
-                {(folder) => (
-                  <button
-                    type="button"
-                    class="sidebar__row"
-                    classList={{ "is-selected": isFolderActive(folder.id) }}
-                    onClick={() => selectFolder(folder.id)}
-                    onDragOver={(e) => handleFolderDragOver(folder, e)}
-                    onDrop={(e) => handleFolderDrop(folder, e)}
-                    onContextMenu={(e) => openFolderMenu(folder, e)}
-                  >
-                    <span class="sidebar__fav" aria-hidden="true">
-                      ★
-                    </span>
-                    <span class="sidebar__row-text">{folder.path}</span>
-                  </button>
-                )}
-              </For>
-            </nav>
-          </Show>
-
-          <Show when={recentFolders(folders()).length > 0}>
-            <h2 class="sidebar__label sidebar__label--accounts">Recent</h2>
-            <nav class="sidebar__folders" aria-label="Recent folders">
-              <For each={recentFolders(folders())}>
-                {(folder) => (
-                  <button
-                    type="button"
-                    class="sidebar__row"
-                    classList={{ "is-selected": isFolderActive(folder.id) }}
-                    onClick={() => selectFolder(folder.id)}
-                    onDragOver={(e) => handleFolderDragOver(folder, e)}
-                    onDrop={(e) => handleFolderDrop(folder, e)}
-                    onContextMenu={(e) => openFolderMenu(folder, e)}
-                  >
-                    <span class="sidebar__row-text">{folder.path}</span>
-                  </button>
-                )}
-              </For>
-            </nav>
-          </Show>
-
-          {/* P1.3 saved searches — persistent virtual folders. */}
-          <Show when={savedSearches().length > 0}>
-            <h2 class="sidebar__label sidebar__label--accounts">
-              Saved searches
-            </h2>
-            <nav class="sidebar__folders" aria-label="Saved searches">
-              <For each={savedSearches()}>
-                {(s) => (
-                  <div class="sidebar__saved-row">
+            <h2 class="sidebar__label">Unified</h2>
+            <nav class="sidebar__folders" aria-label="Folders">
+              <For each={unifiedFolders(folders())}>
+                {(folder) => {
+                  const count = () => folderCount(folder, false);
+                  return (
                     <button
                       type="button"
-                      class="sidebar__row sidebar__saved-open"
-                      onClick={() => runSearchQuery(s.query)}
-                      title={s.query}
-                    >
-                      <span class="sidebar__row-text">{s.name}</span>
-                    </button>
-                    <button
-                      type="button"
-                      class="sidebar__saved-remove"
-                      aria-label={`Delete saved search ${s.name}`}
-                      onClick={() => {
-                        void deleteSavedSearch(s.id).then(refreshSavedSearches);
-                      }}
-                    >
-                      ×
-                    </button>
-                  </div>
-                )}
-              </For>
-            </nav>
-          </Show>
-
-          {/* P1.1 send-later Outbox — opens the Scheduled list (not a folder). */}
-          <button
-            type="button"
-            class="sidebar__row sidebar__row--scheduled"
-            onClick={() => setScheduledOpen(true)}
-          >
-            <span class="sidebar__dot" aria-hidden="true" />
-            <span class="sidebar__row-text">Scheduled</span>
-          </button>
-
-          <h2 class="sidebar__label sidebar__label--accounts">Accounts</h2>
-          <nav class="sidebar__accounts" aria-label="Accounts">
-            <For each={accounts()}>
-              {(account) => {
-                const expanded = () => accountOpen[account.id] ?? true;
-                const selectedFolderId = () => {
-                  const current = filter();
-                  return current.kind === "folder" ? current.folderId : null;
-                };
-                return (
-                  <div class="sidebar__account-block">
-                    <button
-                      type="button"
-                      class="sidebar__account-row"
-                      classList={{ "is-selected": isAccountActive(account.id) }}
+                      class="sidebar__row"
+                      classList={{ "is-selected": isFolderActive(folder.id) }}
                       aria-current={
-                        isAccountActive(account.id) ? "true" : undefined
+                        isFolderActive(folder.id) ? "true" : undefined
                       }
-                      aria-expanded={expanded()}
-                      onClick={() => {
-                        toggleAccount(account.id);
-                        selectAccount(account.id);
-                      }}
-                      onContextMenu={(e) =>
-                        openAccountFolderMenu(account, e)
-                      }
+                      onClick={() => selectFolder(folder.id)}
+                      onDragOver={(e) => handleFolderDragOver(folder, e)}
+                      onDrop={(e) => handleFolderDrop(folder, e)}
                     >
-                      <span
-                        class="sidebar__twistie"
-                        classList={{ "is-open": expanded() }}
-                        aria-hidden="true"
-                      >
-                        ▸
-                      </span>
-                      <span
-                        class="sidebar__account-dot"
-                        style={{ background: account.color }}
-                        aria-hidden="true"
-                      />
-                      <span class="sidebar__account-address">
-                        {account.address}
-                      </span>
+                      <span class="sidebar__dot" aria-hidden="true" />
+                      <span class="sidebar__row-text">{folder.name}</span>
+                      <Show when={count()}>
+                        {(c) => (
+                          <span
+                            class="sidebar__count tabular"
+                            classList={{ "is-unread": c().unread }}
+                          >
+                            {c().text}
+                          </span>
+                        )}
+                      </Show>
                     </button>
-                    <Show when={expanded()}>
-                      <FolderTree
-                        folders={mailboxFolders(folders())}
-                        accountId={account.id}
-                        selectedId={selectedFolderId()}
-                        onSelect={(f) => selectFolder(f.id)}
-                        onToggle={(f) => void toggleFolder(f)}
-                        onContextMenu={openFolderMenu}
-                        onDragOver={handleFolderDragOver}
-                        onDrop={handleFolderDrop}
-                      />
-                    </Show>
-                  </div>
-                );
-              }}
-            </For>
-          </nav>
+                  );
+                }}
+              </For>
+            </nav>
+
+            <Show when={favourites(folders()).length > 0}>
+              <h2 class="sidebar__label sidebar__label--accounts">
+                Favourites
+              </h2>
+              <nav class="sidebar__folders" aria-label="Favourite folders">
+                <For each={favourites(folders())}>
+                  {(folder) => (
+                    <button
+                      type="button"
+                      class="sidebar__row"
+                      classList={{ "is-selected": isFolderActive(folder.id) }}
+                      onClick={() => selectFolder(folder.id)}
+                      onDragOver={(e) => handleFolderDragOver(folder, e)}
+                      onDrop={(e) => handleFolderDrop(folder, e)}
+                      onContextMenu={(e) => openFolderMenu(folder, e)}
+                    >
+                      <span class="sidebar__fav" aria-hidden="true">
+                        ★
+                      </span>
+                      <span class="sidebar__row-text">{folder.path}</span>
+                    </button>
+                  )}
+                </For>
+              </nav>
+            </Show>
+
+            <Show when={recentFolders(folders()).length > 0}>
+              <h2 class="sidebar__label sidebar__label--accounts">Recent</h2>
+              <nav class="sidebar__folders" aria-label="Recent folders">
+                <For each={recentFolders(folders())}>
+                  {(folder) => (
+                    <button
+                      type="button"
+                      class="sidebar__row"
+                      classList={{ "is-selected": isFolderActive(folder.id) }}
+                      onClick={() => selectFolder(folder.id)}
+                      onDragOver={(e) => handleFolderDragOver(folder, e)}
+                      onDrop={(e) => handleFolderDrop(folder, e)}
+                      onContextMenu={(e) => openFolderMenu(folder, e)}
+                    >
+                      <span class="sidebar__row-text">{folder.path}</span>
+                    </button>
+                  )}
+                </For>
+              </nav>
+            </Show>
+
+            {/* P1.3 saved searches — persistent virtual folders. */}
+            <Show when={savedSearches().length > 0}>
+              <h2 class="sidebar__label sidebar__label--accounts">
+                Saved searches
+              </h2>
+              <nav class="sidebar__folders" aria-label="Saved searches">
+                <For each={savedSearches()}>
+                  {(s) => (
+                    <div class="sidebar__saved-row">
+                      <button
+                        type="button"
+                        class="sidebar__row sidebar__saved-open"
+                        onClick={() => runSearchQuery(s.query)}
+                        title={s.query}
+                      >
+                        <span class="sidebar__row-text">{s.name}</span>
+                      </button>
+                      <button
+                        type="button"
+                        class="sidebar__saved-remove"
+                        aria-label={`Delete saved search ${s.name}`}
+                        onClick={() => {
+                          void deleteSavedSearch(s.id).then(
+                            refreshSavedSearches,
+                          );
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
+                </For>
+              </nav>
+            </Show>
+
+            {/* P1.1 send-later Outbox — opens the Scheduled list (not a folder). */}
+            <button
+              type="button"
+              class="sidebar__row sidebar__row--scheduled"
+              onClick={() => setScheduledOpen(true)}
+            >
+              <span class="sidebar__dot" aria-hidden="true" />
+              <span class="sidebar__row-text">Scheduled</span>
+            </button>
+
+            <h2 class="sidebar__label sidebar__label--accounts">Accounts</h2>
+            <nav class="sidebar__accounts" aria-label="Accounts">
+              <For each={accounts()}>
+                {(account) => {
+                  const expanded = () => accountOpen[account.id] ?? true;
+                  const selectedFolderId = () => {
+                    const current = filter();
+                    return current.kind === "folder" ? current.folderId : null;
+                  };
+                  return (
+                    <div class="sidebar__account-block">
+                      <button
+                        type="button"
+                        class="sidebar__account-row"
+                        classList={{
+                          "is-selected": isAccountActive(account.id),
+                        }}
+                        aria-current={
+                          isAccountActive(account.id) ? "true" : undefined
+                        }
+                        aria-expanded={expanded()}
+                        onClick={() => {
+                          toggleAccount(account.id);
+                          selectAccount(account.id);
+                        }}
+                        onContextMenu={(e) => openAccountFolderMenu(account, e)}
+                      >
+                        <span
+                          class="sidebar__twistie"
+                          classList={{ "is-open": expanded() }}
+                          aria-hidden="true"
+                        >
+                          ▸
+                        </span>
+                        <span
+                          class="sidebar__account-dot"
+                          style={{ background: account.color }}
+                          aria-hidden="true"
+                        />
+                        <span class="sidebar__account-address">
+                          {account.address}
+                        </span>
+                      </button>
+                      <Show when={expanded()}>
+                        <FolderTree
+                          folders={mailboxFolders(folders())}
+                          accountId={account.id}
+                          selectedId={selectedFolderId()}
+                          onSelect={(f) => selectFolder(f.id)}
+                          onToggle={(f) => void toggleFolder(f)}
+                          onContextMenu={openFolderMenu}
+                          onDragOver={handleFolderDragOver}
+                          onDrop={handleFolderDrop}
+                        />
+                      </Show>
+                    </div>
+                  );
+                }}
+              </For>
+            </nav>
           </Show>
         </div>
 

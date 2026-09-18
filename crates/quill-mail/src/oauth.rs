@@ -166,11 +166,9 @@ pub async fn wait_for_code(redirect_uri: &str, state: &str) -> Result<String, St
 /// "you can close this window" page.
 fn capture_code(server: LoopbackServer, state: &str) -> Result<String, String> {
     let server = server.server;
-    let content_type = tiny_http::Header::from_bytes(
-        &b"Content-Type"[..],
-        &b"text/html; charset=utf-8"[..],
-    )
-    .expect("static header");
+    let content_type =
+        tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..])
+            .expect("static header");
     let deadline = std::time::Instant::now() + OAUTH_WAIT_TIMEOUT;
     loop {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -179,17 +177,15 @@ fn capture_code(server: LoopbackServer, state: &str) -> Result<String, String> {
         }
         match server.recv_timeout(remaining) {
             Ok(Some(request)) => {
-                let params: HashMap<String, String> = Url::parse(&format!(
-                    "http://127.0.0.1{}",
-                    request.url()
-                ))
-                .ok()
-                .map(|u| {
-                    u.query_pairs()
-                        .map(|(k, v)| (k.to_string(), v.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
+                let params: HashMap<String, String> =
+                    Url::parse(&format!("http://127.0.0.1{}", request.url()))
+                        .ok()
+                        .map(|u| {
+                            u.query_pairs()
+                                .map(|(k, v)| (k.to_string(), v.to_string()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
                 let _ = request.respond(
                     tiny_http::Response::from_string(CLOSE_WINDOW_HTML)
                         .with_header(content_type.clone()),

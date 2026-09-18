@@ -52,12 +52,8 @@ export const Sidebar: Component<SidebarProps> = (props) => {
         height: "100%",
         display: "flex",
         "flex-direction": "column",
-        background: props.fill
-          ? "transparent"
-          : "var(--al-sidebar, #F4F4F4)",
-        "border-right": props.fill
-          ? "none"
-          : "1px solid var(--al-border, #E0E0E0)",
+        background: props.fill ? "transparent" : "var(--al-sidebar, #F4F4F4)",
+        "border-right": props.fill ? "none" : "1px solid var(--al-border, #E0E0E0)",
         "font-family": "var(--al-font-ui)",
         color: "var(--al-ink, #1A1A1A)",
         "user-select": "none",

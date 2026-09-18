@@ -14,34 +14,80 @@ use quill_store::types::{ConnectionIssue, ErrorKind, Service};
 /// right remedy. Substring heuristics over the lowercase message.
 pub fn classify(detail: &str) -> ErrorKind {
     let d = detail.to_lowercase();
-    if contains_any(&d, &[
-        "dns", "couldn't resolve", "nodename nor servname", "getaddrinfo",
-        "name or service not known", "no address associated",
-    ]) {
+    if contains_any(
+        &d,
+        &[
+            "dns",
+            "couldn't resolve",
+            "nodename nor servname",
+            "getaddrinfo",
+            "name or service not known",
+            "no address associated",
+        ],
+    ) {
         ErrorKind::Dns
-    } else if contains_any(&d, &[
-        "rate limit", "429", "too many", "throttl", "try again later",
-    ]) {
+    } else if contains_any(
+        &d,
+        &[
+            "rate limit",
+            "429",
+            "too many",
+            "throttl",
+            "try again later",
+        ],
+    ) {
         ErrorKind::RateLimit
     } else if contains_any(&d, &["timed out", "timeout", "timedout", "deadline"]) {
         ErrorKind::Timeout
-    } else if contains_any(&d, &[
-        "authentication", "login", "xoauth", "credential", "invalid credentials",
-        "unauthorized", "password", "denied", "no such account", "bad username",
-        "auth failed", "could not authenticate", "invalid_grant", "access denied",
-    ]) {
+    } else if contains_any(
+        &d,
+        &[
+            "authentication",
+            "login",
+            "xoauth",
+            "credential",
+            "invalid credentials",
+            "unauthorized",
+            "password",
+            "denied",
+            "no such account",
+            "bad username",
+            "auth failed",
+            "could not authenticate",
+            "invalid_grant",
+            "access denied",
+        ],
+    ) {
         ErrorKind::Auth
-    } else if contains_any(&d, &[
-        "tls", "certificate", "cert", "handshake", "ssl", "identity", "security",
-        "webpki", "unknown issuer",
-    ]) {
+    } else if contains_any(
+        &d,
+        &[
+            "tls",
+            "certificate",
+            "cert",
+            "handshake",
+            "ssl",
+            "identity",
+            "security",
+            "webpki",
+            "unknown issuer",
+        ],
+    ) {
         ErrorKind::Tls
     } else if contains_any(&d, &["offline", "network is unreachable", "not connected"]) {
         ErrorKind::Offline
-    } else if contains_any(&d, &[
-        "refused", "unreachable", "no route", "connection reset", "broken pipe",
-        "connection aborted", "connect ",
-    ]) {
+    } else if contains_any(
+        &d,
+        &[
+            "refused",
+            "unreachable",
+            "no route",
+            "connection reset",
+            "broken pipe",
+            "connection aborted",
+            "connect ",
+        ],
+    ) {
         ErrorKind::Connect
     } else {
         // Greetings, protocol violations, and anything unclassified land here.
@@ -96,14 +142,23 @@ mod tests {
 
     #[test]
     fn classifies_error_kinds() {
-        assert_eq!(classify("couldn't resolve imap.example.com"), ErrorKind::Dns);
-        assert_eq!(classify("getaddrinfo: nodename nor servname"), ErrorKind::Dns);
+        assert_eq!(
+            classify("couldn't resolve imap.example.com"),
+            ErrorKind::Dns
+        );
+        assert_eq!(
+            classify("getaddrinfo: nodename nor servname"),
+            ErrorKind::Dns
+        );
         assert_eq!(
             classify("connection timed out after 5s"),
             ErrorKind::Timeout
         );
         assert_eq!(classify("login for a@b.com: Login denied"), ErrorKind::Auth);
-        assert_eq!(classify("xoauth2 auth failed: invalid_grant"), ErrorKind::Auth);
+        assert_eq!(
+            classify("xoauth2 auth failed: invalid_grant"),
+            ErrorKind::Auth
+        );
         assert_eq!(classify("invalid credentials"), ErrorKind::Auth);
         assert_eq!(
             classify("TLS error: certificate verify failed"),
@@ -113,14 +168,20 @@ mod tests {
             classify("handshake failure: received fatal alert"),
             ErrorKind::Tls
         );
-        assert_eq!(classify("too many requests — rate limited"), ErrorKind::RateLimit);
+        assert_eq!(
+            classify("too many requests — rate limited"),
+            ErrorKind::RateLimit
+        );
         assert_eq!(
             classify("connection refused: tcp connect"),
             ErrorKind::Connect
         );
         assert_eq!(classify("no route to host"), ErrorKind::Connect);
         assert_eq!(classify("network is unreachable"), ErrorKind::Offline);
-        assert_eq!(classify("greeting: unexpected response"), ErrorKind::Protocol);
+        assert_eq!(
+            classify("greeting: unexpected response"),
+            ErrorKind::Protocol
+        );
         assert_eq!(classify("something else entirely"), ErrorKind::Protocol);
     }
 
@@ -128,11 +189,11 @@ mod tests {
     fn issues_format_actionably() {
         let i = issue(Service::Imap, "imap.gmail.com", "Login denied");
         assert_eq!(i.kind, ErrorKind::Auth);
-        assert_eq!(
-            fmt_issue(&i),
-            "IMAP (imap.gmail.com): Login denied"
-        );
+        assert_eq!(fmt_issue(&i), "IMAP (imap.gmail.com): Login denied");
         let with_help = with_help(i, "Create an app password first.");
-        assert_eq!(with_help.help.as_deref(), Some("Create an app password first."));
+        assert_eq!(
+            with_help.help.as_deref(),
+            Some("Create an app password first.")
+        );
     }
 }

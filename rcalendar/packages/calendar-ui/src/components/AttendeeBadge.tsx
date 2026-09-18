@@ -4,9 +4,7 @@ import { AttendeeSummary } from "../headless/attendees";
 /** A compact "✓ 2/3" attendee-acceptance pill shown on event blocks. */
 export const AttendeeBadge: Component<{ summary: AttendeeSummary }> = (props) => {
   const label = () =>
-    props.summary.total > 0
-      ? `✓ ${props.summary.accepted}/${props.summary.total}`
-      : "";
+    props.summary.total > 0 ? `✓ ${props.summary.accepted}/${props.summary.total}` : "";
   return (
     <Show when={props.summary.total > 0}>
       <span

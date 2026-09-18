@@ -70,7 +70,14 @@ export function CalendarView() {
   const initialView: ViewMode = (() => {
     try {
       const v = localStorage.getItem("quill_calendar_view");
-      const modes: ViewMode[] = ["Month", "Week", "3-day", "Day", "Agenda", "Year"];
+      const modes: ViewMode[] = [
+        "Month",
+        "Week",
+        "3-day",
+        "Day",
+        "Agenda",
+        "Year",
+      ];
       return modes.includes(v as ViewMode) ? (v as ViewMode) : "Month";
     } catch {
       return "Month";

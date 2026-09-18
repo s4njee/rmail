@@ -222,7 +222,9 @@
 
 .sidebar__row--tree {
   width: 100%;
-  padding-left: calc(var(--space-8px) + var(--tree-depth, 0) * var(--space-12px));
+  padding-left: calc(
+    var(--space-8px) + var(--tree-depth, 0) * var(--space-12px)
+  );
 }
 
 .sidebar__row.is-unsubscribed {

@@ -160,10 +160,10 @@ pub async fn sync_google_calendar_api(
 
     // 2. Fetch each calendar's expanded events (±1 year) and write to the store.
     let now = chrono::Utc::now();
-    let time_min = (now - chrono::Duration::days(365))
-        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let time_max = (now + chrono::Duration::days(365))
-        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let time_min =
+        (now - chrono::Duration::days(365)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let time_max =
+        (now + chrono::Duration::days(365)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
     // 3. Skip calendars the user has removed (their local events were deleted
     //    and the source is excluded so a re-sync doesn't bring them back).
@@ -203,17 +203,18 @@ pub async fn sync_google_calendar_api(
             .await
             .map_err(|e| format!("Failed to read response: {e}"))?;
 
-        let items =
-            calendar_core::sync::google_model::parse_gcal_events_json(&json_text, uuid::Uuid::nil());
+        let items = calendar_core::sync::google_model::parse_gcal_events_json(
+            &json_text,
+            uuid::Uuid::nil(),
+        );
         for ev in items {
             if ev.deleted_at.is_some() {
                 continue;
             }
             let start_ms = ev.starts_at.timestamp_millis();
-            if let Some(existing_idx) = existing
-                .iter()
-                .position(|e| e.account_id == account_id && e.title == ev.title && e.start_ms == start_ms)
-            {
+            if let Some(existing_idx) = existing.iter().position(|e| {
+                e.account_id == account_id && e.title == ev.title && e.start_ms == start_ms
+            }) {
                 // Backfill the source tag on re-sync — previously-synced events
                 // (migration 14 predates source tagging) carry no source and
                 // would otherwise never appear under their calendar.
@@ -269,7 +270,10 @@ pub async fn sync_ms365_calendar_api(
         .map_err(|e| format!("Microsoft Graph API request failed: {}", e))?;
 
     if !res.status().is_success() {
-        return Err(format!("Microsoft Graph API returned status {}", res.status()));
+        return Err(format!(
+            "Microsoft Graph API returned status {}",
+            res.status()
+        ));
     }
 
     let json: serde_json::Value = res
@@ -283,15 +287,45 @@ pub async fn sync_ms365_calendar_api(
 
     if let Some(events) = items {
         for ev in events {
-            let title = ev.get("subject").and_then(|s| s.as_str()).unwrap_or("Untitled Event").to_string();
-            let notes = ev.get("bodyPreview").and_then(|s| s.as_str()).map(str::to_string);
-            let location = ev.get("location").and_then(|l| l.get("displayName")).and_then(|d| d.as_str()).map(str::to_string);
-            let all_day = ev.get("isAllDay").and_then(|a| a.as_bool()).unwrap_or(false);
+            let title = ev
+                .get("subject")
+                .and_then(|s| s.as_str())
+                .unwrap_or("Untitled Event")
+                .to_string();
+            let notes = ev
+                .get("bodyPreview")
+                .and_then(|s| s.as_str())
+                .map(str::to_string);
+            let location = ev
+                .get("location")
+                .and_then(|l| l.get("displayName"))
+                .and_then(|d| d.as_str())
+                .map(str::to_string);
+            let all_day = ev
+                .get("isAllDay")
+                .and_then(|a| a.as_bool())
+                .unwrap_or(false);
 
-            let start_str = ev.get("start").and_then(|s| s.get("dateTime")).and_then(|d| d.as_str()).unwrap_or("");
-            let end_str = ev.get("end").and_then(|s| s.get("dateTime")).and_then(|d| d.as_str()).unwrap_or("");
-            let start_tz = ev.get("start").and_then(|s| s.get("timeZone")).and_then(|t| t.as_str()).unwrap_or("UTC");
-            let end_tz = ev.get("end").and_then(|s| s.get("timeZone")).and_then(|t| t.as_str()).unwrap_or("UTC");
+            let start_str = ev
+                .get("start")
+                .and_then(|s| s.get("dateTime"))
+                .and_then(|d| d.as_str())
+                .unwrap_or("");
+            let end_str = ev
+                .get("end")
+                .and_then(|s| s.get("dateTime"))
+                .and_then(|d| d.as_str())
+                .unwrap_or("");
+            let start_tz = ev
+                .get("start")
+                .and_then(|s| s.get("timeZone"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("UTC");
+            let end_tz = ev
+                .get("end")
+                .and_then(|s| s.get("timeZone"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("UTC");
 
             // Graph returns offsetless dateTimes plus a separate timeZone. The
             // previous code fell back to `Utc::now()` on the parse failure,
@@ -349,7 +383,10 @@ fn parse_graph_datetime(dt_str: &str, tz: &str) -> Option<i64> {
         return Some(naive.and_utc().timestamp_millis());
     }
     let tz: chrono_tz::Tz = tz.parse().ok()?;
-    naive.and_local_timezone(tz).earliest().map(|d| d.timestamp_millis())
+    naive
+        .and_local_timezone(tz)
+        .earliest()
+        .map(|d| d.timestamp_millis())
 }
 
 #[cfg(test)]

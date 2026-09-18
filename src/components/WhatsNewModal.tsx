@@ -8,7 +8,10 @@ import "./WhatsNewModal.css";
 export function WhatsNewModal(props: { version: string; onClose: () => void }) {
   const notes = () => notesFor(props.version) ?? [];
   return (
-    <Modal title={`What's new in Quill ${props.version}`} onClose={props.onClose}>
+    <Modal
+      title={`What's new in Quill ${props.version}`}
+      onClose={props.onClose}
+    >
       <ul class="whats-new__list">
         <For each={notes()}>
           {(note) => <li class="whats-new__item">{note}</li>}

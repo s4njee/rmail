@@ -1,10 +1,22 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
-import { loadEvents, removeEvent, saveEvent, useSelectedEvent } from "../../lib/calendar";
+import {
+  loadEvents,
+  removeEvent,
+  saveEvent,
+  useSelectedEvent,
+} from "../../lib/calendar";
 import { duplicateEvent } from "../../lib/tauri";
 import { detectVideoCall, getMapUrl } from "../../lib/videoCall";
 import "./EventDetail.css";
 
-const EVENT_COLORS = ["#3b5bdb", "#0f766e", "#b4451f", "#e8590c", "#7048e8", "#e03131"];
+const EVENT_COLORS = [
+  "#3b5bdb",
+  "#0f766e",
+  "#b4451f",
+  "#e8590c",
+  "#7048e8",
+  "#e03131",
+];
 
 function formatRange(startMs: number, endMs: number): string {
   const start = new Date(startMs);

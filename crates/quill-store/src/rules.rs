@@ -58,8 +58,7 @@ pub fn evaluate_condition(
             check_text_match(&cond.operator, &row.subject, val)
         }
         RuleField::HasAttachment => {
-            let has = row.has_attachments
-                || detail.is_some_and(|d| !d.attachments.is_empty());
+            let has = row.has_attachments || detail.is_some_and(|d| !d.attachments.is_empty());
             let want = cond.value.trim().eq_ignore_ascii_case("true")
                 || cond.value.trim().eq_ignore_ascii_case("yes")
                 || cond.value.trim() == "1";
@@ -128,11 +127,7 @@ fn wildcard_match(text: &str, pattern: &str) -> bool {
 }
 
 /// Evaluates whether a single rule matches a message.
-pub fn matches_rule(
-    rule: &MailRule,
-    message: &MessageRow,
-    detail: Option<&MessageDetail>,
-) -> bool {
+pub fn matches_rule(rule: &MailRule, message: &MessageRow, detail: Option<&MessageDetail>) -> bool {
     if !rule.enabled || rule.conditions.is_empty() {
         return false;
     }
@@ -324,11 +319,7 @@ pub fn parse_sieve(script: &str) -> Result<Vec<MailRule>, String> {
     Ok(rules)
 }
 
-fn parse_sieve_block(
-    lines: &[String],
-    custom_name: &str,
-    rule_index: usize,
-) -> Option<MailRule> {
+fn parse_sieve_block(lines: &[String], custom_name: &str, rule_index: usize) -> Option<MailRule> {
     if lines.is_empty() {
         return None;
     }

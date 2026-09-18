@@ -27,16 +27,17 @@ pub fn build_message(account: &Account, outgoing: &OutgoingMessage) -> Result<Me
         .parse()
         .map_err(|e| format!("invalid from address: {e}"))?;
     let from = lettre::message::Mailbox::new(
-        outgoing
-            .from_name
-            .clone()
-            .filter(|n| !n.trim().is_empty()),
+        outgoing.from_name.clone().filter(|n| !n.trim().is_empty()),
         addr,
     );
 
     let mut builder = Message::builder().from(from).subject(&outgoing.subject);
 
-    if let Some(reply_to_str) = outgoing.reply_to.as_deref().filter(|r| !r.trim().is_empty()) {
+    if let Some(reply_to_str) = outgoing
+        .reply_to
+        .as_deref()
+        .filter(|r| !r.trim().is_empty())
+    {
         let reply_to: lettre::message::Mailbox = reply_to_str
             .parse()
             .map_err(|e| format!("invalid reply-to address {reply_to_str}: {e}"))?;
@@ -72,7 +73,11 @@ pub fn build_message(account: &Account, outgoing: &OutgoingMessage) -> Result<Me
         builder = builder.header(References::from(references.clone()));
     }
 
-    let has_html = outgoing.body_html.as_deref().map(|h| !h.trim().is_empty()).unwrap_or(false);
+    let has_html = outgoing
+        .body_html
+        .as_deref()
+        .map(|h| !h.trim().is_empty())
+        .unwrap_or(false);
 
     if outgoing.attachments.is_empty() {
         if has_html {
@@ -80,7 +85,9 @@ pub fn build_message(account: &Account, outgoing: &OutgoingMessage) -> Result<Me
             let alt = MultiPart::alternative()
                 .singlepart(SinglePart::plain(outgoing.body.clone()))
                 .singlepart(SinglePart::html(html_body.to_string()));
-            builder.multipart(alt).map_err(|e| format!("build alternative body: {e}"))
+            builder
+                .multipart(alt)
+                .map_err(|e| format!("build alternative body: {e}"))
         } else {
             builder
                 .body(outgoing.body.clone())
@@ -261,7 +268,9 @@ mod tests {
             bcc: vec![],
             subject: "Support Request Resolved".into(),
             body: "Your issue is resolved.\n-- \nJane Support Team".into(),
-            body_html: Some("<p>Your issue is resolved.</p><br>-- <br><b>Jane Support Team</b>".into()),
+            body_html: Some(
+                "<p>Your issue is resolved.</p><br>-- <br><b>Jane Support Team</b>".into(),
+            ),
             in_reply_to: None,
             references: None,
             attachments: vec![],
@@ -274,7 +283,10 @@ mod tests {
 
         assert!(formatted.contains("support@customdomain.com"));
         assert!(formatted.contains("Jane Support"));
-        assert!(formatted.contains("Reply-To: replies@customdomain.com") || formatted.contains("replies@customdomain.com"));
+        assert!(
+            formatted.contains("Reply-To: replies@customdomain.com")
+                || formatted.contains("replies@customdomain.com")
+        );
         assert!(formatted.contains("To: client@example.com"));
         assert!(formatted.contains("Subject: Support Request Resolved"));
         assert!(formatted.contains("Your issue is resolved."));

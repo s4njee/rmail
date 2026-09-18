@@ -405,7 +405,10 @@ mod tests {
         let s = decode_rfc2047(
             "=?UTF-8?Q?=F0=9F=9A=98_Sanjee,_Drive_Confidently_?= =?UTF-8?Q?with_FREE_Duralast_Brake_Pads?=",
         );
-        assert_eq!(s, "🚘 Sanjee, Drive Confidently with FREE Duralast Brake Pads");
+        assert_eq!(
+            s,
+            "🚘 Sanjee, Drive Confidently with FREE Duralast Brake Pads"
+        );
     }
 
     #[test]
@@ -426,7 +429,10 @@ mod tests {
 
     #[test]
     fn rfc2047_leaves_plain_and_malformed_text_alone() {
-        assert_eq!(decode_rfc2047("Just a normal subject"), "Just a normal subject");
+        assert_eq!(
+            decode_rfc2047("Just a normal subject"),
+            "Just a normal subject"
+        );
         // A bare "=?" that isn't a well-formed encoded-word is left intact.
         assert_eq!(decode_rfc2047("a =?not-well-formed"), "a =?not-well-formed");
         // Encoded-word followed by plain text.

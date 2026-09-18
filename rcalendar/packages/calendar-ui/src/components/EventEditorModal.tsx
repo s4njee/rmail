@@ -976,9 +976,7 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
                 <span style={{ "font-size": "11px", color: "var(--al-ink-5, #777777)" }}>
                   {inviteeSummary().accepted} accepted · {inviteeSummary().pending} pending ·{" "}
                   {inviteeSummary().declined} declined
-                  {inviteeSummary().tentative > 0
-                    ? ` · ${inviteeSummary().tentative} maybe`
-                    : ""}
+                  {inviteeSummary().tentative > 0 ? ` · ${inviteeSummary().tentative} maybe` : ""}
                 </span>
               </Show>
               <div style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
@@ -990,7 +988,7 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
                         "align-items": "center",
                         gap: "8px",
                         padding: "5px 10px",
-                        "border": "1px solid var(--al-border, #E0E0E0)",
+                        border: "1px solid var(--al-border, #E0E0E0)",
                         "border-radius": "8px",
                         background: "var(--al-accent-tint, #E4EBF8)",
                       }}
@@ -1016,7 +1014,11 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
                           <span style={{ color: "var(--al-accent, #1F6FEB)" }}> · organizer</span>
                         ) : null}
                       </span>
-                      <div style={{ display: "flex", gap: "4px" }} role="group" aria-label="RSVP status">
+                      <div
+                        style={{ display: "flex", gap: "4px" }}
+                        role="group"
+                        aria-label="RSVP status"
+                      >
                         <For
                           each={
                             [
@@ -1106,7 +1108,7 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
                   style={{
                     height: "30px",
                     padding: "0 10px",
-                    "border": "1px solid var(--al-border, #E0E0E0)",
+                    border: "1px solid var(--al-border, #E0E0E0)",
                     "border-radius": "8px",
                     "font-size": "12.5px",
                     width: "130px",
@@ -1130,7 +1132,7 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
                   style={{
                     height: "30px",
                     padding: "0 10px",
-                    "border": "1px solid var(--al-border, #E0E0E0)",
+                    border: "1px solid var(--al-border, #E0E0E0)",
                     "border-radius": "8px",
                     "font-size": "12.5px",
                     flex: 1,
@@ -1142,7 +1144,7 @@ export const EventEditorModal: Component<EventEditorModalProps> = (props) => {
                   style={{
                     height: "30px",
                     padding: "0 12px",
-                    "border": "1px solid var(--al-accent, #1F6FEB)",
+                    border: "1px solid var(--al-accent, #1F6FEB)",
                     "border-radius": "8px",
                     background: "var(--al-accent-tint, #E4EBF8)",
                     color: "var(--al-accent, #1F6FEB)",

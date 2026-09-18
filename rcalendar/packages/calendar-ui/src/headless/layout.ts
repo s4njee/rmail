@@ -156,10 +156,7 @@ export function positionEventsForDay(
 
 /** Event ids whose [start, end) overlaps another timed event on the same day
  * (P1.4 conflict detection). */
-export function findConflictingEventIds(
-  items: OccurrenceItem[],
-  dayDate: Date,
-): Set<string> {
+export function findConflictingEventIds(items: OccurrenceItem[], dayDate: Date): Set<string> {
   const dayStart = new Date(
     dayDate.getFullYear(),
     dayDate.getMonth(),

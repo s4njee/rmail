@@ -23,7 +23,11 @@ export function useContextMenu(): () => ContextMenuState | null {
   return menu;
 }
 
-export function openContextMenu(items: ContextMenuItem[], x: number, y: number): void {
+export function openContextMenu(
+  items: ContextMenuItem[],
+  x: number,
+  y: number,
+): void {
   setMenu({ x, y, items });
 }
 

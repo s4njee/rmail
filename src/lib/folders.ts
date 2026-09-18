@@ -12,10 +12,16 @@ export function mailboxFolders(all: Folder[]): Folder[] {
 }
 
 export function isMailbox(folder: Folder): boolean {
-  return folder.selectable && folder.kind !== "starred" && folder.kind !== "snoozed";
+  return (
+    folder.selectable && folder.kind !== "starred" && folder.kind !== "snoozed"
+  );
 }
 
-export function childrenOf(all: Folder[], parentId: number | null, accountId: number): Folder[] {
+export function childrenOf(
+  all: Folder[],
+  parentId: number | null,
+  accountId: number,
+): Folder[] {
   return all
     .filter(
       (f) =>

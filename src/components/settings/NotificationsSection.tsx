@@ -256,8 +256,9 @@ export function NotificationsSection() {
                     <span class="general-option__title">{acc.address}</span>
                     <span class="general-option__desc">
                       {acc.protocol} ·{" "}
-                      {folders().find((f) => f.kind === "inbox" && f.account_id == null)?.name ??
-                        "Inbox"}
+                      {folders().find(
+                        (f) => f.kind === "inbox" && f.account_id == null,
+                      )?.name ?? "Inbox"}
                     </span>
                   </span>
                 </label>

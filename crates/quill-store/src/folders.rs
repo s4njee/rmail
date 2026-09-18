@@ -68,7 +68,13 @@ pub fn rewrite_prefix(server_name: &str, from: &str, to: &str, delimiter: &str) 
 /// is personal (`""`).
 pub fn infer_namespace(server_name: &str, delimiter: &str) -> String {
     let lower = server_name.to_ascii_lowercase();
-    for known in ["[gmail]", "[google mail]", "other users", "shared folders", "shared"] {
+    for known in [
+        "[gmail]",
+        "[google mail]",
+        "other users",
+        "shared folders",
+        "shared",
+    ] {
         if lower == known || lower.starts_with(&format!("{known}{delimiter}")) {
             let end = known.len().min(server_name.len());
             return server_name[..end].to_string();
@@ -100,12 +106,17 @@ fn leaf_is(name: &str, needles: &[&str]) -> bool {
         .next()
         .unwrap_or(name)
         .to_ascii_lowercase();
-    needles.iter().any(|n| leaf == *n || leaf.starts_with(&format!("{n} ")))
+    needles
+        .iter()
+        .any(|n| leaf == *n || leaf.starts_with(&format!("{n} ")))
 }
 
 /// Classify a mailbox from RFC 6154 SPECIAL-USE attributes and conservative
 /// name heuristics. Unknown names are [`FolderKind::Custom`] — never Inbox.
-pub fn classify_folder_kind(name: &str, attribute_debug: impl Iterator<Item = String>) -> FolderKind {
+pub fn classify_folder_kind(
+    name: &str,
+    attribute_debug: impl Iterator<Item = String>,
+) -> FolderKind {
     for attr in attribute_debug {
         let debug_str = attr.to_ascii_lowercase();
         if debug_str.contains("inbox") {
@@ -141,7 +152,16 @@ pub fn classify_folder_kind(name: &str, attribute_debug: impl Iterator<Item = St
         FolderKind::Sent
     } else if leaf_is(name, &["junk", "spam", "bulk", "junk mail", "bulk mail"]) {
         FolderKind::Junk
-    } else if leaf_is(name, &["trash", "bin", "deleted", "deleted items", "deleted messages"]) {
+    } else if leaf_is(
+        name,
+        &[
+            "trash",
+            "bin",
+            "deleted",
+            "deleted items",
+            "deleted messages",
+        ],
+    ) {
         FolderKind::Trash
     } else if leaf_is(name, &["archive", "all mail"]) {
         FolderKind::Archive

@@ -152,7 +152,7 @@ Milestones M3 and M4 can run in parallel once M2's release train exists. Everyth
 
 - [x] First-run flow: add account → autodetect IMAP/SMTP settings (DNS SRV, Thunderbird ISP
       database format, common-provider table) → initial sync with progress.
-      *(Implemented under backlog P0.2; release-verified pending.)*
+      _(Implemented under backlog P0.2; release-verified pending.)_
 - [ ] Import path: `.ics` for calendar (exists), `.eml`/mbox import for mail.
 - [ ] Demo mode preserved behind a flag for screenshots/dev, unreachable by real users.
 

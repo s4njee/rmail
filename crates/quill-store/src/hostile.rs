@@ -45,10 +45,30 @@ pub fn hostile_mail() -> Vec<(&'static str, String)> {
 pub fn has_active_content(s: &str) -> bool {
     let lower = s.to_lowercase();
     [
-        "<script", "</script", "onerror=", "onload=", "onclick=", "onmouseover=",
-        "onfocus=", "onchange=", "onsubmit=", "onkeydown=", "javascript:", "vbscript:",
-        "data:text/html", "srcdoc=", "<iframe", "<object", "<embed", "<base", "<form",
-        "<input", "<style", "@import", "expression(", "url(javascript:",
+        "<script",
+        "</script",
+        "onerror=",
+        "onload=",
+        "onclick=",
+        "onmouseover=",
+        "onfocus=",
+        "onchange=",
+        "onsubmit=",
+        "onkeydown=",
+        "javascript:",
+        "vbscript:",
+        "data:text/html",
+        "srcdoc=",
+        "<iframe",
+        "<object",
+        "<embed",
+        "<base",
+        "<form",
+        "<input",
+        "<style",
+        "@import",
+        "expression(",
+        "url(javascript:",
     ]
     .iter()
     .any(|needle| lower.contains(needle))

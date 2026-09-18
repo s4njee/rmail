@@ -158,7 +158,10 @@ describe("findConflictingEventIds", () => {
   });
 
   it("ignores all-day events", () => {
-    const allDay = { ...item("x", 9, 10), occurrence: { ...item("x", 9, 10).occurrence, allDay: true } };
+    const allDay = {
+      ...item("x", 9, 10),
+      occurrence: { ...item("x", 9, 10).occurrence, allDay: true },
+    };
     expect(findConflictingEventIds([allDay, item("y", 9, 10)], day).size).toBe(0);
   });
 });

@@ -446,9 +446,7 @@ export const DayView: Component<DayViewProps> = (props) => {
                       height: `${GRID_CONFIG.rowPitch - 1}px`,
                       "border-bottom": "1px solid var(--al-grid-hour, #F2F2F2)",
                       cursor: "pointer",
-                      background: outside
-                        ? "var(--al-outside-hours, #F6F7F9)"
-                        : "transparent",
+                      background: outside ? "var(--al-outside-hours, #F6F7F9)" : "transparent",
                     }}
                   />
                 );
@@ -459,10 +457,8 @@ export const DayView: Component<DayViewProps> = (props) => {
             <For each={dayEvents()}>
               {(pe) => {
                 const cal = () => calendarMap().get(pe.item.event.calendarId);
-                const color = () =>
-                  pe.item.event.color || cal()?.color || "#1F6FEB";
-                const conflicted = () =>
-                  showConflicts() && dayConflicts().has(pe.item.event.id);
+                const color = () => pe.item.event.color || cal()?.color || "#1F6FEB";
+                const conflicted = () => showConflicts() && dayConflicts().has(pe.item.event.id);
                 const tint = () => {
                   const c = color();
                   return c.startsWith("#") ? `${c}1A` : "rgba(31,111,235,0.10)";

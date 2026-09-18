@@ -211,9 +211,7 @@ export const moveFolder = async (
     : undefined;
   const path = parent ? `${parent.path}/${folder.name}` : folder.name;
   mockFolders = mockFolders.map((f) =>
-    f.id === id
-      ? { ...f, parent_id: parentId, path, server_name: path }
-      : f,
+    f.id === id ? { ...f, parent_id: parentId, path, server_name: path } : f,
   );
   return mockFolders.find((f) => f.id === id)!;
 };
@@ -242,9 +240,7 @@ export const setFolderExpanded = async (
   expanded: boolean,
 ): Promise<void> => {
   if (isTauri()) return invoke<void>("set_folder_expanded", { id, expanded });
-  mockFolders = mockFolders.map((f) =>
-    f.id === id ? { ...f, expanded } : f,
-  );
+  mockFolders = mockFolders.map((f) => (f.id === id ? { ...f, expanded } : f));
 };
 
 export const setFolderFavourite = async (
@@ -252,9 +248,7 @@ export const setFolderFavourite = async (
   favourite: boolean,
 ): Promise<void> => {
   if (isTauri()) return invoke<void>("set_folder_favourite", { id, favourite });
-  mockFolders = mockFolders.map((f) =>
-    f.id === id ? { ...f, favourite } : f,
-  );
+  mockFolders = mockFolders.map((f) => (f.id === id ? { ...f, favourite } : f));
 };
 
 export const setFolderViewSettings = async (

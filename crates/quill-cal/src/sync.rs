@@ -66,9 +66,9 @@ pub async fn sync_calendar_collection(
                 let end_ms = cev.ends_at.timestamp_millis();
 
                 // Check if event exists by matching title and start_ms
-                let found = existing
-                    .iter()
-                    .find(|e| e.account_id == account_id && e.title == cev.title && e.start_ms == start_ms);
+                let found = existing.iter().find(|e| {
+                    e.account_id == account_id && e.title == cev.title && e.start_ms == start_ms
+                });
 
                 if let Some(existing_event) = found {
                     // Update existing

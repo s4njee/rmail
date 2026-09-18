@@ -46,9 +46,10 @@ fn handle_deep_link(url: url::Url) {
         // Open the feed in the browser for now — subscribing to a calendar from
         // a webcal: link is a follow-up.
         use tauri_plugin_opener::OpenerExt;
-        let _ = app
-            .opener()
-            .open_url(url.to_string().replace("webcal://", "https://"), None::<&str>);
+        let _ = app.opener().open_url(
+            url.to_string().replace("webcal://", "https://"),
+            None::<&str>,
+        );
         return;
     }
     let _ = app.emit("store", quill_store::types::StoreEvent::Mailto(payload));
@@ -245,9 +246,13 @@ pub fn run() {
                 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
                 let menu = Menu::new(app)
                     .and_then(|m| {
-                        m.append(
-                            &MenuItem::with_id(app, "show", "Show Quill", true, None::<&str>)?,
-                        )?;
+                        m.append(&MenuItem::with_id(
+                            app,
+                            "show",
+                            "Show Quill",
+                            true,
+                            None::<&str>,
+                        )?)?;
                         m.append(&MenuItem::with_id(
                             app,
                             "newmail",
@@ -414,4 +419,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-
