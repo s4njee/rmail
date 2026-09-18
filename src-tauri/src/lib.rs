@@ -358,6 +358,7 @@ pub fn run() {
                     let _ = handle.emit(
                         "store",
                         StoreEvent::Connectivity(ConnectivityUpdate {
+                            account_id: None,
                             state: "synced".to_string(),
                             last_synced_at_ms: now,
                         }),

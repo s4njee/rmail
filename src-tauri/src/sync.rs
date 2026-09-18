@@ -194,6 +194,7 @@ async fn spawn_idle_worker(app: AppHandle, account: Account) {
                 let _ = app.emit(
                     "store",
                     StoreEvent::Connectivity(ConnectivityUpdate {
+                        account_id: Some(account.id),
                         state: "synced".to_string(),
                         last_synced_at_ms: Some(now_ms()),
                     }),
@@ -243,6 +244,7 @@ async fn spawn_idle_worker(app: AppHandle, account: Account) {
                     let _ = app.emit(
                         "store",
                         StoreEvent::Connectivity(ConnectivityUpdate {
+                            account_id: Some(account.id),
                             state: "syncing".to_string(),
                             last_synced_at_ms: None,
                         }),
@@ -258,6 +260,7 @@ async fn spawn_idle_worker(app: AppHandle, account: Account) {
                             let _ = app.emit(
                                 "store",
                                 StoreEvent::Connectivity(ConnectivityUpdate {
+                                    account_id: Some(account.id),
                                     state: "synced".to_string(),
                                     last_synced_at_ms: Some(now_ms()),
                                 }),
@@ -274,6 +277,7 @@ async fn spawn_idle_worker(app: AppHandle, account: Account) {
                 let _ = app.emit(
                     "store",
                     StoreEvent::Connectivity(ConnectivityUpdate {
+                        account_id: Some(account.id),
                         state: "offline".to_string(),
                         last_synced_at_ms: None,
                     }),
@@ -417,6 +421,7 @@ async fn sync_one(app: &AppHandle, account: &Account, replay_actions: bool) {
     let _ = app.emit(
         "store",
         StoreEvent::Connectivity(ConnectivityUpdate {
+            account_id: Some(account.id),
             state: "syncing".to_string(),
             last_synced_at_ms: None,
         }),
@@ -461,6 +466,7 @@ async fn sync_one(app: &AppHandle, account: &Account, replay_actions: bool) {
             let _ = app.emit(
                 "store",
                 StoreEvent::Connectivity(ConnectivityUpdate {
+                    account_id: Some(account.id),
                     state: "synced".to_string(),
                     last_synced_at_ms: Some(now_ms()),
                 }),
@@ -468,9 +474,11 @@ async fn sync_one(app: &AppHandle, account: &Account, replay_actions: bool) {
         }
         Err(e) => {
             log::warn!("sync account {} failed: {e}", account.id);
+            let _ = store.set_account_connected(account.id, false, Some(&e));
             let _ = app.emit(
                 "store",
                 StoreEvent::Connectivity(ConnectivityUpdate {
+                    account_id: Some(account.id),
                     state: "offline".to_string(),
                     last_synced_at_ms: None,
                 }),

@@ -997,6 +997,9 @@ pub struct MailChangedUpdate {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export)]
 pub struct ConnectivityUpdate {
+    /// Account whose state changed; absent only for app-wide/demo updates.
+    #[ts(type = "number | null")]
+    pub account_id: Option<AccountId>,
     /// `"offline"` | `"syncing"` | `"synced"`.
     pub state: String,
     #[ts(type = "number | null")]

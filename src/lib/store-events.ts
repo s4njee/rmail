@@ -13,11 +13,15 @@ import { getFootprint, onStoreEvent } from "./tauri";
 // launch).
 
 const initial: ConnectivityUpdate = {
+  account_id: null,
   state: "offline",
   last_synced_at_ms: null,
 };
 const [connectivity, setConnectivity] =
   createSignal<ConnectivityUpdate>(initial);
+const [accountConnectivity, setAccountConnectivity] = createSignal<
+  Record<number, ConnectivityUpdate>
+>({});
 const [footprintBytes, setFootprintBytes] = createSignal<number>(0);
 const [searchIndex, setSearchIndex] = createSignal<SearchIndexUpdate | null>(
   null,
@@ -26,6 +30,14 @@ const [searchIndex, setSearchIndex] = createSignal<SearchIndexUpdate | null>(
 /** Reactive connectivity state for the status readouts (Epic 4.3 / 11.1). */
 export function useConnectivity(): () => ConnectivityUpdate {
   return connectivity;
+}
+
+/** Latest lifecycle update for each account, for sidebar status badges. */
+export function useAccountConnectivity(): () => Record<
+  number,
+  ConnectivityUpdate
+> {
+  return accountConnectivity;
 }
 
 /** Human text for a connectivity state — `Synced 14:03`, `Offline — synced
@@ -54,6 +66,12 @@ export function initStoreEvents(): void {
   void onStoreEvent((event) => {
     if (event.kind === "connectivity") {
       setConnectivity(event);
+      if (event.account_id != null) {
+        setAccountConnectivity((states) => ({
+          ...states,
+          [event.account_id!]: event,
+        }));
+      }
       // A sync cycle finished or connection state changed: refresh folder and
       // account counts so the sidebar and account rows reflect it. Mid-sync
       // progress arrives as `mailChanged` and only touches the message list.
