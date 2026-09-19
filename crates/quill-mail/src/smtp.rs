@@ -280,10 +280,10 @@ pub async fn send_email(
             let creds = Credentials::new(username.clone(), password.clone());
             let smtp_host = &account.smtp_server;
             let mailer = match account.smtp_security.as_str() {
-                "ssl" => AsyncSmtpTransport::<Tokio1Executor>::relay(&smtp_host)
+                "ssl" => AsyncSmtpTransport::<Tokio1Executor>::relay(smtp_host)
                     .map_err(|e| format!("smtp relay {smtp_host}: {e}"))?
                     .port(account.smtp_port),
-                "starttls" => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&smtp_host)
+                "starttls" => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(smtp_host)
                     .map_err(|e| format!("smtp relay {smtp_host}: {e}"))?
                     .port(account.smtp_port),
                 "plain" => {

@@ -4670,9 +4670,7 @@ impl SqliteStore {
         if let Some((Some(server), _, _)) = row.as_ref() {
             return Some(server.clone());
         }
-        let Some((_, address, protocol)) = row else {
-            return None;
-        };
+        let (_, address, protocol) = row?;
         let lower = address.to_ascii_lowercase();
         if lower.ends_with("@gmail.com") || lower.ends_with("@googlemail.com") {
             Some("[Gmail]/Spam".into())
