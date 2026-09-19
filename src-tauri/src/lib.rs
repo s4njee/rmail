@@ -192,6 +192,7 @@ pub fn run() {
             commands::sync_account_now,
             commands::discover_caldav,
             commands::get_oauth_init,
+            commands::oauth_available_providers,
             commands::exchange_oauth_code,
             commands::wait_oauth_code,
             commands::reauthorize_account,

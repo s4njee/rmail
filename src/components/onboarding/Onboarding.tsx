@@ -16,6 +16,8 @@ import {
   exchangeOAuthCode,
   getOAuthInit,
   listProviderPresets,
+  oauthAvailableProviders,
+  type OAuthProviderId,
   onStoreEvent,
   removeCalendarSource,
   setSyncedFolders,
@@ -43,8 +45,18 @@ type OAuthSession = {
   clientId: string;
 };
 
-function authBadge(p: ProviderPreset): string {
-  if (p.auth === "oauth") return "Sign in with browser";
+function oauthProviderOf(p: ProviderPreset): OAuthProviderId {
+  return p.oauth_provider === "microsoft365" ? "microsoft365" : "google";
+}
+
+function authBadge(p: ProviderPreset, oauthAvailable: boolean): string {
+  if (p.auth === "oauth") {
+    if (oauthAvailable) return "Sign in with browser";
+    // Gmail still works with an app password; Microsoft has no fallback.
+    return oauthProviderOf(p) === "google"
+      ? "App password"
+      : "Not available in this build";
+  }
   if (p.auth === "app_password") return "App password";
   return "Password";
 }
@@ -94,6 +106,11 @@ export function Onboarding(props: { onDone: () => void }) {
   const [oauthCode, setOauthCode] = createSignal("");
   const [showPaste, setShowPaste] = createSignal(false);
   const [usingGmailAppPassword, setUsingGmailAppPassword] = createSignal(false);
+  const [oauthAvailable, setOauthAvailable] = createSignal<
+    ReadonlySet<OAuthProviderId>
+  >(new Set());
+  const browserSignIn = (p: ProviderPreset) =>
+    p.auth === "oauth" && oauthAvailable().has(oauthProviderOf(p));
 
   // Created account + what to sync
   const [account, setAccount] = createSignal<Account | null>(null);
@@ -115,8 +132,16 @@ export function Onboarding(props: { onDone: () => void }) {
   const gotoProvider = () => {
     setStep("provider");
     if (presets().length === 0) {
-      void listProviderPresets()
-        .then(setPresets)
+      // Availability loads first so no provider briefly offers a sign-in
+      // this build can't complete.
+      void Promise.all([
+        oauthAvailableProviders().catch(() => [] as OAuthProviderId[]),
+        listProviderPresets(),
+      ])
+        .then(([available, list]) => {
+          setOauthAvailable(new Set(available));
+          setPresets(list);
+        })
         .catch((e) => setError(String(e)));
     }
   };
@@ -191,9 +216,17 @@ export function Onboarding(props: { onDone: () => void }) {
     setUsingGmailAppPassword(false);
     setError("");
     if (p.auth === "oauth") {
-      void startOAuth(
-        p.oauth_provider === "microsoft365" ? "microsoft365" : "google",
-      );
+      if (browserSignIn(p)) {
+        void startOAuth(oauthProviderOf(p));
+      } else if (oauthProviderOf(p) === "google") {
+        useGmailAppPassword();
+      } else {
+        setError(
+          "Signing in with Microsoft isn't available in this build of Quill. " +
+            "Microsoft no longer accepts passwords for Outlook.com or Microsoft 365 mail, " +
+            "so these accounts need browser sign-in.",
+        );
+      }
     } else {
       setServer(p.imap.host);
       setPort(p.imap.port);
@@ -533,7 +566,9 @@ export function Onboarding(props: { onDone: () => void }) {
                   onClick={() => choosePreset(p)}
                 >
                   <span class="onboarding__provider-name">{p.name}</span>
-                  <span class="onboarding__provider-badge">{authBadge(p)}</span>
+                  <span class="onboarding__provider-badge">
+                    {authBadge(p, browserSignIn(p))}
+                  </span>
                 </button>
               )}
             </For>

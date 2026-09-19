@@ -1376,6 +1376,61 @@ pub async fn discover_caldav(
         .collect())
 }
 
+fn parse_oauth_provider(provider_str: &str) -> Result<quill_mail::oauth::OAuthProvider, String> {
+    match provider_str.to_lowercase().as_str() {
+        "google" => Ok(quill_mail::oauth::OAuthProvider::Google),
+        "microsoft" | "microsoft365" | "outlook" => {
+            Ok(quill_mail::oauth::OAuthProvider::Microsoft365)
+        }
+        other => Err(format!("unsupported OAuth provider: {other}")),
+    }
+}
+
+/// Resolve the OAuth client for a sign-in: an ID from the Advanced form wins,
+/// otherwise the client embedded in this build (or the debug config file).
+/// Returns `(client_id, client_secret)`.
+fn resolve_oauth_client(
+    provider_str: &str,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+) -> Result<(String, Option<String>), String> {
+    let client_id = client_id.filter(|id| !id.trim().is_empty());
+    let client_secret = client_secret.filter(|secret| !secret.trim().is_empty());
+    let configured = crate::oauth_config::configured(provider_str);
+    let c_id = client_id
+        .clone()
+        .or_else(|| {
+            configured
+                .as_ref()
+                .and_then(|config| config.client_id.clone())
+        })
+        .ok_or_else(|| {
+            log::warn!(
+                "OAuth sign-in for {provider_str} attempted without a client; build with \
+                 QUILL_*_OAUTH_CLIENT_ID or add oauth-config.json (see docs/oauth-setup.md)"
+            );
+            crate::oauth_config::not_configured_message(provider_str)
+        })?;
+    // Only fall back to the configured secret when the configured ID is the
+    // one in use — never pair a custom ID with the build's secret.
+    let secret = if client_id.is_some() {
+        client_secret
+    } else {
+        client_secret.or_else(|| configured.and_then(|config| config.client_secret))
+    };
+    Ok((c_id, secret))
+}
+
+/// Providers whose browser sign-in works in this build (`"google"`,
+/// `"microsoft365"`), so onboarding only offers sign-in that will succeed.
+#[tauri::command]
+pub fn oauth_available_providers() -> Vec<String> {
+    crate::oauth_config::available_providers()
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
 /// Start an OAuth2 authorization code with PKCE flow (Roadmap 3.1).
 #[tauri::command]
 pub fn get_oauth_init(
@@ -1383,11 +1438,13 @@ pub fn get_oauth_init(
     client_id: Option<String>,
     redirect_uri: Option<String>,
 ) -> Result<OAuthInitPayload, String> {
-    let provider = match provider_str.to_lowercase().as_str() {
-        "google" => quill_mail::oauth::OAuthProvider::Google,
-        "microsoft" | "microsoft365" | "outlook" => quill_mail::oauth::OAuthProvider::Microsoft365,
-        other => return Err(format!("unsupported OAuth provider: {other}")),
-    };
+    let provider = parse_oauth_provider(&provider_str)?;
+
+    // A caller-supplied ID is an Advanced escape hatch. Normal sign-in uses
+    // the production client embedded by the release build (or debug config).
+    // Resolved before binding the loopback so a missing client doesn't leave
+    // a listener holding the port.
+    let (c_id, _) = resolve_oauth_client(&provider_str, client_id, None)?;
 
     let (verifier, challenge) = quill_mail::oauth::generate_pkce_challenge();
     // Loopback redirect without a path: Google's Desktop-app (native) client
@@ -1398,18 +1455,6 @@ pub fn get_oauth_init(
     let r_uri = redirect_uri.unwrap_or_else(|| {
         quill_mail::oauth::bind_loopback().unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
     });
-    // A caller-supplied ID is an Advanced escape hatch. Normal sign-in uses
-    // the production client embedded by the release build (or debug config).
-    let c_id = client_id
-        .or_else(|| {
-            crate::oauth_config::configured(&provider_str)
-                .and_then(|config| config.client_id)
-        })
-        .ok_or_else(|| {
-            format!(
-                "no OAuth client is configured for {provider_str}; build with the corresponding QUILL_*_OAUTH_CLIENT_ID"
-            )
-        })?;
 
     let state = uuid::Uuid::new_v4().to_string();
     let auth_url = quill_mail::oauth::build_auth_url(provider, &c_id, &r_uri, &challenge, &state)?;
@@ -1434,24 +1479,9 @@ pub async fn exchange_oauth_code(
     client_id: Option<String>,
     client_secret: Option<String>,
 ) -> Result<Account, String> {
-    let provider = match provider_str.to_lowercase().as_str() {
-        "google" => quill_mail::oauth::OAuthProvider::Google,
-        "microsoft" | "microsoft365" | "outlook" => quill_mail::oauth::OAuthProvider::Microsoft365,
-        other => return Err(format!("unsupported OAuth provider: {other}")),
-    };
+    let provider = parse_oauth_provider(&provider_str)?;
 
-    let configured_client = crate::oauth_config::configured(&provider_str);
-    let c_id = client_id
-        .or_else(|| configured_client.as_ref().and_then(|config| config.client_id.clone()))
-        .ok_or_else(|| {
-            format!(
-                "no OAuth client is configured for {provider_str}; build with the corresponding QUILL_*_OAUTH_CLIENT_ID"
-            )
-        })?;
-    // The secret may come from the Advanced form or configured client; persist
-    // whichever was actually used so token refresh has it later.
-    let secret =
-        client_secret.or_else(|| configured_client.and_then(|config| config.client_secret));
+    let (c_id, secret) = resolve_oauth_client(&provider_str, client_id, client_secret)?;
 
     let tokens = quill_mail::oauth::exchange_code_for_tokens(
         provider,
@@ -1463,10 +1493,13 @@ pub async fn exchange_oauth_code(
     )
     .await?;
 
-    let address = tokens.email.clone().unwrap_or_else(|| match provider {
-        quill_mail::oauth::OAuthProvider::Google => "user@gmail.com".into(),
-        quill_mail::oauth::OAuthProvider::Microsoft365 => "user@outlook.com".into(),
-    });
+    // The address is the IMAP/SMTP login for XOAUTH2, so a guessed one would
+    // produce an account that can never authenticate.
+    let address = tokens.email.clone().ok_or_else(|| {
+        "Signed in, but the provider didn't say which email address the account uses. \
+         Try again, or connect the account manually."
+            .to_string()
+    })?;
 
     quill_mail::oauth_store::save_oauth_tokens(&address, provider, &tokens)?;
     // Persist the client ID/secret so the sync engine can refresh tokens later.
@@ -1542,22 +1575,9 @@ pub async fn reauthorize_account(
         .find(|a| a.id == account_id)
         .ok_or_else(|| format!("account {account_id} not found"))?;
 
-    let provider = match provider_str.to_lowercase().as_str() {
-        "google" => quill_mail::oauth::OAuthProvider::Google,
-        "microsoft" | "microsoft365" | "outlook" => quill_mail::oauth::OAuthProvider::Microsoft365,
-        other => return Err(format!("unsupported OAuth provider: {other}")),
-    };
+    let provider = parse_oauth_provider(&provider_str)?;
 
-    let configured_client = crate::oauth_config::configured(&provider_str);
-    let c_id = client_id
-        .or_else(|| configured_client.as_ref().and_then(|config| config.client_id.clone()))
-        .ok_or_else(|| {
-            format!(
-                "no OAuth client is configured for {provider_str}; build with the corresponding QUILL_*_OAUTH_CLIENT_ID"
-            )
-        })?;
-    let secret =
-        client_secret.or_else(|| configured_client.and_then(|config| config.client_secret));
+    let (c_id, secret) = resolve_oauth_client(&provider_str, client_id, client_secret)?;
 
     let tokens = quill_mail::oauth::exchange_code_for_tokens(
         provider,
@@ -1568,6 +1588,18 @@ pub async fn reauthorize_account(
         secret.as_deref(),
     )
     .await?;
+
+    // Signing in to a different account in the browser would store its tokens
+    // under this account's address, and every later login would fail.
+    if let Some(signed_in) = tokens.email.as_deref() {
+        if !signed_in.eq_ignore_ascii_case(&account.address) {
+            return Err(format!(
+                "You signed in as {signed_in}, but this account is {}. \
+                 Sign in with {} to reconnect it.",
+                account.address, account.address
+            ));
+        }
+    }
 
     // Same address — only the auth material changes; the account row and its
     // local data are left alone.
@@ -1926,4 +1958,42 @@ pub fn query_free_busy(
         end_ms,
         slot_duration_minutes.unwrap_or(30),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_oauth_client_never_borrows_the_build_secret() {
+        let (id, secret) = resolve_oauth_client("google", Some("custom-id".into()), None).unwrap();
+        assert_eq!(id, "custom-id");
+        assert_eq!(secret, None);
+
+        let (id, secret) = resolve_oauth_client(
+            "google",
+            Some("custom-id".into()),
+            Some("custom-secret".into()),
+        )
+        .unwrap();
+        assert_eq!(id, "custom-id");
+        assert_eq!(secret.as_deref(), Some("custom-secret"));
+    }
+
+    #[test]
+    fn blank_advanced_fields_count_as_absent() {
+        // Whitespace from the Advanced form falls through to the build config
+        // (absent in tests) and yields the user-facing message.
+        if crate::oauth_config::configured("microsoft365").is_none() {
+            let err = resolve_oauth_client("microsoft365", Some("  ".into()), None).unwrap_err();
+            assert!(err.contains("isn't available in this build"), "{err}");
+        }
+    }
+
+    #[test]
+    fn oauth_provider_aliases() {
+        assert!(parse_oauth_provider("Google").is_ok());
+        assert!(parse_oauth_provider("outlook").is_ok());
+        assert!(parse_oauth_provider("yahoo").is_err());
+    }
 }

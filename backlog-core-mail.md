@@ -192,10 +192,20 @@ provider.
 - [x] Hide client-ID/secret fields under "Advanced".
 - [x] Guard token refresh against concurrent refreshes.
 
+- [x] Offer browser sign-in only when this build carries a client: Gmail falls back to the
+      app-password route, and Microsoft explains why it's unavailable (`oauth_available_providers`).
+- [x] Take the account address from `preferred_username`/`upn` when Microsoft omits `email`, and
+      refuse to create an account under a guessed address.
+- [x] Reconnecting an account refuses a sign-in as a different address.
+- [x] Release CI passes the three `QUILL_*_OAUTH_*` secrets; registration steps are in
+      [docs/oauth-setup.md](docs/oauth-setup.md).
+- [ ] Microsoft 365 calendar sync uses the Outlook IMAP token against Microsoft Graph; it needs a
+      second, Graph-scoped token.
+
 > **Blockers:** Registering production clients and initiating Google's verification require access
 > to the project's Google Cloud and Microsoft Entra tenants, plus a product/legal owner to confirm
-> the restricted-scope assessment. The build-time configuration is ready, but no production IDs or
-> verification case can be created from this checkout.
+> the restricted-scope assessment. The code and build wiring are ready; follow
+> `docs/oauth-setup.md` to create the clients.
 
 ### C1.2 Gmail as Gmail
 

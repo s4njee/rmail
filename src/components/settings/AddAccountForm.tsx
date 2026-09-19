@@ -1,4 +1,4 @@
-import { createSignal, For, Show, untrack } from "solid-js";
+import { createResource, createSignal, For, Show, untrack } from "solid-js";
 import type { Account } from "../../lib/ipc/Account";
 import type { ConnectionIssue } from "../../lib/ipc/ConnectionIssue";
 import type { ConnectionTestReport } from "../../lib/ipc/ConnectionTestReport";
@@ -8,6 +8,8 @@ import {
   discoverSettings,
   exchangeOAuthCode,
   getOAuthInit,
+  oauthAvailableProviders,
+  type OAuthProviderId,
   testConnectionSettings,
   updateAccount,
   waitOAuthCode,
@@ -122,6 +124,13 @@ export function AddAccountForm(props: {
   const [showOauthAdvanced, setShowOauthAdvanced] = createSignal(false);
   const [oauthClientIdUsed, setOauthClientIdUsed] = createSignal("");
   const [oauthWaiting, setOauthWaiting] = createSignal(false);
+  const [oauthAvailable] = createResource(
+    () => oauthAvailableProviders().catch(() => [] as OAuthProviderId[]),
+    { initialValue: [] },
+  );
+  // A client ID typed under Advanced makes either provider usable.
+  const canSignIn = (provider: OAuthProviderId) =>
+    oauthAvailable().includes(provider) || oauthClientId().trim() !== "";
 
   // Autodiscover the address's domain and prefill the manual fields (create
   // mode only — editing an existing account must not change its servers).
@@ -364,7 +373,7 @@ export function AddAccountForm(props: {
                     type="button"
                     class="btn btn--secondary add-oauth-btn"
                     onClick={() => void startOAuth("google")}
-                    disabled={oauthWaiting()}
+                    disabled={oauthWaiting() || !canSignIn("google")}
                   >
                     Sign in with Google
                   </button>
@@ -372,11 +381,27 @@ export function AddAccountForm(props: {
                     type="button"
                     class="btn btn--secondary add-oauth-btn"
                     onClick={() => void startOAuth("microsoft365")}
-                    disabled={oauthWaiting()}
+                    disabled={oauthWaiting() || !canSignIn("microsoft365")}
                   >
                     Sign in with Microsoft 365
                   </button>
                 </div>
+                <Show
+                  when={
+                    !oauthAvailable.loading &&
+                    (!canSignIn("google") || !canSignIn("microsoft365"))
+                  }
+                >
+                  <p class="add-oauth-hint">
+                    {!canSignIn("google") && !canSignIn("microsoft365")
+                      ? "Browser sign-in isn't available in this build of Quill."
+                      : !canSignIn("google")
+                        ? "Google sign-in isn't available in this build of Quill."
+                        : "Microsoft sign-in isn't available in this build of Quill."}
+                    {!canSignIn("google") &&
+                      " Connect Gmail below with an app password: turn on 2-Step Verification, then create one in Google Account → Security → App passwords."}
+                  </p>
+                </Show>
                 <button
                   type="button"
                   class="btn btn--secondary"

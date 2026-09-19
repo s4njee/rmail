@@ -108,6 +108,31 @@ pub fn configured(provider: &str) -> Option<OAuthClientConfig> {
     build_config(provider)
 }
 
+/// Providers whose browser sign-in works in this build, as the IPC provider
+/// strings the frontend passes to `get_oauth_init`. The UI uses this to offer
+/// "Sign in with …" only when it will work, and to route Gmail to the
+/// app-password path otherwise.
+pub fn available_providers() -> Vec<&'static str> {
+    ["google", "microsoft365"]
+        .into_iter()
+        .filter(|provider| configured(provider).is_some())
+        .collect()
+}
+
+/// The error shown when sign-in is attempted without a configured client.
+/// Written for the person signing in, not for the developer building Quill.
+pub fn not_configured_message(provider: &str) -> String {
+    match provider_key(provider) {
+        Some("google") => "Signing in with Google isn't available in this build of Quill. \
+                           Connect Gmail with an app password instead."
+            .to_string(),
+        Some("microsoft") => {
+            "Signing in with Microsoft isn't available in this build of Quill.".to_string()
+        }
+        _ => format!("Browser sign-in isn't available for {provider}."),
+    }
+}
+
 fn parse_config(raw: &str, provider: &str) -> Option<OAuthClientConfig> {
     let key = provider_key(provider)?;
     let file: OAuthConfigFile = serde_json::from_str(raw).ok()?;

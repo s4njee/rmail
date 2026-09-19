@@ -977,6 +977,16 @@ export const discoverCalDav = async (
 };
 
 // OAuth2 PKCE Sign-in (Roadmap 3.1)
+export type OAuthProviderId = "google" | "microsoft365";
+
+/** Providers whose browser sign-in is built into this copy of Quill. */
+export const oauthAvailableProviders = async (): Promise<OAuthProviderId[]> => {
+  if (isTauri()) {
+    return invoke<OAuthProviderId[]>("oauth_available_providers");
+  }
+  return ["google", "microsoft365"];
+};
+
 export const getOAuthInit = async (
   provider: "google" | "microsoft365",
   clientId?: string,
