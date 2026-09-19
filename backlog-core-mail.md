@@ -248,8 +248,10 @@ provider.
 
 ### C1.5 Data layer that stays fast at 250k messages
 
-- [ ] External-content FTS keyed by rowid; re-index only when subject/sender/recipients/body change
-      (not on flag changes).
+- [x] Key the message FTS index by rowid (= `messages.id`), so trigger deletes are O(log n)
+      instead of a full index scan. This took `quill-store`'s test suite from ~16 min to ~7 s.
+- [ ] Re-index only when subject/sender/recipients/body change, not on flag changes (the update
+      trigger still re-indexes on every column change, now cheaply).
 - [x] Add indexes on `recipients(message_id)`, `attachments(message_id)`,
       `messages(account_id, folder, uid)`, `messages(message_id_header)`.
 - [ ] WAL, `synchronous=NORMAL`, `busy_timeout`; separate read connection(s) from the single

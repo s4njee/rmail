@@ -259,7 +259,7 @@ fn rollup_folder_counts(folders: &mut [Folder]) {
 }
 
 /// Forward-only migrations, indexed by target `user_version`.
-const MIGRATIONS: [&str; 31] = [
+const MIGRATIONS: [&str; 32] = [
     r#"
 CREATE TABLE accounts (
   id INTEGER PRIMARY KEY,
@@ -635,6 +635,53 @@ CREATE INDEX IF NOT EXISTS idx_recipients_message_id ON recipients(message_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_message_id ON attachments(message_id);
 CREATE INDEX IF NOT EXISTS idx_messages_account_folder_uid ON messages(account_id, folder, uid);
 CREATE INDEX IF NOT EXISTS idx_messages_message_id_header ON messages(message_id_header);
+"#,
+    // C1.5: key the message search index by rowid = messages.id. The
+    // `message_id` column is UNINDEXED, so `DELETE … WHERE message_id = ?`
+    // scanned the whole index: every expunge, and every flag change (the
+    // update trigger re-indexes), cost O(mailbox). Rowid lookups are O(log n).
+    // Self-contained transaction and idempotent, so a crash before the
+    // version stamp simply re-runs it.
+    r#"
+BEGIN;
+DROP TRIGGER IF EXISTS trg_messages_ai;
+DROP TRIGGER IF EXISTS trg_messages_ad;
+DROP TRIGGER IF EXISTS trg_messages_au;
+DROP TRIGGER IF EXISTS trg_bodies_ai;
+
+DELETE FROM messages_fts;
+INSERT INTO messages_fts(rowid, message_id, subject, sender, recipients, body)
+SELECT m.id, m.id, m.subject, m.sender_name || ' ' || m.sender_address,
+       COALESCE((SELECT GROUP_CONCAT(name || ' ' || address, ' ') FROM recipients WHERE message_id = m.id), ''),
+       COALESCE((SELECT plain FROM bodies WHERE message_id = m.id), m.snippet)
+FROM messages m;
+
+CREATE TRIGGER trg_messages_ai AFTER INSERT ON messages BEGIN
+  INSERT INTO messages_fts(rowid, message_id, subject, sender, recipients, body)
+  VALUES (new.id, new.id, new.subject, new.sender_name || ' ' || new.sender_address, '', new.snippet);
+END;
+
+CREATE TRIGGER trg_messages_ad AFTER DELETE ON messages BEGIN
+  DELETE FROM messages_fts WHERE rowid = old.id;
+END;
+
+CREATE TRIGGER trg_messages_au AFTER UPDATE ON messages BEGIN
+  DELETE FROM messages_fts WHERE rowid = old.id;
+  INSERT INTO messages_fts(rowid, message_id, subject, sender, recipients, body)
+  SELECT new.id, new.id, new.subject, new.sender_name || ' ' || new.sender_address,
+         COALESCE((SELECT GROUP_CONCAT(name || ' ' || address, ' ') FROM recipients WHERE message_id = new.id), ''),
+         COALESCE((SELECT plain FROM bodies WHERE message_id = new.id), new.snippet);
+END;
+
+CREATE TRIGGER trg_bodies_ai AFTER INSERT ON bodies BEGIN
+  DELETE FROM messages_fts WHERE rowid = new.message_id;
+  INSERT INTO messages_fts(rowid, message_id, subject, sender, recipients, body)
+  SELECT m.id, m.id, m.subject, m.sender_name || ' ' || m.sender_address,
+         COALESCE((SELECT GROUP_CONCAT(name || ' ' || address, ' ') FROM recipients WHERE message_id = m.id), ''),
+         new.plain
+  FROM messages m WHERE m.id = new.message_id;
+END;
+COMMIT;
 "#,
 ];
 
@@ -3172,8 +3219,8 @@ impl SqliteStore {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch(
             "DELETE FROM messages_fts; \
-             INSERT INTO messages_fts(message_id, subject, sender, recipients, body) \
-             SELECT m.id, m.subject, m.sender_name || ' ' || m.sender_address, \
+             INSERT INTO messages_fts(rowid, message_id, subject, sender, recipients, body) \
+             SELECT m.id, m.id, m.subject, m.sender_name || ' ' || m.sender_address, \
                     COALESCE((SELECT GROUP_CONCAT(name || ' ' || address, ' ') FROM recipients WHERE message_id = m.id), ''), \
                     COALESCE((SELECT plain FROM bodies WHERE message_id = m.id), m.snippet) \
              FROM messages m; \
@@ -3239,8 +3286,8 @@ impl SqliteStore {
             let inserted = conn
                 .execute(
                     &format!(
-                        "INSERT INTO messages_fts(message_id, subject, sender, recipients, body) \
-                         SELECT m.id, m.subject, m.sender_name || ' ' || m.sender_address, \
+                        "INSERT INTO messages_fts(rowid, message_id, subject, sender, recipients, body) \
+                         SELECT m.id, m.id, m.subject, m.sender_name || ' ' || m.sender_address, \
                                 COALESCE((SELECT GROUP_CONCAT(name || ' ' || address, ' ') FROM recipients WHERE message_id = m.id), ''), \
                                 COALESCE((SELECT plain FROM bodies WHERE message_id = m.id), m.snippet) \
                          FROM messages m WHERE m.id IN ({placeholders})"
@@ -8205,6 +8252,73 @@ mod tests {
             threaded: false,
         });
         assert!(page.items.iter().any(|r| r.subject == "Subject 2"));
+    }
+
+    #[test]
+    fn search_index_is_keyed_by_message_rowid_and_tracks_deletes() {
+        let store = seeded();
+        let conn = store.conn.lock().unwrap();
+        let mismatched: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE rowid != message_id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(mismatched, 0);
+        let (messages, indexed): (i64, i64) = conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM messages), (SELECT COUNT(*) FROM messages_fts)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(messages > 0);
+        assert_eq!(messages, indexed);
+
+        let id: i64 = conn
+            .query_row("SELECT MIN(id) FROM messages", [], |r| r.get(0))
+            .unwrap();
+        conn.execute(
+            "UPDATE messages SET unread = 1 - unread WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+        let rows_for_id: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE rowid = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            rows_for_id, 1,
+            "an update re-indexes in place, never duplicates"
+        );
+
+        conn.execute("DELETE FROM messages WHERE id = ?1", [id])
+            .unwrap();
+        let after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM messages_fts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(after, indexed - 1);
+    }
+
+    #[test]
+    fn rowid_search_index_migration_is_rerunnable() {
+        let store = seeded();
+        let conn = store.conn.lock().unwrap();
+        // A crash between the migration's COMMIT and the version stamp re-runs it.
+        conn.execute_batch(MIGRATIONS[MIGRATIONS.len() - 1])
+            .unwrap();
+        let (messages, indexed): (i64, i64) = conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM messages), (SELECT COUNT(*) FROM messages_fts)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(messages, indexed);
     }
 
     #[test]
