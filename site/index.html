@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quill Mail — a fast, private desktop mail client</title>
+    <meta
+      name="description"
+      content="Quill is a fast, local-first desktop mail and calendar client for Gmail, Outlook, iCloud and any IMAP account. Your mail stays on your computer."
+    />
+    <link rel="icon" type="image/png" href="icon.png" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="site-header">
+        <a class="brand" href="./">
+          <img src="icon.png" alt="" width="32" height="32" />
+          Quill
+        </a>
+        <nav class="site-nav" aria-label="Site">
+          <a class="nav-wide" href="#privacy">How your data flows</a>
+          <a href="privacy.html">Privacy</a>
+          <a href="https://github.com/s4njee/rmail">GitHub</a>
+        </nav>
+      </header>
+    </div>
+
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <span class="pill">Early preview · macOS</span>
+          <h1>Your mail, fast and on your own computer.</h1>
+          <p class="lede">
+            Quill is a desktop mail and calendar client for Gmail, Outlook,
+            iCloud, Fastmail, and any IMAP account. It has no servers of its
+            own: your mail travels straight between your computer and your
+            provider.
+          </p>
+          <div class="actions">
+            <a
+              class="button button--primary"
+              href="https://github.com/s4njee/rmail"
+              >Get Quill on GitHub</a
+            >
+            <a class="button" href="privacy.html">Read the privacy policy</a>
+          </div>
+          <p class="note">Free and open source under the MIT license.</p>
+        </div>
+        <div class="wrap">
+          <figure class="shot">
+            <img
+              src="screenshots/mail-inbox.png"
+              alt="Quill's three-pane window: folders and accounts on the left, a unified inbox in the middle, and the reading pane on the right."
+              width="2560"
+              height="1640"
+            />
+          </figure>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="features">
+        <div class="wrap">
+          <h2 id="features">A calm, quick place to do your mail</h2>
+          <p>
+            A native app is faster than a browser tab and a lot lighter than a
+            traditional desktop suite.
+          </p>
+          <div class="grid">
+            <article class="card">
+              <h3>Every account, one inbox</h3>
+              <p>
+                Gmail, Microsoft 365, iCloud, Fastmail, and standard IMAP side
+                by side, with replies sent from the address the mail came to.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Works offline</h3>
+              <p>
+                Read, search, archive, and write without a connection. Changes
+                queue up and sync when you're back online, and you can undo
+                them.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Private by default</h3>
+              <p>
+                Remote images, including tracking pixels, stay blocked until you
+                allow them, per message or per sender. Links show where they
+                really go before they open.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Instant search</h3>
+              <p>
+                Search runs on your computer, with operators like
+                <code>from:</code>, <code>has:attachment</code>, and
+                <code>before:</code>, plus saved searches.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Keyboard first</h3>
+              <p>
+                <kbd>j</kbd> <kbd>k</kbd> to move, <kbd>e</kbd> to archive,
+                <kbd>r</kbd> to reply, <kbd>/</kbd> to search. Press
+                <kbd>?</kbd> for the rest.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Snooze, send later, undo send</h3>
+              <p>
+                Push mail to later, schedule replies, and take back a message in
+                the seconds after you hit Send.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="privacy">
+        <div class="wrap">
+          <h2 id="privacy">How your data flows</h2>
+          <p>
+            Quill signs in to your provider and syncs your mail and calendar to
+            your computer. Nothing passes through the Quill developers.
+          </p>
+          <ul class="data-flow">
+            <li>
+              <strong>Google accounts.</strong> With your permission, Quill uses
+              Gmail's IMAP and SMTP access to show, organize, and send your
+              mail, and Google Calendar to show and edit your events. That data
+              is stored only on your computer.
+            </li>
+            <li>
+              <strong>Microsoft accounts.</strong> Quill uses Outlook's IMAP and
+              SMTP access to show, organize, and send your mail, stored the same
+              way.
+            </li>
+            <li>
+              <strong>Your sign-in.</strong> Passwords and sign-in tokens are
+              kept in your operating system's keychain, never in Quill's files
+              or backups.
+            </li>
+            <li>
+              <strong>No ads, no selling, no training.</strong> Your mail is
+              never used for advertising, never sold, and never used to train AI
+              models. The <a href="privacy.html">privacy policy</a> has the
+              details.
+            </li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <span>Quill Mail · MIT license</span>
+        <nav aria-label="Footer">
+          <a href="privacy.html">Privacy policy</a>
+          <a href="terms.html">Terms of use</a>
+          <a href="https://github.com/s4njee/rmail">Source code</a>
+          <a href="https://github.com/s4njee/rmail/issues"
+            >Contact &amp; support</a
+          >
+        </nav>
+      </div>
+    </footer>
+  </body>
+</html>

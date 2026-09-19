@@ -9,8 +9,11 @@ import {
   deleteMessage,
   getSettings,
   latestDraft,
+  loadAttachmentForForward,
+  cancelScheduled,
   saveDraft,
   scheduleSend,
+  sendOutboxNow,
   sendMessage,
 } from "./tauri";
 
@@ -42,7 +45,9 @@ export type ComposerDraft = {
   bcc: string[];
   subject: string;
   body: string;
-  bodyHtml: string | null;
+  htmlSignature: string | null;
+  plainSignature: string | null;
+  signaturePlacement: "above_quote" | "bottom" | null;
   inReplyTo: string | null;
   references: string | null;
   originalMessageId: number | null;
@@ -54,6 +59,7 @@ export type ComposerDraft = {
 
 export type PendingSend = {
   id: string;
+  outboxId: number;
   outgoing: OutgoingMessage;
   draftSnapshot: {
     draft: ComposerDraft;
@@ -120,15 +126,20 @@ export async function openNewComposer(
   const identity = resolveIdentity(settings, accountId);
 
   let initialBody = "";
-  let initialBodyHtml: string | null = null;
+  let htmlSignature: string | null = null;
+  let plainSignature: string | null = null;
+  let signaturePlacement: "above_quote" | "bottom" | null = null;
 
   if (identity?.signature && identity.signature.includeInNewMail) {
     if (identity.signature.plainText) {
       initialBody = `\n\n${identity.signature.plainText}`;
+      plainSignature = identity.signature.plainText;
     }
     if (identity.signature.html) {
-      initialBodyHtml = `<p><br></p>${identity.signature.html}`;
+      htmlSignature = identity.signature.html;
     }
+    signaturePlacement =
+      identity.signature.replyPlacement === "bottom" ? "bottom" : "above_quote";
   }
 
   setDraft({
@@ -143,7 +154,9 @@ export async function openNewComposer(
     bcc: [],
     subject: "",
     body: initialBody,
-    bodyHtml: initialBodyHtml,
+    htmlSignature,
+    plainSignature,
+    signaturePlacement,
     inReplyTo: null,
     references: null,
     originalMessageId: null,
@@ -161,11 +174,44 @@ export async function openComposer(
   detail: MessageDetail,
 ): Promise<void> {
   const original = detail.row;
+  let forwardedAttachments: ComposerAttachment[] = [];
+  let forwardAttachmentError = "";
+  if (intent === "forward" && detail.attachments.length > 0) {
+    const loaded = await Promise.allSettled(
+      detail.attachments.map((attachment) =>
+        loadAttachmentForForward(attachment.id),
+      ),
+    );
+    forwardedAttachments = loaded.flatMap((result, index) =>
+      result.status === "fulfilled"
+        ? [
+            {
+              name: result.value.filename,
+              size: detail.attachments[index].size_bytes,
+              type: result.value.content_type,
+              dataBase64: result.value.data_base64,
+            },
+          ]
+        : [],
+    );
+    if (forwardedAttachments.length !== detail.attachments.length) {
+      forwardAttachmentError =
+        "One or more attachments are unavailable offline. Reconnect and open the message before forwarding.";
+    }
+  }
   const accounts = useAccounts()();
   const myAccount = accounts.find((a) => a.id === original.account_id);
   const myAddress = (myAccount?.address || "").toLowerCase();
 
   const settings = await getSettings();
+  const myAddresses = new Set(
+    [
+      myAddress,
+      ...(settings.identities || []).map((identity) => identity.email),
+    ]
+      .map((address) => address.trim().toLowerCase())
+      .filter(Boolean),
+  );
   // P1.2: if the original was addressed to one of our aliases, reply from
   // that alias (its signature included) instead of the account default.
   const addressedIdentity =
@@ -186,7 +232,7 @@ export async function openComposer(
   } else if (intent === "replyAll") {
     const rawTo = [original.sender_address, ...detail.to.map((r) => r.address)];
     to = rawTo
-      .filter((addr) => addr.toLowerCase() !== myAddress)
+      .filter((addr) => !myAddresses.has(addr.trim().toLowerCase()))
       .filter(
         (a, i, arr) =>
           arr.findIndex((x) => x.toLowerCase() === a.toLowerCase()) === i,
@@ -200,7 +246,7 @@ export async function openComposer(
       .map((r) => r.address)
       .filter(
         (addr) =>
-          addr.toLowerCase() !== myAddress &&
+          !myAddresses.has(addr.trim().toLowerCase()) &&
           !to.some((t) => t.toLowerCase() === addr.toLowerCase()),
       )
       .filter(
@@ -226,13 +272,19 @@ export async function openComposer(
     references = detail.references || detail.message_id_header || null;
   }
 
-  const quote = quotedBody(detail);
+  const quote =
+    intent === "forward" ? forwardedMessageBody(detail) : quotedBody(detail);
   let body = `\n\n${quote}`;
-  let bodyHtml: string | null = null;
+  let htmlSignature: string | null = null;
+  let plainSignature: string | null = null;
+  let signaturePlacement: "above_quote" | "bottom" | null = null;
 
   if (identity?.signature && identity.signature.includeInReplies) {
     const sig = identity.signature;
+    signaturePlacement =
+      sig.replyPlacement === "bottom" ? "bottom" : "above_quote";
     if (sig.plainText) {
+      plainSignature = sig.plainText;
       if (sig.replyPlacement === "bottom") {
         body = `\n\n${quote}\n\n${sig.plainText}`;
       } else {
@@ -240,11 +292,7 @@ export async function openComposer(
       }
     }
     if (sig.html) {
-      if (sig.replyPlacement === "bottom") {
-        bodyHtml = `<p><br></p><blockquote>${quote}</blockquote><br>${sig.html}`;
-      } else {
-        bodyHtml = `<p><br></p>${sig.html}<br><blockquote>${quote}</blockquote>`;
-      }
+      htmlSignature = sig.html;
     }
   }
 
@@ -260,7 +308,9 @@ export async function openComposer(
     bcc: [],
     subject,
     body,
-    bodyHtml,
+    htmlSignature,
+    plainSignature,
+    signaturePlacement,
     inReplyTo,
     references,
     originalMessageId: original.id,
@@ -268,8 +318,8 @@ export async function openComposer(
     originalAccountId: original.account_id,
   });
   setDraftId(null);
-  setAttachments([]);
-  setSendError("");
+  setAttachments(forwardedAttachments);
+  setSendError(forwardAttachmentError);
   setOpen(true);
 }
 
@@ -296,6 +346,36 @@ function quotedBody(detail: MessageDetail): string {
     : detail.row.sender_address;
   const quote = detail.body.map((p) => `> ${p}`).join("\n");
   return `On ${date}, ${from} wrote:\n${quote}`;
+}
+
+function forwardedMessageBody(detail: MessageDetail): string {
+  const date = new Date(detail.row.received_at_ms).toLocaleString();
+  const from = detail.row.sender_name
+    ? `${detail.row.sender_name} <${detail.row.sender_address}>`
+    : detail.row.sender_address;
+  const recipients = detail.to
+    .map((recipient) =>
+      recipient.name
+        ? `${recipient.name} <${recipient.address}>`
+        : recipient.address,
+    )
+    .join(", ");
+  const cc = detail.cc
+    .map((recipient) =>
+      recipient.name
+        ? `${recipient.name} <${recipient.address}>`
+        : recipient.address,
+    )
+    .join(", ");
+  const headers = [
+    "---------- Forwarded message ---------",
+    `From: ${from}`,
+    `Date: ${date}`,
+    `Subject: ${detail.row.subject}`,
+    `To: ${recipients}`,
+    ...(cc ? [`Cc: ${cc}`] : []),
+  ];
+  return `${headers.join("\n")}\n\n${detail.body.join("\n\n")}`;
 }
 
 export function closeComposer(): void {
@@ -343,9 +423,10 @@ export async function persistDraft(): Promise<void> {
 async function executeSend(
   outgoing: OutgoingMessage,
   draftIdToRemove: number | null,
+  snapshot: string,
 ): Promise<void> {
   try {
-    await sendMessage(outgoing);
+    await sendMessage(outgoing, snapshot);
     if (draftIdToRemove != null) {
       await deleteMessage(draftIdToRemove);
     }
@@ -373,7 +454,10 @@ export async function sendComposer(): Promise<void> {
       bcc: d.bcc,
       subject: d.subject,
       body: d.body,
-      body_html: d.bodyHtml,
+      body_html: null,
+      html_signature: d.htmlSignature,
+      plain_signature: d.plainSignature,
+      signature_placement: d.signaturePlacement,
       in_reply_to: d.inReplyTo,
       references: d.references,
       attachments: attachments().map((a) => ({
@@ -383,6 +467,7 @@ export async function sendComposer(): Promise<void> {
       })),
       original_message_id: d.originalMessageId,
       is_forward: d.isForward,
+      message_id: null,
     };
 
     const currentDraftId = draftId();
@@ -397,12 +482,19 @@ export async function sendComposer(): Promise<void> {
     const delaySec = Math.max(0, settings.undoSendDelaySec ?? 0);
 
     if (delaySec > 0) {
-      // Close composer UI immediately and start Undo countdown
+      // Persist first. The countdown is only a UI affordance: the Outbox row
+      // owns the send-after time, so quitting cannot lose a message.
+      const outboxId = await scheduleSend(
+        outgoing,
+        Date.now() + delaySec * 1000,
+        composerSnapshot(),
+      );
       closeComposer();
 
       const sendId = `send_${Date.now()}`;
       setPendingSend({
         id: sendId,
+        outboxId,
         outgoing,
         draftSnapshot,
         secondsRemaining: delaySec,
@@ -419,7 +511,9 @@ export async function sendComposer(): Promise<void> {
         if (ps.secondsRemaining <= 1) {
           clearInterval(pendingSendInterval);
           setPendingSend(null);
-          void executeSend(ps.outgoing, ps.draftSnapshot.draftId);
+          // This asks the durable worker to check a row that is already due;
+          // it never sends from the browser timer itself.
+          void sendOutboxNow(ps.outboxId);
         } else {
           setPendingSend({
             ...ps,
@@ -429,7 +523,7 @@ export async function sendComposer(): Promise<void> {
       }, 1000);
     } else {
       closeComposer();
-      await executeSend(outgoing, currentDraftId);
+      await executeSend(outgoing, currentDraftId, composerSnapshot());
     }
   } catch (error) {
     setSendError(String(error));
@@ -450,7 +544,10 @@ function currentOutgoing(): OutgoingMessage | null {
     bcc: d.bcc,
     subject: d.subject,
     body: d.body,
-    body_html: d.bodyHtml,
+    body_html: null,
+    html_signature: d.htmlSignature,
+    plain_signature: d.plainSignature,
+    signature_placement: d.signaturePlacement,
     in_reply_to: d.inReplyTo,
     references: d.references,
     attachments: attachments().map((a) => ({
@@ -460,6 +557,7 @@ function currentOutgoing(): OutgoingMessage | null {
     })),
     original_message_id: d.originalMessageId,
     is_forward: d.isForward,
+    message_id: null,
   };
 }
 
@@ -487,7 +585,9 @@ export function openDraftMessage(d: Draft): void {
     bcc: d.bcc,
     subject: d.subject,
     body: d.body,
-    bodyHtml: null,
+    htmlSignature: null,
+    plainSignature: null,
+    signaturePlacement: null,
     inReplyTo: d.in_reply_to,
     references: d.references,
     originalMessageId: null,
@@ -537,7 +637,14 @@ export async function resumeDraft(): Promise<void> {
 export function reopenComposerFromSnapshot(snapshot: string): void {
   try {
     const parsed = JSON.parse(snapshot);
-    if (parsed.draft) setDraft(parsed.draft);
+    if (parsed.draft) {
+      setDraft({
+        ...parsed.draft,
+        htmlSignature: parsed.draft.htmlSignature ?? null,
+        plainSignature: parsed.draft.plainSignature ?? null,
+        signaturePlacement: parsed.draft.signaturePlacement ?? null,
+      });
+    }
     setDraftId(parsed.draftId ?? null);
     setAttachments(Array.isArray(parsed.attachments) ? parsed.attachments : []);
     setSendError("");
@@ -565,9 +672,15 @@ export async function scheduleComposer(sendAtMs: number): Promise<void> {
   }
 }
 
-export function undoPendingSend(): void {
+export async function undoPendingSend(): Promise<void> {
   const ps = pendingSend();
   if (!ps) return;
+  try {
+    await cancelScheduled(ps.outboxId);
+  } catch (error) {
+    setSendError(String(error));
+    return;
+  }
   if (pendingSendInterval) clearInterval(pendingSendInterval);
   setPendingSend(null);
 
@@ -579,12 +692,20 @@ export function undoPendingSend(): void {
   setOpen(true);
 }
 
-export function sendPendingNow(): void {
+export async function sendPendingNow(): Promise<void> {
   const ps = pendingSend();
   if (!ps) return;
   if (pendingSendInterval) clearInterval(pendingSendInterval);
   setPendingSend(null);
-  void executeSend(ps.outgoing, ps.draftSnapshot.draftId);
+  try {
+    await sendOutboxNow(ps.outboxId);
+    if (ps.draftSnapshot.draftId != null) {
+      await deleteMessage(ps.draftSnapshot.draftId);
+    }
+    await refreshMail();
+  } catch (error) {
+    setSendError(String(error));
+  }
 }
 
 export async function discardComposer(): Promise<void> {

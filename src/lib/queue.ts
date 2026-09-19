@@ -4,7 +4,7 @@ import { listQueuedActions } from "./tauri";
 
 // P0.3: the offline action queue — visible and recoverable in Settings →
 // Accounts → "Sync & queue", and flagged in the StatusBar when anything is
-// stuck (retries ≥ 5). Refreshed after enqueue/retry/remove.
+// failed after the capped retry schedule. Refreshed after enqueue/retry/remove.
 const [queued, setQueued] = createSignal<QueuedAction[]>([]);
 
 export function useQueued(): () => QueuedAction[] {
@@ -41,6 +41,12 @@ export function actionLabel(a: QueuedAction): { label: string; state: string } {
     unsubscribeFolder: `Unsubscribe ${a.folder}`,
   };
   const state =
-    a.retries === 0 ? "pending" : a.retries >= 5 ? "stuck" : "retrying";
+    a.status === "failed"
+      ? "failed"
+      : a.status === "running"
+        ? "syncing"
+        : a.retries === 0
+          ? "pending"
+          : "retrying";
   return { label: labels[a.action_type] ?? a.action_type, state };
 }

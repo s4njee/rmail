@@ -217,14 +217,36 @@ pub fn rsvp_invite(
             comment.as_deref(),
         );
 
-        let payload = serde_json::json!({
-            "to": [invite.organizer_email],
-            "subject": format!("{}: {}", partstat, invite.title),
-            "body": format!("RSVP: {} has responded {} to '{}'.", account.address, partstat, invite.title),
-            "ics": reply_body
-        }).to_string();
-
-        let _ = store.enqueue_action(account_id, ActionType::Send, "Sent", None, Some(&payload));
+        // An RSVP is mail too. Put it through the same durable Outbox as the
+        // composer instead of the legacy IMAP action queue, which must never
+        // replay SMTP submissions.
+        let mut outgoing = OutgoingMessage {
+            account_id,
+            from_name: None,
+            from_address: None,
+            reply_to: None,
+            to: vec![invite.organizer_email.clone()],
+            cc: Vec::new(),
+            bcc: Vec::new(),
+            subject: format!("{}: {}", partstat, invite.title),
+            body: format!(
+                "RSVP: {} has responded {} to '{}'.\n\n{}",
+                account.address, partstat, invite.title, reply_body
+            ),
+            body_html: None,
+            html_signature: None,
+            plain_signature: None,
+            signature_placement: None,
+            in_reply_to: None,
+            references: None,
+            attachments: Vec::new(),
+            original_message_id: Some(message_id),
+            is_forward: None,
+            message_id: None,
+        };
+        quill_mail::smtp::ensure_message_id(&account, &mut outgoing)?;
+        let payload = serde_json::to_string(&outgoing).map_err(|e| e.to_string())?;
+        store.schedule_message(account_id, 0, &payload, "")?;
 
         if partstat.eq_ignore_ascii_case("ACCEPTED") || partstat.eq_ignore_ascii_case("TENTATIVE") {
             let _ = store.create_event(CalendarEvent {
@@ -258,6 +280,46 @@ pub fn attachment_path(store: State<'_, SqliteStore>, id: AttachmentId) -> Optio
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+#[tauri::command]
+pub fn inline_attachment_paths(
+    store: State<'_, SqliteStore>,
+    message_id: MessageId,
+) -> std::collections::HashMap<String, String> {
+    store.inline_attachment_paths(message_id)
+}
+
+#[tauri::command]
+pub fn load_attachment_for_forward(
+    store: State<'_, SqliteStore>,
+    id: AttachmentId,
+) -> Result<OutgoingAttachment, String> {
+    store.outgoing_attachment(id)
+}
+
+fn safe_destination(
+    directory: &std::path::Path,
+    filename: &str,
+) -> Result<std::path::PathBuf, String> {
+    std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
+    let root = directory.canonicalize().map_err(|e| e.to_string())?;
+    let safe_name = quill_store::sqlite::sanitize_attachment_filename(filename);
+    let destination = root.join(safe_name);
+    if !destination.starts_with(&root) {
+        return Err("attachment destination escapes the selected directory".into());
+    }
+    if destination.exists() {
+        let resolved = destination.canonicalize().map_err(|e| e.to_string())?;
+        if !resolved.starts_with(&root) {
+            return Err("attachment destination escapes the selected directory".into());
+        }
+    }
+    Ok(destination)
+}
+
+fn unavailable_offline() -> String {
+    "attachment is unavailable offline; reconnect and open the message to download it".into()
+}
+
 /// Save an attachment to a target destination file path (Roadmap 3.3).
 #[tauri::command]
 pub fn save_attachment(
@@ -265,54 +327,63 @@ pub fn save_attachment(
     id: AttachmentId,
     destination_path: String,
 ) -> Result<(), String> {
-    let src_path = store.attachment_path(id);
-    let dest = std::path::Path::new(&destination_path);
-    if let Some(parent) = dest.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Some(src) = src_path {
-        if src.exists() {
-            std::fs::copy(&src, dest).map_err(|e| e.to_string())?;
-            return Ok(());
-        }
-    }
     let att = store.attachment(id).ok_or("attachment not found")?;
-    let bytes = if att.filename.ends_with(".pdf") {
-        quill_store::pdf::placeholder(att.size_bytes as usize)
-    } else {
-        format!("Placeholder content for {}", att.filename).into_bytes()
-    };
-    std::fs::write(dest, bytes).map_err(|e| e.to_string())?;
+    let src = store.attachment_path(id).ok_or_else(unavailable_offline)?;
+    let requested = std::path::Path::new(&destination_path);
+    let parent = requested
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let filename = requested
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(&att.filename);
+    let dest = safe_destination(parent, filename)?;
+    std::fs::copy(src, dest).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// Save all attachments of a message to a directory (Roadmap 3.3).
 #[tauri::command]
 pub fn save_all_attachments(
+    app: AppHandle,
     store: State<'_, SqliteStore>,
     message_id: MessageId,
-    destination_dir: String,
+    destination_dir: Option<String>,
 ) -> Result<u32, String> {
     let msg = store.get_message(message_id).ok_or("message not found")?;
-    let dir = std::path::Path::new(&destination_dir);
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let resolved_downloads;
+    let dir = if let Some(path) = destination_dir.as_deref() {
+        std::path::Path::new(path)
+    } else {
+        resolved_downloads = app.path().download_dir().map_err(|e| e.to_string())?;
+        &resolved_downloads
+    };
     let mut count = 0;
     for att in msg.attachments {
-        let dest = dir.join(&att.filename);
-        let src_path = store.attachment_path(att.id);
-        if let Some(src) = src_path {
-            if src.exists() {
-                let _ = std::fs::copy(&src, &dest);
-                count += 1;
-                continue;
+        let src = store
+            .attachment_path(att.id)
+            .ok_or_else(unavailable_offline)?;
+        let mut dest = safe_destination(dir, &att.filename)?;
+        if dest.exists() {
+            let stem = dest
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("attachment");
+            let ext = dest.extension().and_then(|s| s.to_str());
+            for suffix in 2..=10_000 {
+                let candidate = match ext {
+                    Some(ext) => format!("{stem} ({suffix}).{ext}"),
+                    None => format!("{stem} ({suffix})"),
+                };
+                let path = safe_destination(dir, &candidate)?;
+                if !path.exists() {
+                    dest = path;
+                    break;
+                }
             }
         }
-        let bytes = if att.filename.ends_with(".pdf") {
-            quill_store::pdf::placeholder(att.size_bytes as usize)
-        } else {
-            format!("Placeholder content for {}", att.filename).into_bytes()
-        };
-        let _ = std::fs::write(&dest, bytes);
+        std::fs::copy(src, dest).map_err(|e| e.to_string())?;
         count += 1;
     }
     Ok(count)
@@ -330,7 +401,7 @@ pub fn mark_read(store: State<'_, SqliteStore>, id: MessageId, unread: bool) -> 
         } else {
             ActionType::MarkRead
         };
-        let _ = store.enqueue_action(account_id, action_type, &server_folder, uid, None);
+        store.enqueue_action(account_id, action_type, &server_folder, uid, None)?;
     }
     store.set_read(id, unread)
 }
@@ -345,7 +416,7 @@ pub fn star(store: State<'_, SqliteStore>, id: MessageId, flagged: bool) -> Resu
         } else {
             ActionType::Unstar
         };
-        let _ = store.enqueue_action(account_id, action_type, &server_folder, uid, None);
+        store.enqueue_action(account_id, action_type, &server_folder, uid, None)?;
     }
     store.set_flagged(id, flagged)
 }
@@ -360,13 +431,13 @@ pub fn mark_answered(
         store.get_message_location(id)
     {
         if answered {
-            let _ = store.enqueue_action(
+            store.enqueue_action(
                 account_id,
                 ActionType::MarkAnswered,
                 &server_folder,
                 uid,
                 None,
-            );
+            )?;
         }
     }
     store.set_answered(id, answered)
@@ -382,13 +453,13 @@ pub fn mark_forwarded(
         store.get_message_location(id)
     {
         if forwarded {
-            let _ = store.enqueue_action(
+            store.enqueue_action(
                 account_id,
                 ActionType::MarkForwarded,
                 &server_folder,
                 uid,
                 None,
-            );
+            )?;
         }
     }
     store.set_forwarded(id, forwarded)
@@ -399,18 +470,56 @@ pub fn archive(store: State<'_, SqliteStore>, id: MessageId) -> Result<(), Strin
     if let Some((account_id, _local_folder, Some(server_folder), uid)) =
         store.get_message_location(id)
     {
-        let _ = store.enqueue_action(account_id, ActionType::Archive, &server_folder, uid, None);
+        if store.archive_folder_name(account_id).is_none() {
+            return Err(
+                "No Archive or All Mail folder is configured; create or choose one before archiving"
+                    .into(),
+            );
+        }
+        store.enqueue_action(account_id, ActionType::Archive, &server_folder, uid, None)?;
     }
     store.archive(id)
 }
 
 #[tauri::command]
 pub fn delete(store: State<'_, SqliteStore>, id: MessageId) -> Result<(), String> {
-    if let Some((account_id, _local_folder, Some(server_folder), uid)) =
+    if let Some((account_id, local_folder, Some(server_folder), uid)) =
         store.get_message_location(id)
     {
-        let _ = store.enqueue_action(account_id, ActionType::Delete, &server_folder, uid, None);
+        if local_folder.eq_ignore_ascii_case("Trash")
+            || local_folder.eq_ignore_ascii_case("Junk")
+            || local_folder.eq_ignore_ascii_case("Spam")
+        {
+            return Err("permanent deletion requires explicit confirmation".into());
+        }
+        store.enqueue_action(account_id, ActionType::Delete, &server_folder, uid, None)?;
     }
+    store.delete(id)
+}
+
+/// Permanently delete a message only after the caller has confirmed and only
+/// when it is already in Trash/Junk/Spam. The replay path uses UID EXPUNGE for
+/// this one message, never a mailbox-wide EXPUNGE.
+#[tauri::command]
+pub fn delete_permanently(
+    store: State<'_, SqliteStore>,
+    id: MessageId,
+    confirmed: bool,
+) -> Result<(), String> {
+    if !confirmed {
+        return Err("permanent deletion requires explicit confirmation".into());
+    }
+    let Some((account_id, local_folder, Some(server_folder), uid)) = store.get_message_location(id)
+    else {
+        return Err("no such message".into());
+    };
+    if !matches!(
+        local_folder.to_ascii_lowercase().as_str(),
+        "trash" | "junk" | "spam"
+    ) {
+        return Err("permanent deletion is only available in Trash or Spam".into());
+    }
+    store.enqueue_action(account_id, ActionType::Delete, &server_folder, uid, None)?;
     store.delete(id)
 }
 
@@ -454,7 +563,26 @@ pub fn restore_message(store: State<'_, SqliteStore>, id: MessageId) -> Result<(
     if let Some((account_id, _local_folder, Some(server_folder), uid)) =
         store.get_message_location(id)
     {
-        let _ = store.cancel_pending_actions(account_id, &server_folder, uid);
+        let cancelled = store
+            .cancel_pending_actions(account_id, &server_folder, uid)
+            .unwrap_or(0);
+        // If Delete already replayed, the server copy is now in Trash and may
+        // have a new UID. Re-resolve it there by Message-ID before moving it
+        // back to the original mailbox; a still-pending Delete is simply
+        // cancelled above.
+        if cancelled == 0 {
+            if let (Some(trash), Some(message_id)) = (
+                store.trash_folder_name(account_id),
+                store.message_id_header(id),
+            ) {
+                let payload = serde_json::json!({
+                    "restore_to": server_folder,
+                    "message_id": message_id,
+                })
+                .to_string();
+                store.enqueue_action(account_id, ActionType::Move, &trash, None, Some(&payload))?;
+            }
+        }
     }
     store.restore_message(id)
 }
@@ -476,10 +604,16 @@ pub fn set_snoozed(
 #[tauri::command]
 pub fn schedule_send(
     store: State<'_, SqliteStore>,
-    outgoing: OutgoingMessage,
+    mut outgoing: OutgoingMessage,
     send_at_ms: i64,
     draft: String,
 ) -> Result<i64, String> {
+    let account = store
+        .accounts()
+        .into_iter()
+        .find(|account| account.id == outgoing.account_id)
+        .ok_or("no such account")?;
+    quill_mail::smtp::ensure_message_id(&account, &mut outgoing)?;
     let payload = serde_json::to_string(&outgoing).map_err(|e| e.to_string())?;
     store.schedule_message(outgoing.account_id, send_at_ms, &payload, &draft)
 }
@@ -494,6 +628,34 @@ pub fn list_scheduled(store: State<'_, SqliteStore>) -> Vec<ScheduledMessage> {
 #[tauri::command]
 pub fn cancel_scheduled(store: State<'_, SqliteStore>, id: i64) -> Result<(), String> {
     store.cancel_scheduled(id)
+}
+
+/// Retry a message whose SMTP submission failed permanently. Retrying makes
+/// the durable row due immediately, then wakes its one account sender.
+#[tauri::command]
+pub async fn retry_outbox_message(
+    app: AppHandle,
+    store: State<'_, SqliteStore>,
+    id: i64,
+) -> Result<(), String> {
+    let Some(account_id) = store.retry_outbox_message(id)? else {
+        return Err("Outbox message is not available to retry".into());
+    };
+    crate::sync::flush_outbox_for_account(&app, account_id).await
+}
+
+/// Submit an Undo-send row immediately. It remains a durable row even if the
+/// sender is already busy, so a later worker pass will finish it exactly once.
+#[tauri::command]
+pub async fn send_outbox_now(
+    app: AppHandle,
+    store: State<'_, SqliteStore>,
+    id: i64,
+) -> Result<(), String> {
+    let Some(account_id) = store.send_outbox_now(id)? else {
+        return Err("Outbox message is no longer available to send".into());
+    };
+    crate::sync::flush_outbox_for_account(&app, account_id).await
 }
 
 /// Recipient suggestions for the composer (P1.2) — offline, from mail history.
@@ -701,40 +863,29 @@ pub fn restore_backup(
     Ok(())
 }
 
-/// Outgoing mail via SMTP (Epic 12.3 & 13), with the account's credential
-/// (password or OAuth bearer). If sending fails due to network/server
-/// unavailability, it is queued for retry.
+/// Submit outgoing mail to the durable Outbox. SMTP is only ever performed by
+/// its per-account worker, which marks a lease before the network call.
 #[tauri::command]
-pub async fn send(store: State<'_, SqliteStore>, outgoing: OutgoingMessage) -> Result<(), String> {
+pub async fn send(
+    app: AppHandle,
+    store: State<'_, SqliteStore>,
+    mut outgoing: OutgoingMessage,
+    draft: Option<String>,
+) -> Result<(), String> {
     let account = store
         .accounts()
         .into_iter()
         .find(|a| a.id == outgoing.account_id)
         .ok_or("no such account")?;
-    let credential = quill_mail::auth::resolve_credential(&account)?;
-    match quill_mail::smtp::send_email(&account, &outgoing, &credential).await {
-        Ok(()) => {
-            if let Some(orig_id) = outgoing.original_message_id {
-                if outgoing.is_forward.unwrap_or(false) {
-                    let _ = mark_forwarded(store.clone(), orig_id, true);
-                } else {
-                    let _ = mark_answered(store.clone(), orig_id, true);
-                }
-            }
-            Ok(())
-        }
-        Err(e) => {
-            let payload = serde_json::to_string(&outgoing).map_err(|e| e.to_string())?;
-            let _ = store.enqueue_action(
-                outgoing.account_id,
-                ActionType::Send,
-                "Outbox",
-                None,
-                Some(&payload),
-            );
-            Err(format!("Send failed (queued in Outbox for retry): {e}"))
-        }
-    }
+    quill_mail::smtp::ensure_message_id(&account, &mut outgoing)?;
+    let payload = serde_json::to_string(&outgoing).map_err(|e| e.to_string())?;
+    store.schedule_message(
+        outgoing.account_id,
+        0,
+        &payload,
+        draft.as_deref().unwrap_or(""),
+    )?;
+    crate::sync::flush_outbox_for_account(&app, account.id).await
 }
 
 #[tauri::command]
@@ -833,15 +984,36 @@ pub fn add_account(
     store: State<'_, SqliteStore>,
     info: NewAccount,
     password: String,
+    smtp: Option<Endpoint>,
+    smtp_security: Option<String>,
+    smtp_username: Option<String>,
 ) -> Result<Account, String> {
     quill_mail::credentials::set_credential(&info.address, &password)?;
     let palette = ["#3b5bdb", "#0f766e", "#b4451f"];
     let color = palette[store.accounts().len() % palette.len()].to_string();
-    store.create_account(&info, color).inspect_err(|_e| {
+    let account = store.create_account(&info, color).inspect_err(|_e| {
         // Roll back the keychain write so a failed insert (e.g. a duplicate
         // address) doesn't leave an orphaned credential behind.
         let _ = quill_mail::credentials::delete_credential(&info.address);
-    })
+    })?;
+    if let Some(smtp) = smtp {
+        let security = smtp_security.unwrap_or_else(|| {
+            if smtp.tls && smtp.port == 465 {
+                "ssl".into()
+            } else if smtp.tls {
+                "starttls".into()
+            } else {
+                "plain".into()
+            }
+        });
+        let username = smtp_username.unwrap_or_else(|| account.address.clone());
+        store.configure_smtp(account.id, &smtp.host, smtp.port, &security, &username)?;
+    }
+    store
+        .accounts()
+        .into_iter()
+        .find(|account_row| account_row.id == account.id)
+        .ok_or("created account was not found".into())
 }
 
 /// Update an existing account's editable fields (server/port/TLS/sync
@@ -895,7 +1067,7 @@ pub fn remove_account(store: State<'_, SqliteStore>, id: AccountId) -> Result<()
 pub fn list_queued_actions(
     store: State<'_, SqliteStore>,
     account_id: Option<AccountId>,
-) -> Vec<QueuedAction> {
+) -> Result<Vec<QueuedAction>, String> {
     store.list_queued_actions(account_id)
 }
 
@@ -972,6 +1144,12 @@ pub async fn discover_mail_folders(
         server,
         port,
         tls,
+        imap_security: if tls { "ssl" } else { "plain" }.into(),
+        allow_plaintext_login: false,
+        smtp_server: String::new(),
+        smtp_port: 587,
+        smtp_security: "starttls".into(),
+        smtp_username: email.clone(),
         folder_count: 0,
         last_error: None,
     };
@@ -1198,6 +1376,61 @@ pub async fn discover_caldav(
         .collect())
 }
 
+fn parse_oauth_provider(provider_str: &str) -> Result<quill_mail::oauth::OAuthProvider, String> {
+    match provider_str.to_lowercase().as_str() {
+        "google" => Ok(quill_mail::oauth::OAuthProvider::Google),
+        "microsoft" | "microsoft365" | "outlook" => {
+            Ok(quill_mail::oauth::OAuthProvider::Microsoft365)
+        }
+        other => Err(format!("unsupported OAuth provider: {other}")),
+    }
+}
+
+/// Resolve the OAuth client for a sign-in: an ID from the Advanced form wins,
+/// otherwise the client embedded in this build (or the debug config file).
+/// Returns `(client_id, client_secret)`.
+fn resolve_oauth_client(
+    provider_str: &str,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+) -> Result<(String, Option<String>), String> {
+    let client_id = client_id.filter(|id| !id.trim().is_empty());
+    let client_secret = client_secret.filter(|secret| !secret.trim().is_empty());
+    let configured = crate::oauth_config::configured(provider_str);
+    let c_id = client_id
+        .clone()
+        .or_else(|| {
+            configured
+                .as_ref()
+                .and_then(|config| config.client_id.clone())
+        })
+        .ok_or_else(|| {
+            log::warn!(
+                "OAuth sign-in for {provider_str} attempted without a client; build with \
+                 QUILL_*_OAUTH_CLIENT_ID or add oauth-config.json (see docs/oauth-setup.md)"
+            );
+            crate::oauth_config::not_configured_message(provider_str)
+        })?;
+    // Only fall back to the configured secret when the configured ID is the
+    // one in use — never pair a custom ID with the build's secret.
+    let secret = if client_id.is_some() {
+        client_secret
+    } else {
+        client_secret.or_else(|| configured.and_then(|config| config.client_secret))
+    };
+    Ok((c_id, secret))
+}
+
+/// Providers whose browser sign-in works in this build (`"google"`,
+/// `"microsoft365"`), so onboarding only offers sign-in that will succeed.
+#[tauri::command]
+pub fn oauth_available_providers() -> Vec<String> {
+    crate::oauth_config::available_providers()
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
 /// Start an OAuth2 authorization code with PKCE flow (Roadmap 3.1).
 #[tauri::command]
 pub fn get_oauth_init(
@@ -1205,11 +1438,13 @@ pub fn get_oauth_init(
     client_id: Option<String>,
     redirect_uri: Option<String>,
 ) -> Result<OAuthInitPayload, String> {
-    let provider = match provider_str.to_lowercase().as_str() {
-        "google" => quill_mail::oauth::OAuthProvider::Google,
-        "microsoft" | "microsoft365" | "outlook" => quill_mail::oauth::OAuthProvider::Microsoft365,
-        other => return Err(format!("unsupported OAuth provider: {other}")),
-    };
+    let provider = parse_oauth_provider(&provider_str)?;
+
+    // A caller-supplied ID is an Advanced escape hatch. Normal sign-in uses
+    // the production client embedded by the release build (or debug config).
+    // Resolved before binding the loopback so a missing client doesn't leave
+    // a listener holding the port.
+    let (c_id, _) = resolve_oauth_client(&provider_str, client_id, None)?;
 
     let (verifier, challenge) = quill_mail::oauth::generate_pkce_challenge();
     // Loopback redirect without a path: Google's Desktop-app (native) client
@@ -1220,19 +1455,6 @@ pub fn get_oauth_init(
     let r_uri = redirect_uri.unwrap_or_else(|| {
         quill_mail::oauth::bind_loopback().unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
     });
-    // Dev/test creds from `oauth-config.json` (gitignored) when the form
-    // doesn't supply them, so they only need entering once.
-    let file_config = crate::oauth_config::load(&provider_str);
-    let c_id = client_id
-        .or_else(|| file_config.as_ref().and_then(|c| c.client_id.clone()))
-        .unwrap_or_else(|| match provider {
-            quill_mail::oauth::OAuthProvider::Google => {
-                "quill-desktop-google.apps.googleusercontent.com".into()
-            }
-            quill_mail::oauth::OAuthProvider::Microsoft365 => {
-                "quill-desktop-ms365-client-id".into()
-            }
-        });
 
     let state = uuid::Uuid::new_v4().to_string();
     let auth_url = quill_mail::oauth::build_auth_url(provider, &c_id, &r_uri, &challenge, &state)?;
@@ -1257,27 +1479,9 @@ pub async fn exchange_oauth_code(
     client_id: Option<String>,
     client_secret: Option<String>,
 ) -> Result<Account, String> {
-    let provider = match provider_str.to_lowercase().as_str() {
-        "google" => quill_mail::oauth::OAuthProvider::Google,
-        "microsoft" | "microsoft365" | "outlook" => quill_mail::oauth::OAuthProvider::Microsoft365,
-        other => return Err(format!("unsupported OAuth provider: {other}")),
-    };
+    let provider = parse_oauth_provider(&provider_str)?;
 
-    let file_config = crate::oauth_config::load(&provider_str);
-    let c_id = client_id
-        .or_else(|| file_config.as_ref().and_then(|c| c.client_id.clone()))
-        .unwrap_or_else(|| match provider {
-            quill_mail::oauth::OAuthProvider::Google => {
-                "quill-desktop-google.apps.googleusercontent.com".into()
-            }
-            quill_mail::oauth::OAuthProvider::Microsoft365 => {
-                "quill-desktop-ms365-client-id".into()
-            }
-        });
-    // The secret may come from the form or the config file; persist whichever
-    // was actually used so token refresh has it later.
-    let secret =
-        client_secret.or_else(|| file_config.as_ref().and_then(|c| c.client_secret.clone()));
+    let (c_id, secret) = resolve_oauth_client(&provider_str, client_id, client_secret)?;
 
     let tokens = quill_mail::oauth::exchange_code_for_tokens(
         provider,
@@ -1289,10 +1493,13 @@ pub async fn exchange_oauth_code(
     )
     .await?;
 
-    let address = tokens.email.clone().unwrap_or_else(|| match provider {
-        quill_mail::oauth::OAuthProvider::Google => "user@gmail.com".into(),
-        quill_mail::oauth::OAuthProvider::Microsoft365 => "user@outlook.com".into(),
-    });
+    // The address is the IMAP/SMTP login for XOAUTH2, so a guessed one would
+    // produce an account that can never authenticate.
+    let address = tokens.email.clone().ok_or_else(|| {
+        "Signed in, but the provider didn't say which email address the account uses. \
+         Try again, or connect the account manually."
+            .to_string()
+    })?;
 
     quill_mail::oauth_store::save_oauth_tokens(&address, provider, &tokens)?;
     // Persist the client ID/secret so the sync engine can refresh tokens later.
@@ -1312,7 +1519,19 @@ pub async fn exchange_oauth_code(
 
     let palette = ["#3b5bdb", "#0f766e", "#b4451f"];
     let color = palette[store.accounts().len() % palette.len()].to_string();
-    store.create_account(&new_account, color)
+    let account = store.create_account(&new_account, color)?;
+    store.configure_smtp(
+        account.id,
+        provider.default_smtp_host(),
+        587,
+        "starttls",
+        &account.address,
+    )?;
+    store
+        .accounts()
+        .into_iter()
+        .find(|account_row| account_row.id == account.id)
+        .ok_or("created account was not found".into())
 }
 
 /// Wait for the browser's OAuth redirect back to the loopback listener and
@@ -1356,25 +1575,9 @@ pub async fn reauthorize_account(
         .find(|a| a.id == account_id)
         .ok_or_else(|| format!("account {account_id} not found"))?;
 
-    let provider = match provider_str.to_lowercase().as_str() {
-        "google" => quill_mail::oauth::OAuthProvider::Google,
-        "microsoft" | "microsoft365" | "outlook" => quill_mail::oauth::OAuthProvider::Microsoft365,
-        other => return Err(format!("unsupported OAuth provider: {other}")),
-    };
+    let provider = parse_oauth_provider(&provider_str)?;
 
-    let file_config = crate::oauth_config::load(&provider_str);
-    let c_id = client_id
-        .or_else(|| file_config.as_ref().and_then(|c| c.client_id.clone()))
-        .unwrap_or_else(|| match provider {
-            quill_mail::oauth::OAuthProvider::Google => {
-                "quill-desktop-google.apps.googleusercontent.com".into()
-            }
-            quill_mail::oauth::OAuthProvider::Microsoft365 => {
-                "quill-desktop-ms365-client-id".into()
-            }
-        });
-    let secret =
-        client_secret.or_else(|| file_config.as_ref().and_then(|c| c.client_secret.clone()));
+    let (c_id, secret) = resolve_oauth_client(&provider_str, client_id, client_secret)?;
 
     let tokens = quill_mail::oauth::exchange_code_for_tokens(
         provider,
@@ -1385,6 +1588,18 @@ pub async fn reauthorize_account(
         secret.as_deref(),
     )
     .await?;
+
+    // Signing in to a different account in the browser would store its tokens
+    // under this account's address, and every later login would fail.
+    if let Some(signed_in) = tokens.email.as_deref() {
+        if !signed_in.eq_ignore_ascii_case(&account.address) {
+            return Err(format!(
+                "You signed in as {signed_in}, but this account is {}. \
+                 Sign in with {} to reconnect it.",
+                account.address, account.address
+            ));
+        }
+    }
 
     // Same address — only the auth material changes; the account row and its
     // local data are left alone.
@@ -1743,4 +1958,42 @@ pub fn query_free_busy(
         end_ms,
         slot_duration_minutes.unwrap_or(30),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_oauth_client_never_borrows_the_build_secret() {
+        let (id, secret) = resolve_oauth_client("google", Some("custom-id".into()), None).unwrap();
+        assert_eq!(id, "custom-id");
+        assert_eq!(secret, None);
+
+        let (id, secret) = resolve_oauth_client(
+            "google",
+            Some("custom-id".into()),
+            Some("custom-secret".into()),
+        )
+        .unwrap();
+        assert_eq!(id, "custom-id");
+        assert_eq!(secret.as_deref(), Some("custom-secret"));
+    }
+
+    #[test]
+    fn blank_advanced_fields_count_as_absent() {
+        // Whitespace from the Advanced form falls through to the build config
+        // (absent in tests) and yields the user-facing message.
+        if crate::oauth_config::configured("microsoft365").is_none() {
+            let err = resolve_oauth_client("microsoft365", Some("  ".into()), None).unwrap_err();
+            assert!(err.contains("isn't available in this build"), "{err}");
+        }
+    }
+
+    #[test]
+    fn oauth_provider_aliases() {
+        assert!(parse_oauth_provider("Google").is_ok());
+        assert!(parse_oauth_provider("outlook").is_ok());
+        assert!(parse_oauth_provider("yahoo").is_err());
+    }
 }

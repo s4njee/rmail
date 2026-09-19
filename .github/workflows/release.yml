@@ -81,6 +81,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Quill's own Google / Microsoft sign-in clients, compiled into the
+          # binary (see docs/oauth-setup.md). Without them the release offers
+          # Gmail by app password only and no Microsoft sign-in.
+          QUILL_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.QUILL_GOOGLE_OAUTH_CLIENT_ID }}
+          QUILL_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.QUILL_GOOGLE_OAUTH_CLIENT_SECRET }}
+          QUILL_MICROSOFT_OAUTH_CLIENT_ID: ${{ secrets.QUILL_MICROSOFT_OAUTH_CLIENT_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Quill ${{ github.ref_name }}"

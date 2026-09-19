@@ -1,5 +1,8 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import type { MessageDetail } from "../lib/ipc/MessageDetail";
+import { openMailto } from "../lib/compose";
+import { inlineAttachmentPaths } from "../lib/tauri";
 import { useDark } from "../lib/theme";
 import "./MailBody.css";
 
@@ -64,7 +67,9 @@ function buildSrcdoc(
     "default-src 'none'",
     "style-src 'unsafe-inline'",
     `script-src 'nonce-${SCRIPT_NONCE}'`,
-    allowImages ? "img-src data: blob: https: http:" : "img-src data: blob:",
+    allowImages
+      ? "img-src data: blob: asset: http://asset.localhost https://asset.localhost https: http:"
+      : "img-src data: blob: asset: http://asset.localhost https://asset.localhost",
     "font-src data:",
     "object-src 'none'",
     "base-uri 'none'",
@@ -120,6 +125,29 @@ function buildSrcdoc(
 export function MailBody(props: MailBodyProps) {
   const [frameEl, setFrameEl] = createSignal<HTMLIFrameElement | null>(null);
   const [frameHeight, setFrameHeight] = createSignal(120);
+  const [resolvedHtml, setResolvedHtml] = createSignal("");
+
+  createEffect(() => {
+    const messageId = props.detail.row.id;
+    const original = props.detail.body_html ?? "";
+    let cancelled = false;
+    setResolvedHtml(original);
+    void inlineAttachmentPaths(messageId).then((paths) => {
+      if (cancelled) return;
+      let html = original;
+      for (const [cid, path] of Object.entries(paths)) {
+        const escaped = cid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        html = html.replace(
+          new RegExp(`cid:(?:%3C)?${escaped}(?:%3E)?`, "gi"),
+          convertFileSrc(path),
+        );
+      }
+      setResolvedHtml(html);
+    });
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
 
   createEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -128,7 +156,18 @@ export function MailBody(props: MailBodyProps) {
       if (event.source !== frameEl()?.contentWindow) return; // only our iframe
       if (msg.type === "height") setFrameHeight(Number(msg.height) || 120);
       else if (msg.type === "open") props.onOpenLink(String(msg.url));
-      // "mailto" opens the composer in Epic 13.
+      else if (msg.type === "mailto") {
+        try {
+          const url = new URL(String(msg.url));
+          void openMailto({
+            to: decodeURIComponent(url.pathname),
+            subject: url.searchParams.get("subject") || "",
+            body: url.searchParams.get("body") || "",
+          });
+        } catch {
+          // Malformed mailto links are inert rather than opening an arbitrary URL.
+        }
+      }
     };
     window.addEventListener("message", onMessage);
     onCleanup(() => window.removeEventListener("message", onMessage));
@@ -167,11 +206,7 @@ export function MailBody(props: MailBodyProps) {
         class="mail-body__frame"
         title="Message body"
         sandbox="allow-scripts"
-        srcdoc={buildSrcdoc(
-          props.detail.body_html ?? "",
-          props.allowImages,
-          useDark()(),
-        )}
+        srcdoc={buildSrcdoc(resolvedHtml(), props.allowImages, useDark()())}
         style={{ height: `${frameHeight()}px` }}
       />
     </div>

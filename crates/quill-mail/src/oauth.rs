@@ -60,7 +60,9 @@ impl OAuthProvider {
 
     pub fn default_scopes(&self) -> &'static str {
         match self {
-            Self::Google => "https://mail.google.com/ https://www.googleapis.com/auth/calendar email profile",
+            // `openid` guarantees an id_token, which is where the signed-in
+            // address comes from.
+            Self::Google => "https://mail.google.com/ https://www.googleapis.com/auth/calendar openid email profile",
             Self::Microsoft365 => "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access email openid profile",
         }
     }
@@ -353,8 +355,14 @@ fn extract_email_from_jwt(jwt: &str) -> Option<String> {
     let payload_b64 = parts[1];
     let decoded = URL_SAFE_NO_PAD.decode(payload_b64.as_bytes()).ok()?;
     let val: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
-    val.get("email")
-        .and_then(|e| e.as_str())
+    // Google always sends `email`. Microsoft only sends it when the account
+    // has one set; work and school accounts carry the sign-in address in
+    // `preferred_username` (or `upn` on older tokens) instead.
+    ["email", "preferred_username", "upn"]
+        .iter()
+        .filter_map(|claim| val.get(*claim).and_then(|v| v.as_str()))
+        .map(str::trim)
+        .find(|v| v.contains('@'))
         .map(str::to_string)
 }
 
@@ -391,6 +399,50 @@ mod tests {
         assert!(url.contains("client_id=google-client-id-123"));
         assert!(url.contains("code_challenge=test-challenge"));
         assert!(url.contains("code_challenge_method=S256"));
+    }
+
+    fn jwt_with(claims: serde_json::Value) -> String {
+        let payload = URL_SAFE_NO_PAD.encode(claims.to_string());
+        format!("e30.{payload}.sig")
+    }
+
+    #[test]
+    fn email_claim_wins_then_falls_back_to_microsoft_claims() {
+        let google = jwt_with(serde_json::json!({ "email": "me@gmail.com" }));
+        assert_eq!(
+            extract_email_from_jwt(&google).as_deref(),
+            Some("me@gmail.com")
+        );
+
+        // Work/school accounts: no `email`, address in `preferred_username`.
+        let work = jwt_with(serde_json::json!({ "preferred_username": "me@contoso.com" }));
+        assert_eq!(
+            extract_email_from_jwt(&work).as_deref(),
+            Some("me@contoso.com")
+        );
+
+        let upn = jwt_with(serde_json::json!({ "upn": "me@contoso.com" }));
+        assert_eq!(
+            extract_email_from_jwt(&upn).as_deref(),
+            Some("me@contoso.com")
+        );
+
+        // A non-address username (e.g. a phone sign-in) is not an email.
+        let phone = jwt_with(serde_json::json!({ "preferred_username": "+15550100" }));
+        assert_eq!(extract_email_from_jwt(&phone), None);
+        assert_eq!(extract_email_from_jwt("not-a-jwt"), None);
+    }
+
+    #[test]
+    fn google_scopes_request_an_id_token() {
+        assert!(OAuthProvider::Google
+            .default_scopes()
+            .split(' ')
+            .any(|s| s == "openid"));
+        assert!(OAuthProvider::Microsoft365
+            .default_scopes()
+            .split(' ')
+            .any(|s| s == "openid"));
     }
 
     #[test]

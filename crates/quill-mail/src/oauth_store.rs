@@ -3,7 +3,7 @@
 //! `quill_store::credentials`).
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -48,6 +48,11 @@ pub fn delete_oauth_client_config(address: &str) -> Result<(), String> {
 }
 
 static TOKEN_CACHE: Mutex<Option<HashMap<String, CachedToken>>> = Mutex::new(None);
+/// Refreshes are rare, but several IMAP/SMTP operations can discover the same
+/// expired token at once. Serialize the refresh-and-save sequence so they do
+/// not race to rotate a refresh token or overwrite one another's cache entry.
+static REFRESH_LOCK: LazyLock<futures::lock::Mutex<()>> =
+    LazyLock::new(|| futures::lock::Mutex::new(()));
 
 #[derive(Clone)]
 struct CachedToken {
@@ -105,7 +110,22 @@ pub async fn get_valid_access_token(
 ) -> Result<String, String> {
     let key = format!("{address}:{provider:?}");
 
-    // Check memory cache
+    // Check memory cache before waiting for another refresh.
+    {
+        let lock = TOKEN_CACHE.lock().map_err(|e| e.to_string())?;
+        if let Some(ref map) = *lock {
+            if let Some(cached) = map.get(&key) {
+                if Instant::now() < cached.expires_at {
+                    return Ok(cached.access_token.clone());
+                }
+            }
+        }
+    }
+
+    // A concurrent connection may have refreshed this token while this task
+    // waited. Re-check while holding the single-flight guard before touching
+    // the keychain or provider token endpoint.
+    let _refresh_guard = REFRESH_LOCK.lock().await;
     {
         let lock = TOKEN_CACHE.lock().map_err(|e| e.to_string())?;
         if let Some(ref map) = *lock {

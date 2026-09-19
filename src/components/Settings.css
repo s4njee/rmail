@@ -303,7 +303,7 @@
   background: var(--color-fill-subtle);
 }
 
-.queue-row[data-state="stuck"] {
+.queue-row[data-state="failed"] {
   border-color: var(--color-offline);
 }
 

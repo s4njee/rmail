@@ -66,6 +66,27 @@ pub fn compute_thread_id(
     }
 }
 
+/// Computes a thread id when the message's own Message-ID is available. Root
+/// messages have neither References nor In-Reply-To, so their own ID lets
+/// replies join the same conversation even when they arrive first.
+pub fn compute_thread_id_with_message_id(
+    message_id: Option<&str>,
+    in_reply_to: Option<&str>,
+    references: Option<&str>,
+    subject: &str,
+) -> String {
+    if references.is_some() || in_reply_to.is_some() {
+        return compute_thread_id(in_reply_to, references, subject);
+    }
+    if let Some(message_id) = message_id {
+        let clean = message_id.trim().trim_matches(|c| c == '<' || c == '>');
+        if !clean.is_empty() {
+            return format!("th_ref_{clean}");
+        }
+    }
+    compute_thread_id(None, None, subject)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +121,18 @@ mod tests {
         let tid1 = compute_thread_id(None, None, "Design System v2");
         let tid2 = compute_thread_id(None, None, "Re: [quill] Design System v2");
         assert_eq!(tid1, tid2);
+    }
+
+    #[test]
+    fn root_message_id_and_reply_share_a_thread() {
+        let root =
+            compute_thread_id_with_message_id(Some("<root@example.test>"), None, None, "Planning");
+        let reply = compute_thread_id_with_message_id(
+            Some("<reply@example.test>"),
+            Some("<root@example.test>"),
+            None,
+            "Re: Planning",
+        );
+        assert_eq!(root, reply);
     }
 }

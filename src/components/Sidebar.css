@@ -94,6 +94,16 @@
   flex-direction: column;
 }
 
+.sidebar__account-status {
+  margin-left: auto;
+  max-width: 8rem;
+  overflow: hidden;
+  color: var(--color-text-faint);
+  font-size: var(--fs-11px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Folder rows (5.2) */
 .sidebar__row {
   display: flex;

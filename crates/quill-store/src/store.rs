@@ -366,6 +366,12 @@ impl MemoryStore {
             server: info.server.clone(),
             port: info.port,
             tls: info.tls,
+            imap_security: if info.tls { "ssl" } else { "plain" }.into(),
+            allow_plaintext_login: false,
+            smtp_server: info.server.clone(),
+            smtp_port: 587,
+            smtp_security: "starttls".into(),
+            smtp_username: info.address.clone(),
             folder_count: 0,
             last_error: None,
         };

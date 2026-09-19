@@ -3,46 +3,73 @@
 /**
  * An email account (sidebar, Settings → Accounts).
  */
-export type Account = { id: number, address: string, 
-/**
- * `"IMAP"` or `"Bridge"`.
- */
-protocol: string, 
-/**
- * `"every 2 min"`, `"on open"`, or `"manual"`.
- */
-sync_mode: string, 
-/**
- * Account dot color, hex (e.g. `"#3b5bdb"`).
- */
-color: string, 
-/**
- * On-disk bytes for this account (footprint + Settings → Accounts).
- * `number` in TS: crosses IPC as a JSON number.
- */
-local_bytes: number, 
-/**
- * Auth state for the account row — a boolean, never a credential.
- */
-connected: boolean, 
-/**
- * IMAP server hostname.
- */
-server: string, 
-/**
- * IMAP server port.
- */
-port: number, 
-/**
- * Use TLS on the connection.
- */
-tls: boolean, 
-/**
- * Number of folders the account has configured (0 = not shown in the
- * Settings detail line).
- */
-folder_count: number, 
-/**
- * Last sync or connection error message, if any.
- */
-last_error: string | null, };
+export type Account = {
+  id: number;
+  address: string;
+  /**
+   * `"IMAP"` or `"Bridge"`.
+   */
+  protocol: string;
+  /**
+   * `"every 2 min"`, `"on open"`, or `"manual"`.
+   */
+  sync_mode: string;
+  /**
+   * Account dot color, hex (e.g. `"#3b5bdb"`).
+   */
+  color: string;
+  /**
+   * On-disk bytes for this account (footprint + Settings → Accounts).
+   * `number` in TS: crosses IPC as a JSON number.
+   */
+  local_bytes: number;
+  /**
+   * Auth state for the account row — a boolean, never a credential.
+   */
+  connected: boolean;
+  /**
+   * IMAP server hostname.
+   */
+  server: string;
+  /**
+   * IMAP server port.
+   */
+  port: number;
+  /**
+   * Use TLS on the connection.
+   */
+  tls: boolean;
+  /**
+   * IMAP transport: `ssl`, `starttls`, or `plain` (localhost bridge only).
+   */
+  imap_security: string;
+  /**
+   * Whether password LOGIN may proceed without TLS for a localhost bridge.
+   */
+  allow_plaintext_login: boolean;
+  /**
+   * SMTP submission hostname, distinct from the IMAP server.
+   */
+  smtp_server: string;
+  /**
+   * SMTP submission port.
+   */
+  smtp_port: number;
+  /**
+   * SMTP transport: `ssl`, `starttls`, or `plain` (localhost bridge only).
+   */
+  smtp_security: string;
+  /**
+   * SMTP AUTH username; commonly, but not necessarily, the email address.
+   */
+  smtp_username: string;
+  /**
+   * Number of folders the account has configured (0 = not shown in the
+   * Settings detail line).
+   */
+  folder_count: number;
+  /**
+   * Last sync or connection error message, if any.
+   */
+  last_error: string | null;
+};

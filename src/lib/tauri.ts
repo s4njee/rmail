@@ -30,6 +30,7 @@ import type { NewAccount } from "./ipc/NewAccount";
 import type { OAuthInitPayload } from "./ipc/OAuthInitPayload";
 import type { OAuthWaitResult } from "./ipc/OAuthWaitResult";
 import type { OutgoingMessage } from "./ipc/OutgoingMessage";
+import type { OutgoingAttachment } from "./ipc/OutgoingAttachment";
 import type { ProviderPreset } from "./ipc/ProviderPreset";
 import type { QueuedAction } from "./ipc/QueuedAction";
 import type { RulePreview } from "./ipc/RulePreview";
@@ -281,9 +282,18 @@ export const listAccounts = async (): Promise<Account[]> => {
 export const addAccount = async (
   info: NewAccount,
   _password: string,
+  smtp?: { host: string; port: number; tls: boolean },
+  smtpSecurity?: string,
+  smtpUsername?: string,
 ): Promise<Account> => {
   if (isTauri())
-    return invoke<Account>("add_account", { info, password: _password });
+    return invoke<Account>("add_account", {
+      info,
+      password: _password,
+      smtp,
+      smtpSecurity,
+      smtpUsername,
+    });
   const newAcc: Account = {
     id: mockAccounts.length + 1,
     address: info.address,
@@ -295,6 +305,12 @@ export const addAccount = async (
     server: info.server,
     port: info.port,
     tls: info.tls,
+    imap_security: info.tls ? "ssl" : "plain",
+    allow_plaintext_login: false,
+    smtp_server: smtp?.host ?? info.server,
+    smtp_port: smtp?.port ?? 587,
+    smtp_security: smtpSecurity ?? "starttls",
+    smtp_username: smtpUsername ?? info.address,
     folder_count: 1,
     last_error: null,
   };
@@ -320,6 +336,12 @@ export const updateAccount = async (
       server: edit.server,
       port: edit.port,
       tls: edit.tls,
+      imap_security: edit.imapSecurity,
+      allow_plaintext_login: edit.allowPlaintextLogin,
+      smtp_server: edit.smtpServer,
+      smtp_port: edit.smtpPort,
+      smtp_security: edit.smtpSecurity,
+      smtp_username: edit.smtpUsername,
       sync_mode: edit.syncMode,
       color: edit.color,
     };
@@ -574,6 +596,13 @@ export const deleteMessage = async (id: number): Promise<void> => {
   if (isTauri()) return invoke<void>("delete", { id });
 };
 
+export const deleteMessagePermanently = async (
+  id: number,
+  confirmed: boolean,
+): Promise<void> => {
+  if (isTauri()) return invoke<void>("delete_permanently", { id, confirmed });
+};
+
 // P1.1: bulk triage + undo-delete
 export const bulkAction = async (
   accountId: number,
@@ -623,6 +652,14 @@ export const listScheduled = async (): Promise<ScheduledMessage[]> => {
 
 export const cancelScheduled = async (id: number): Promise<void> => {
   if (isTauri()) return invoke<void>("cancel_scheduled", { id });
+};
+
+export const retryOutboxMessage = async (id: number): Promise<void> => {
+  if (isTauri()) return invoke<void>("retry_outbox_message", { id });
+};
+
+export const sendOutboxNow = async (id: number): Promise<void> => {
+  if (isTauri()) return invoke<void>("send_outbox_now", { id });
 };
 
 // P1.2 recipient suggestions + contact groups
@@ -717,13 +754,36 @@ export const suggestGroups = async (
   return [];
 };
 
-export const sendMessage = async (outgoing: OutgoingMessage): Promise<void> => {
-  if (isTauri()) return invoke<void>("send", { outgoing });
+export const sendMessage = async (
+  outgoing: OutgoingMessage,
+  draft?: string,
+): Promise<void> => {
+  if (isTauri()) return invoke<void>("send", { outgoing, draft });
 };
 
 export const attachmentPath = async (id: number): Promise<string | null> => {
   if (isTauri()) return invoke<string | null>("attachment_path", { id });
   return null;
+};
+
+export const inlineAttachmentPaths = async (
+  messageId: number,
+): Promise<Record<string, string>> => {
+  if (isTauri()) {
+    return invoke<Record<string, string>>("inline_attachment_paths", {
+      messageId,
+    });
+  }
+  return {};
+};
+
+export const loadAttachmentForForward = async (
+  id: number,
+): Promise<OutgoingAttachment> => {
+  if (isTauri()) {
+    return invoke<OutgoingAttachment>("load_attachment_for_forward", { id });
+  }
+  throw new Error("attachment is unavailable offline");
 };
 
 // Calendar events
@@ -917,6 +977,16 @@ export const discoverCalDav = async (
 };
 
 // OAuth2 PKCE Sign-in (Roadmap 3.1)
+export type OAuthProviderId = "google" | "microsoft365";
+
+/** Providers whose browser sign-in is built into this copy of Quill. */
+export const oauthAvailableProviders = async (): Promise<OAuthProviderId[]> => {
+  if (isTauri()) {
+    return invoke<OAuthProviderId[]>("oauth_available_providers");
+  }
+  return ["google", "microsoft365"];
+};
+
 export const getOAuthInit = async (
   provider: "google" | "microsoft365",
   clientId?: string,
@@ -968,6 +1038,14 @@ export const exchangeOAuthCode = async (
     server: provider === "google" ? "imap.gmail.com" : "outlook.office365.com",
     port: 993,
     tls: true,
+    imap_security: "ssl",
+    allow_plaintext_login: false,
+    smtp_server:
+      provider === "google" ? "smtp.gmail.com" : "smtp.office365.com",
+    smtp_port: provider === "google" ? 465 : 587,
+    smtp_security: provider === "google" ? "ssl" : "starttls",
+    smtp_username:
+      provider === "google" ? "user@gmail.com" : "user@outlook.com",
     folder_count: 5,
     last_error: null,
   };
@@ -1016,12 +1094,12 @@ export const saveAttachment = async (
 
 export const saveAllAttachments = async (
   messageId: number,
-  destinationDir: string,
+  destinationDir?: string,
 ): Promise<number> => {
   if (isTauri()) {
     return invoke<number>("save_all_attachments", {
       messageId,
-      destinationDir,
+      destinationDir: destinationDir ?? null,
     });
   }
   return 1;

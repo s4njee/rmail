@@ -16,15 +16,15 @@ use std::collections::{BTreeMap, HashSet};
 
 use async_imap::types::{Fetch, Flag, Name, NameAttribute};
 use futures::TryStreamExt;
-use mail_parser::{Address, MessageParser, MimeHeaders};
+use mail_parser::{Address, MessageParser, MimeHeaders, PartType};
 use quill_store::folders::{
     classify_folder_kind, display_name_of, infer_namespace, local_name_for,
 };
 use quill_store::sanitize::snippet_from_bodies;
 use quill_store::sqlite::SqliteStore;
 use quill_store::types::{
-    Account, ActionType, Attachment, DiscoveredMailbox, FolderKind, MessageId,
-    MessageProgressUpdate, MessageRow, OutgoingMessage, Recipient,
+    Account, ActionType, AttachmentData, DiscoveredMailbox, FolderKind, MessageId,
+    MessageProgressUpdate, MessageRow, Recipient,
 };
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
@@ -42,12 +42,6 @@ impl<T: futures::io::AsyncRead + futures::io::AsyncWrite + Unpin + Send + std::f
 }
 
 pub type Stream = Box<dyn IoStream>;
-
-/// Retention window: keep only this many days of mail. Anything older is
-/// pruned after each sync and skipped by the initial refetch (a busy Gmail
-/// account can hold a million+ messages otherwise).
-const RETAIN_DAYS: i64 = 7;
-const RETAIN_DAYS_MS: i64 = RETAIN_DAYS * 24 * 3600 * 1000;
 
 /// SASL XOAUTH2 authenticator for `async_imap` — produces
 /// `user=…\x01auth=Bearer …\x01\x01`; async-imap base64-encodes it.
@@ -161,7 +155,11 @@ fn write_envelope(
     let Some((row, uid, parsed)) = envelope_row(account, folder, uidvalidity, fetch) else {
         return Ok(None);
     };
-    let message_id = store.upsert_fetched_message(
+    let envelope_message_id = fetch
+        .envelope()
+        .and_then(|envelope| envelope.message_id.as_ref())
+        .map(|value| String::from_utf8_lossy(value).into_owned());
+    let message_id = store.upsert_fetched_message_with_message_id(
         account.id,
         folder,
         server_folder,
@@ -177,11 +175,11 @@ fn write_envelope(
         row.answered,
         row.forwarded,
         row.has_attachments,
+        envelope_message_id.as_deref(),
     )?;
-    // The full body came down with the envelope — persist it (plus its
-    // recipients/attachment metadata) so the reading pane, search index, and
-    // attachment icons have it without a second fetch. Bodies land together
-    // with the row that lists them.
+    // When a body was requested with this fetch, persist it (plus its
+    // recipients/attachment metadata). Header-only fetches still create or
+    // refresh the row without disturbing a body already cached locally.
     if let Some(p) = parsed {
         store.save_message_body_and_attachments(
             message_id,
@@ -213,7 +211,7 @@ pub async fn connect(
         .await
         .map_err(|e| format!("connect {addr}: {e}"))?;
 
-    let stream: Stream = if account.tls {
+    let stream: Stream = if account.imap_security == "ssl" {
         let tls = async_native_tls::TlsConnector::new();
         let tls_stream = tls
             .connect(&account.server, tcp.compat())
@@ -231,11 +229,32 @@ pub async fn connect(
         .map_err(|e| format!("greeting: {e}"))?
         .ok_or_else(|| "no greeting from server".to_string())?;
 
-    match credential {
-        Credential::Password(password) => client
-            .login(&account.address, password)
+    if account.imap_security == "starttls" {
+        client
+            .run_command_and_check_ok("STARTTLS", None)
             .await
-            .map_err(|(e, _)| format!("login for {}: {e}", account.address)),
+            .map_err(|e| format!("STARTTLS: {e}"))?;
+        let tls = async_native_tls::TlsConnector::new();
+        let tls_stream = tls
+            .connect(&account.server, client.into_inner())
+            .await
+            .map_err(|e| format!("STARTTLS to {}: {e}", account.server))?;
+        client = async_imap::Client::new(Box::new(tls_stream));
+    }
+
+    match credential {
+        Credential::Password(password) => {
+            if account.imap_security == "plain"
+                && !(account.allow_plaintext_login
+                    && matches!(account.server.as_str(), "localhost" | "127.0.0.1" | "::1"))
+            {
+                return Err("refusing plaintext IMAP LOGIN except for an explicitly enabled localhost bridge".into());
+            }
+            client
+                .login(&account.address, password)
+                .await
+                .map_err(|(e, _)| format!("login for {}: {e}", account.address))
+        }
         Credential::OAuth { address, provider } => {
             let access_token = get_valid_access_token(address, *provider).await?;
             let auth = Xoauth2Authenticator {
@@ -283,14 +302,6 @@ pub async fn discover_folders(
             .attributes()
             .iter()
             .any(|a| matches!(a, NameAttribute::NoSelect));
-        // Gmail's [Gmail]/All Mail mirrors every message in the account;
-        // syncing it would duplicate bodies and bloat the local DB (policy in
-        // docs/provider-quirks.md). Keep it out of the tree too.
-        if server_name.eq_ignore_ascii_case("[Gmail]/All Mail")
-            || server_name.eq_ignore_ascii_case("[Google Mail]/All Mail")
-        {
-            continue;
-        }
         let kind = detect_folder_kind(&server_name, name.attributes());
         // A second mailbox classified as Inbox would share the local key and
         // wipe the real inbox on refetch. Custom kinds keep their server name,
@@ -303,7 +314,13 @@ pub async fn discover_folders(
             .filter(|d| !d.is_empty())
             .unwrap_or("/")
             .to_string();
-        let local_name = canonical_folder_name(&server_name, kind);
+        // Persist Gmail/Google Mail All Mail for provider actions, but keep it
+        // out of the normal sync set so it does not duplicate every message.
+        let local_name = if is_all_mail_mailbox(&server_name) {
+            server_name.clone()
+        } else {
+            canonical_folder_name(&server_name, kind)
+        };
         if !seen_local.insert(local_name.clone()) {
             continue;
         }
@@ -330,6 +347,7 @@ pub async fn discover_folders(
             fallback_folder("Drafts", FolderKind::Drafts),
             fallback_folder("Sent", FolderKind::Sent),
             fallback_folder("Archive", FolderKind::Archive),
+            fallback_folder("Trash", FolderKind::Trash),
         ];
     }
 
@@ -348,38 +366,21 @@ fn fallback_folder(server_name: &str, kind: FolderKind) -> DiscoveredFolder {
     }
 }
 
-/// UID range for a full refetch, bounded to the retention window via
-/// `UID SEARCH SINCE`. `None` means the search succeeded but found nothing in
-/// the window (the folder was already wiped — fetch nothing). A search failure
-/// falls back to the full range so we never miss mail.
-async fn bounded_fetch_range(session: &mut async_imap::Session<Stream>) -> Option<String> {
-    let since = (chrono::Utc::now() - chrono::Duration::days(RETAIN_DAYS))
-        .format("%d-%b-%Y")
-        .to_string();
-    match session.uid_search(&format!("SINCE {since}")).await {
-        Ok(uids) if uids.is_empty() => None,
-        Ok(uids) => {
-            let mut sorted: Vec<u32> = uids.into_iter().collect();
-            sorted.sort_unstable();
-            Some(
-                sorted
-                    .iter()
-                    .map(|u| u.to_string())
-                    .collect::<Vec<_>>()
-                    .join(","),
-            )
-        }
-        Err(_) => Some("1:*".to_string()),
-    }
+fn is_all_mail_mailbox(server_name: &str) -> bool {
+    let lower = server_name.to_ascii_lowercase();
+    lower == "all"
+        || lower == "all mail"
+        || lower == "[gmail]/all mail"
+        || lower == "[google mail]/all mail"
+        || lower.ends_with("/all mail")
+        || lower.ends_with(".all mail")
 }
 
 /// Sync every tracked folder for one account. Replays pending offline actions
 /// first, then incrementally synchronizes each folder.
 ///
-/// `replay_actions` gates the offline-action replay. Only the periodic sync
-/// path replays — the IDLE push worker must not, or the two (which run
-/// concurrently for the same account) would both read a queued `Send` and
-/// deliver it twice.
+/// `replay_actions` gates the offline-action replay. Periodic, on-open, and
+/// explicit refresh syncs replay; the concurrent IDLE push worker does not.
 pub async fn sync_account(
     store: &SqliteStore,
     account: &Account,
@@ -406,6 +407,11 @@ pub async fn sync_account(
         }
     }
 
+    // A server MOVE assigns a destination UID. Resolve optimistic rows by
+    // Message-ID before normal folder sync, including Gmail All Mail (which is
+    // intentionally excluded from full synchronization to avoid duplicates).
+    resolve_pending_locations(store, account.id, &mut session).await;
+
     // 2. Discover server folders.
     let discovered = match discover_folders(&mut session).await {
         Ok(f) => f,
@@ -414,6 +420,7 @@ pub async fn sync_account(
             fallback_folder("Drafts", FolderKind::Drafts),
             fallback_folder("Sent", FolderKind::Sent),
             fallback_folder("Archive", FolderKind::Archive),
+            fallback_folder("Trash", FolderKind::Trash),
         ],
     };
 
@@ -431,7 +438,7 @@ pub async fn sync_account(
     let folders_to_sync: Vec<DiscoveredFolder> = if selection.is_empty() {
         discovered
             .iter()
-            .filter(|f| f.selectable)
+            .filter(|f| f.selectable && !is_all_mail_mailbox(&f.server_name))
             .cloned()
             .collect()
     } else {
@@ -453,7 +460,11 @@ pub async fn sync_account(
         let enabled = store.enabled_folder_set(account.id).unwrap_or_default();
         discovered
             .into_iter()
-            .filter(|f| f.selectable && enabled.contains(&f.server_name))
+            .filter(|f| {
+                f.selectable
+                    && !is_all_mail_mailbox(&f.server_name)
+                    && enabled.contains(&f.server_name)
+            })
             .collect()
     };
 
@@ -480,13 +491,48 @@ pub async fn sync_account(
         }
     }
 
-    // Retention: keep only the last RETAIN_DAYS of mail.
-    if let Err(e) = store.prune_messages_before(now_ms() - RETAIN_DAYS_MS) {
-        log::warn!("prune account {}: {e}", account.id);
+    // Headers are retained for the entire mailbox. Only cached bodies and
+    // attachment files are evicted according to the account's cache window.
+    let cutoff = store.body_cache_cutoff_ms(account.id, now_ms());
+    if let Err(e) = store.evict_cached_bodies_before(account.id, cutoff) {
+        log::warn!("evict cached bodies for account {}: {e}", account.id);
     }
 
     let _ = session.logout().await;
     Ok(outcome)
+}
+
+async fn resolve_pending_locations(
+    store: &SqliteStore,
+    account_id: u32,
+    session: &mut async_imap::Session<Stream>,
+) {
+    let Ok(pending) = store.pending_message_locations(account_id) else {
+        return;
+    };
+    for (message_id, server_folder, message_id_header) in pending {
+        let Ok(mailbox) = session.select(&server_folder).await else {
+            continue;
+        };
+        let Some(uidvalidity) = mailbox.uid_validity else {
+            continue;
+        };
+        let query = format!(
+            "HEADER Message-ID \"{}\"",
+            message_id_header.replace('"', "")
+        );
+        let Ok(matches) = session.uid_search(query).await else {
+            continue;
+        };
+        if let Some(uid) = matches.iter().next().copied() {
+            let _ = store.resolve_pending_message_location(
+                message_id,
+                &server_folder,
+                uid,
+                uidvalidity,
+            );
+        }
+    }
 }
 
 /// Synchronize a single folder incrementally.
@@ -517,36 +563,131 @@ pub async fn sync_folder(
     let mut complete = true;
 
     if full {
-        // UIDVALIDITY changed (or no watermark). The folder's local rows are
-        // reconciled against the refetched set below; no upfront wipe, so an
-        // interrupted refetch leaves the previous rows in place.
+        // UIDVALIDITY makes UID identity invalid. Clear the previous local
+        // image before a full resync so a UID reused by the server cannot
+        // update or display an unrelated old message.
+        if last_validity != 0 {
+            store.clear_folder_for_uidvalidity_change(account.id, local_folder)?;
+        }
         if mailbox.exists > 0 {
-            // Bound the refetch to the retention window so a huge mailbox
-            // isn't downloaded in full (older rows are pruned anyway).
-            match bounded_fetch_range(session).await {
-                Some(range) => {
-                    // 1. Reconcile flags and collect the server UID set across
-                    //    the whole window — a light (flags-only) fetch.
-                    let mut server_uids = Vec::new();
-                    match session.uid_fetch(&range, "(UID FLAGS)").await {
+            // Reconcile the complete mailbox using headers first. Body bytes
+            // are fetched only for new/missing messages inside the cache
+            // window, so old mail remains immediately usable as headers and is
+            // fetched on demand when opened.
+            let existing: HashSet<u32> = store
+                .folder_uids(account.id, local_folder, uidvalidity)
+                .into_iter()
+                .collect();
+            let missing: HashSet<u32> = store
+                .list_messages_missing_bodies_since(
+                    account.id,
+                    store.body_cache_cutoff_ms(account.id, now_ms()),
+                )?
+                .into_iter()
+                .filter(|p| p.folder == local_folder)
+                .map(|p| p.uid)
+                .collect();
+            let cutoff = store.body_cache_cutoff_ms(account.id, now_ms());
+            let mut server_uids = Vec::new();
+            let mut body_uids = missing;
+            // SEARCH gives us a descending UID order so the first header
+            // batches are the newest mail. A search failure falls back to the
+            // standard full range and still retains every header.
+            let mut all_uids: Vec<u32> = session
+                .uid_search("ALL")
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            all_uids.sort_unstable_by(|a, b| b.cmp(a));
+            let header_ranges: Vec<String> = if all_uids.is_empty() {
+                vec!["1:*".to_string()]
+            } else {
+                all_uids
+                    .chunks(200)
+                    .map(|chunk| {
+                        chunk
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .collect()
+            };
+            for range in header_ranges {
+                match session
+                    .uid_fetch(&range, "(UID FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE)")
+                    .await
+                {
+                    Ok(mut fetches) => loop {
+                        match fetches.try_next().await {
+                            Ok(Some(fetch)) => {
+                                if let Some(uid) = fetch.uid {
+                                    server_uids.push(uid);
+                                    if !existing.contains(&uid)
+                                        && (cutoff == i64::MIN
+                                            || fetch
+                                                .internal_date()
+                                                .map(|d| d.timestamp_millis() >= cutoff)
+                                                .unwrap_or(true))
+                                    {
+                                        body_uids.insert(uid);
+                                    }
+                                    if write_envelope(
+                                        store,
+                                        account,
+                                        local_folder,
+                                        server_folder,
+                                        uidvalidity,
+                                        &fetch,
+                                        progress,
+                                    )?
+                                    .is_some()
+                                    {
+                                        fetched_count += 1;
+                                    }
+                                }
+                            }
+                            Ok(None) => break,
+                            Err(_) => {
+                                complete = false;
+                                break;
+                            }
+                        }
+                    },
+                    Err(_) => complete = false,
+                }
+                if !complete {
+                    break;
+                }
+            }
+
+            if complete && !body_uids.is_empty() {
+                let body_query = "(UID FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE BODY.PEEK[])";
+                let mut body_uids: Vec<u32> = body_uids.into_iter().collect();
+                body_uids.sort_unstable_by(|a, b| b.cmp(a));
+                for chunk in body_uids.chunks(200) {
+                    let body_range = chunk
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    match session.uid_fetch(&body_range, body_query).await {
                         Ok(mut fetches) => loop {
                             match fetches.try_next().await {
                                 Ok(Some(fetch)) => {
-                                    if let Some(uid) = fetch.uid {
-                                        server_uids.push(uid);
-                                        let unread =
-                                            !fetch.flags().any(|f| matches!(f, Flag::Seen));
-                                        let flagged =
-                                            fetch.flags().any(|f| matches!(f, Flag::Flagged));
-                                        let _ = store.update_message_flags_by_uid(
-                                            account.id,
-                                            local_folder,
-                                            uid,
-                                            unread,
-                                            flagged,
-                                            false,
-                                            false,
-                                        );
+                                    if write_envelope(
+                                        store,
+                                        account,
+                                        local_folder,
+                                        server_folder,
+                                        uidvalidity,
+                                        &fetch,
+                                        progress,
+                                    )?
+                                    .is_some()
+                                    {
+                                        fetched_count += 1;
                                     }
                                 }
                                 Ok(None) => break,
@@ -558,67 +699,24 @@ pub async fn sync_folder(
                         },
                         Err(_) => complete = false,
                     }
-
-                    // 2. Fetch bodies only for messages we don't already have.
-                    //    Re-downloading every existing body on each catch-up
-                    //    cycle is what stalled a busy Inbox before reaching new
-                    //    mail (and blocked the store lock the whole time).
-                    if complete {
-                        let existing = store.folder_uids(account.id, local_folder);
-                        let new_uids: Vec<u32> = server_uids
-                            .iter()
-                            .copied()
-                            .filter(|u| !existing.contains(u))
-                            .collect();
-                        if !new_uids.is_empty() {
-                            let new_range = new_uids
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect::<Vec<_>>()
-                                .join(",");
-                            let body_query = "(UID FLAGS INTERNALDATE ENVELOPE BODY.PEEK[])";
-                            match session.uid_fetch(&new_range, body_query).await {
-                                Ok(mut fetches) => loop {
-                                    match fetches.try_next().await {
-                                        Ok(Some(fetch)) => {
-                                            if let Some(_uid) = write_envelope(
-                                                store,
-                                                account,
-                                                local_folder,
-                                                server_folder,
-                                                uidvalidity,
-                                                &fetch,
-                                                progress,
-                                            )? {
-                                                fetched_count += 1;
-                                            }
-                                        }
-                                        Ok(None) => break,
-                                        Err(_) => {
-                                            complete = false;
-                                            break;
-                                        }
-                                    }
-                                },
-                                Err(_) => complete = false,
-                            }
-                        }
+                    if !complete {
+                        break;
                     }
-
-                    // Only prune locally-stored messages when the whole refetch
-                    // completed cleanly; on a mid-stream error keep what we have.
-                    if complete {
-                        store.delete_messages_not_in(account.id, local_folder, &server_uids)?;
-                    }
-                }
-                None => {
-                    // The search found nothing in the retention window: the
-                    // folder is effectively empty, so drop stale local rows.
-                    store.delete_messages_not_in(account.id, local_folder, &[])?;
                 }
             }
+
+            // Only reconcile expunges when the complete header stream arrived;
+            // a partial stream must never delete unseen rows.
+            if complete {
+                store.delete_messages_not_in(
+                    account.id,
+                    local_folder,
+                    uidvalidity,
+                    &server_uids,
+                )?;
+            }
         } else {
-            store.delete_messages_not_in(account.id, local_folder, &[])?;
+            store.delete_messages_not_in(account.id, local_folder, uidvalidity, &[])?;
         }
     } else {
         // Incremental:
@@ -626,7 +724,7 @@ pub async fn sync_folder(
         if uidnext > last_next as u32 && last_next > 0 {
             let start = last_next as u32;
             let range = format!("{start}:*");
-            let query = "(UID FLAGS INTERNALDATE ENVELOPE BODY.PEEK[])";
+            let query = "(UID FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE BODY.PEEK[])";
             match session.uid_fetch(&range, query).await {
                 Ok(mut fetches) => loop {
                     match fetches.try_next().await {
@@ -680,15 +778,16 @@ pub async fn sync_folder(
                                         }
                                         _ => false,
                                     });
-                                    let _ = store.update_message_flags_by_uid(
+                                    store.update_message_flags_by_uid(
                                         account.id,
                                         local_folder,
                                         uid,
+                                        uidvalidity,
                                         unread,
                                         flagged,
                                         answered,
                                         forwarded,
-                                    );
+                                    )?;
                                 }
                             }
                             Ok(None) => break,
@@ -702,14 +801,18 @@ pub async fn sync_folder(
                     // read; a partial stream would delete every message whose
                     // UID hadn't been seen yet.
                     if complete {
-                        let _ =
-                            store.delete_messages_not_in(account.id, local_folder, &server_uids);
+                        store.delete_messages_not_in(
+                            account.id,
+                            local_folder,
+                            uidvalidity,
+                            &server_uids,
+                        )?;
                     }
                 }
                 Err(_) => complete = false,
             }
         } else {
-            let _ = store.delete_messages_not_in(account.id, local_folder, &[]);
+            store.delete_messages_not_in(account.id, local_folder, uidvalidity, &[])?;
         }
     }
 
@@ -833,17 +936,19 @@ async fn fetch_body_chunked(
     Ok(body)
 }
 
-/// Backfill stored bodies — and therefore real snippets — for messages that
-/// were synced before the sync fetched full bodies. Runs once per account at
-/// startup; idempotent (only messages with no stored body are fetched, so an
-/// interrupted run resumes where it left off).
+/// Backfill stored bodies — and therefore real snippets — for recent messages
+/// that were synced before the sync fetched full bodies. Runs once per account
+/// at startup; older bodies remain on-demand and an interrupted run resumes.
 pub async fn backfill_account_bodies(
     store: &SqliteStore,
     account: &Account,
     credential: &Credential,
     progress: &Option<SyncProgress>,
 ) -> Result<usize, String> {
-    let pending = store.list_messages_missing_bodies(account.id)?;
+    let pending = store.list_messages_missing_bodies_since(
+        account.id,
+        store.body_cache_cutoff_ms(account.id, now_ms()),
+    )?;
     if pending.is_empty() {
         return Ok(0);
     }
@@ -879,7 +984,7 @@ pub async fn backfill_account_bodies(
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join(",");
-        let query = "(UID FLAGS INTERNALDATE ENVELOPE BODY.PEEK[])";
+        let query = "(UID FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE BODY.PEEK[])";
         let mut fetches = session
             .uid_fetch(range, &query)
             .await
@@ -916,12 +1021,16 @@ pub async fn replay_pending_actions(
     store: &SqliteStore,
     account: &Account,
     session: &mut async_imap::Session<Stream>,
-    credential: &Credential,
+    _credential: &Credential,
 ) -> Result<(), String> {
-    let actions = store.peek_pending_actions(account.id);
+    let actions = store.peek_pending_actions(account.id)?;
     let mut current_folder = String::new();
+    let mut current_uidvalidity = None;
 
     for action in actions {
+        if !store.claim_action(action.id)? {
+            continue;
+        }
         // SMTP sends don't operate on a mailbox, and the folder recorded for
         // them ("Outbox", or "Sent" for RSVP replies) is often not a real IMAP
         // mailbox — SELECTing it would fail and block every queued send
@@ -936,165 +1045,284 @@ pub async fn replay_pending_actions(
                 | ActionType::UnsubscribeFolder
         );
         if needs_mailbox && !action.folder.is_empty() && action.folder != current_folder {
-            if let Err(e) = session.select(&action.folder).await {
-                log::warn!("select for replay {}: {e}", action.folder);
-                let _ = store.increment_action_retry(action.id);
-                continue;
+            match session.select(&action.folder).await {
+                Ok(mailbox) => current_uidvalidity = mailbox.uid_validity,
+                Err(e) => {
+                    let error = format!("select for replay {}: {e}", action.folder);
+                    log::warn!("{error}");
+                    let _ = store.rollback_action_local(
+                        account.id,
+                        action.action_type,
+                        &action.folder,
+                        action.uid,
+                        action.uidvalidity,
+                        action.message_id_header.as_deref(),
+                    );
+                    let _ = store.record_action_failure(action.id, &error);
+                    continue;
+                }
             }
             current_folder = action.folder.clone();
         }
 
-        let result = match action.action_type {
-            ActionType::MarkRead => {
-                if let Some(uid) = action.uid {
-                    set_seen(session, uid, true).await
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::MarkUnread => {
-                if let Some(uid) = action.uid {
-                    set_seen(session, uid, false).await
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::Star => {
-                if let Some(uid) = action.uid {
-                    set_flagged(session, uid, true).await
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::Unstar => {
-                if let Some(uid) = action.uid {
-                    set_flagged(session, uid, false).await
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::Archive => {
-                if let Some(uid) = action.uid {
-                    // Copy to the account's Archive mailbox first, and only
-                    // delete the source if the copy succeeded. Gmail has no
-                    // mailbox literally named "Archive" (its archive is
-                    // [Gmail]/All Mail, skipped in discovery), so the previous
-                    // copy-then-delete-anyway silently deleted the message
-                    // instead of archiving it.
-                    let archive_folder = store
-                        .archive_folder_name(account.id)
-                        .unwrap_or_else(|| "Archive".to_string());
-                    match session.uid_copy(format!("{uid}"), &archive_folder).await {
-                        Ok(_) => set_deleted(session, uid).await,
-                        Err(e) => Err(format!("archive copy to {archive_folder}: {e}")),
+        let mut effective_uidvalidity = action.uidvalidity;
+        let resolved_uid = if action.action_type.requires_message_uid() {
+            match (action.uid, action.uidvalidity, current_uidvalidity) {
+                (Some(uid), Some(expected), Some(actual)) if expected == actual => Some(uid),
+                (Some(_), _, _) => {
+                    let message_id = action.message_id_header.as_deref().ok_or_else(|| {
+                        "UIDVALIDITY changed and the action has no Message-ID to re-resolve"
+                            .to_string()
+                    });
+                    match message_id {
+                        Ok(message_id) => {
+                            let query =
+                                format!("HEADER Message-ID \"{}\"", message_id.replace('"', ""));
+                            match session.uid_search(query).await {
+                                Ok(mut matches) => {
+                                    let resolved = matches.drain().next();
+                                    if let (Some(uid), Some(uidvalidity)) =
+                                        (resolved, current_uidvalidity)
+                                    {
+                                        effective_uidvalidity = Some(uidvalidity);
+                                        let _ = store.update_action_identity(
+                                            action.id,
+                                            uid,
+                                            uidvalidity,
+                                        );
+                                    }
+                                    resolved
+                                }
+                                Err(e) => {
+                                    let error = format!("re-resolve after UIDVALIDITY change: {e}");
+                                    let _ = store.rollback_action_local(
+                                        account.id,
+                                        action.action_type,
+                                        &action.folder,
+                                        None,
+                                        None,
+                                        action.message_id_header.as_deref(),
+                                    );
+                                    let _ = store.record_action_failure(action.id, &error);
+                                    continue;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            let _ = store.rollback_action_local(
+                                account.id,
+                                action.action_type,
+                                &action.folder,
+                                None,
+                                None,
+                                action.message_id_header.as_deref(),
+                            );
+                            let _ = store.record_action_failure(action.id, &error);
+                            continue;
+                        }
                     }
-                } else {
-                    Ok(())
                 }
+                (None, _, _) if action.action_type == ActionType::Move => None,
+                _ => None,
             }
-            ActionType::Delete => {
-                if let Some(uid) = action.uid {
-                    set_deleted(session, uid).await
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::Move => {
-                if let (Some(uid), Some(ref dest)) = (action.uid, &action.payload) {
-                    match session.uid_copy(format!("{uid}"), dest).await {
-                        Ok(_) => set_deleted(session, uid).await,
-                        Err(e) => Err(format!("move copy to {dest}: {e}")),
-                    }
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::MarkAnswered => {
-                if let Some(uid) = action.uid {
-                    set_answered(session, uid, true).await
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::MarkForwarded => {
-                if let Some(uid) = action.uid {
-                    set_forwarded(session, uid, true).await
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::MarkJunk => {
-                if let Some(uid) = action.uid {
-                    let _ = session
-                        .uid_store(format!("{uid}"), "+FLAGS.SILENT ($Junk)")
-                        .await;
-                    let junk_folder = "Junk";
-                    match session.uid_copy(format!("{uid}"), junk_folder).await {
-                        Ok(_) => set_deleted(session, uid).await,
-                        Err(_) => Ok(()),
-                    }
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::MarkNotJunk => {
-                if let Some(uid) = action.uid {
-                    let _ = session
-                        .uid_store(format!("{uid}"), "-FLAGS.SILENT ($Junk)")
-                        .await;
-                    let _ = session
-                        .uid_store(format!("{uid}"), "+FLAGS.SILENT ($NotJunk)")
-                        .await;
-                    let inbox_folder = "INBOX";
-                    match session.uid_copy(format!("{uid}"), inbox_folder).await {
-                        Ok(_) => set_deleted(session, uid).await,
-                        Err(_) => Ok(()),
-                    }
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::Send => {
-                if let Some(ref payload) = action.payload {
-                    if let Ok(outgoing) = serde_json::from_str::<OutgoingMessage>(payload) {
-                        crate::smtp::send_email(account, &outgoing, credential).await
-                    } else {
-                        Ok(()) // invalid payload, drop
-                    }
-                } else {
-                    Ok(())
-                }
-            }
-            ActionType::CreateFolder => match session.create(&action.folder).await {
-                Ok(()) => {
-                    let _ = session.subscribe(&action.folder).await;
-                    Ok(())
-                }
-                Err(e) => Err(format!("create folder {}: {e}", action.folder)),
-            },
-            ActionType::RenameFolder => {
-                let dest = action
-                    .payload
-                    .as_deref()
-                    .ok_or_else(|| "rename folder missing destination".to_string())?;
-                session
-                    .rename(&action.folder, dest)
-                    .await
-                    .map_err(|e| format!("rename folder {} → {dest}: {e}", action.folder))
-            }
-            ActionType::DeleteFolder => session
-                .delete(&action.folder)
-                .await
-                .map_err(|e| format!("delete folder {}: {e}", action.folder)),
-            ActionType::SubscribeFolder => session
-                .subscribe(&action.folder)
-                .await
-                .map_err(|e| format!("subscribe {}: {e}", action.folder)),
-            ActionType::UnsubscribeFolder => session
-                .unsubscribe(&action.folder)
-                .await
-                .map_err(|e| format!("unsubscribe {}: {e}", action.folder)),
+        } else {
+            action.uid
         };
+
+        let restore_move = action.action_type == ActionType::Move
+            && action.uid.is_none()
+            && action.payload.as_deref().is_some_and(|payload| {
+                serde_json::from_str::<serde_json::Value>(payload)
+                    .ok()
+                    .and_then(|value| value.get("restore_to").cloned())
+                    .is_some()
+            });
+        if action.action_type.requires_message_uid() && resolved_uid.is_none() && !restore_move {
+            let error = "message UID is missing or could not be re-resolved";
+            let _ = store.rollback_action_local(
+                account.id,
+                action.action_type,
+                &action.folder,
+                None,
+                None,
+                action.message_id_header.as_deref(),
+            );
+            let _ = store.record_action_failure(action.id, error);
+            continue;
+        }
+
+        let result: Result<(), String> = async {
+            match action.action_type {
+                ActionType::MarkRead => {
+                    if let Some(uid) = resolved_uid {
+                        set_seen(session, uid, true).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::MarkUnread => {
+                    if let Some(uid) = resolved_uid {
+                        set_seen(session, uid, false).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::Star => {
+                    if let Some(uid) = resolved_uid {
+                        set_flagged(session, uid, true).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::Unstar => {
+                    if let Some(uid) = resolved_uid {
+                        set_flagged(session, uid, false).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::Archive => {
+                    if let Some(uid) = resolved_uid {
+                        // Copy to the account's Archive mailbox first, and only
+                        // delete the source if the copy succeeded. Gmail has no
+                        // mailbox literally named "Archive" (Gmail's archive is
+                        // [Gmail]/All Mail, persisted during discovery), so a
+                        // provider-aware target is required before moving.
+                        let archive_folder =
+                            store.archive_folder_name(account.id).ok_or_else(|| {
+                                "no Archive or All Mail mailbox configured for this account"
+                                    .to_string()
+                            })?;
+                        move_uid_to_mailbox(session, uid, &archive_folder).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::Delete => {
+                    if let Some(uid) = resolved_uid {
+                        let trash_folder = store
+                            .trash_folder_name(account.id)
+                            .unwrap_or_else(|| "Trash".to_string());
+                        if action.folder == trash_folder || is_spam_mailbox(&action.folder) {
+                            // Deleting from Trash is the explicit permanent-delete
+                            // path; scope UID EXPUNGE to this one UID.
+                            expunge_uid(session, uid).await
+                        } else {
+                            move_uid_to_mailbox(session, uid, &trash_folder).await
+                        }
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::Move => {
+                    if let Some(ref payload) = action.payload {
+                        let (dest, uid) = if let Ok(restore) =
+                            serde_json::from_str::<serde_json::Value>(payload)
+                        {
+                            let Some(dest) = restore.get("restore_to").and_then(|v| v.as_str())
+                            else {
+                                return Err("restore action missing destination".into());
+                            };
+                            let message_id = restore
+                                .get("message_id")
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| "restore action missing Message-ID".to_string())?;
+                            let query =
+                                format!("HEADER Message-ID \"{}\"", message_id.replace('"', ""));
+                            let mut matches = session
+                                .uid_search(query)
+                                .await
+                                .map_err(|e| format!("find message in Trash: {e}"))?;
+                            let uid = matches
+                                .drain()
+                                .next()
+                                .ok_or_else(|| "message no longer exists in Trash".to_string())?;
+                            (dest.to_string(), uid)
+                        } else if let Some(uid) = resolved_uid {
+                            (payload.clone(), uid)
+                        } else {
+                            return Ok(());
+                        };
+                        move_uid_to_mailbox(session, uid, &dest).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::MarkAnswered => {
+                    if let Some(uid) = resolved_uid {
+                        set_answered(session, uid, true).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::MarkForwarded => {
+                    if let Some(uid) = resolved_uid {
+                        set_forwarded(session, uid, true).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::MarkJunk => {
+                    if let Some(uid) = resolved_uid {
+                        let junk_folder = store
+                            .junk_folder_name(account.id)
+                            .ok_or_else(|| "no Junk/Spam mailbox configured".to_string())?;
+                        move_uid_to_mailbox(session, uid, &junk_folder).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::MarkNotJunk => {
+                    if let Some(uid) = resolved_uid {
+                        let _ = session
+                            .uid_store(format!("{uid}"), "-FLAGS.SILENT ($Junk)")
+                            .await;
+                        let _ = session
+                            .uid_store(format!("{uid}"), "+FLAGS.SILENT ($NotJunk)")
+                            .await;
+                        let inbox_folder = store
+                            .inbox_folder_name(account.id)
+                            .unwrap_or_else(|| "INBOX".to_string());
+                        move_uid_to_mailbox(session, uid, &inbox_folder).await
+                    } else {
+                        Ok(())
+                    }
+                }
+                ActionType::Send => Err(
+                    "legacy action-queue sends are never replayed; use the durable Outbox".into(),
+                ),
+                ActionType::CreateFolder => match session.create(&action.folder).await {
+                    Ok(()) => {
+                        let _ = session.subscribe(&action.folder).await;
+                        Ok(())
+                    }
+                    Err(e) => Err(format!("create folder {}: {e}", action.folder)),
+                },
+                ActionType::RenameFolder => {
+                    let dest = action
+                        .payload
+                        .as_deref()
+                        .ok_or_else(|| "rename folder missing destination".to_string())?;
+                    session
+                        .rename(&action.folder, dest)
+                        .await
+                        .map_err(|e| format!("rename folder {} → {dest}: {e}", action.folder))
+                }
+                ActionType::DeleteFolder => session
+                    .delete(&action.folder)
+                    .await
+                    .map_err(|e| format!("delete folder {}: {e}", action.folder)),
+                ActionType::SubscribeFolder => session
+                    .subscribe(&action.folder)
+                    .await
+                    .map_err(|e| format!("subscribe {}: {e}", action.folder)),
+                ActionType::UnsubscribeFolder => session
+                    .unsubscribe(&action.folder)
+                    .await
+                    .map_err(|e| format!("unsubscribe {}: {e}", action.folder)),
+            }
+        }
+        .await;
 
         match result {
             Ok(()) => {
@@ -1102,15 +1330,17 @@ pub async fn replay_pending_actions(
             }
             Err(e) => {
                 log::warn!("failed action replay {}: {e}", action.id);
-                // If the error indicates missing message / conflict, remove it so it doesn't block queue
-                if e.contains("no such message") || e.contains("not found") {
-                    let _ = store.remove_action(action.id);
-                } else {
-                    let _ = store.increment_action_retry(action.id);
-                    // P0.3: surface the failure so a stuck action is visible
-                    // and recoverable in the UI.
-                    let _ = store.set_action_error(action.id, Some(&e));
-                }
+                let _ = store.rollback_action_local(
+                    account.id,
+                    action.action_type,
+                    &action.folder,
+                    resolved_uid,
+                    effective_uidvalidity,
+                    action.message_id_header.as_deref(),
+                );
+                // Bounded exponential backoff. At the cap the row becomes
+                // `failed`, stays visible, and is replayed only after Retry.
+                let _ = store.record_action_failure(action.id, &e);
             }
         }
     }
@@ -1133,7 +1363,7 @@ struct ParsedMessage {
     references: Option<String>,
     list_unsubscribe: Option<String>,
     list_unsubscribe_post: Option<String>,
-    attachments: Vec<Attachment>,
+    attachments: Vec<AttachmentData>,
 }
 
 /// Parse a full RFC 5322 message and pull out everything the store keeps.
@@ -1162,15 +1392,45 @@ fn parse_full_message(raw_body: &[u8]) -> Option<ParsedMessage> {
     let attachments = parsed
         .attachments()
         .enumerate()
-        .map(|(i, att)| Attachment {
-            id: (i + 1) as u32,
-            message_id: 0, // reassigned by the caller's insert
-            filename: att
-                .attachment_name()
-                .unwrap_or(&format!("attachment_{i}"))
-                .to_string(),
-            size_bytes: att.contents().len() as u64,
-            on_disk: false,
+        .map(|(i, att)| {
+            let content_type = att
+                .content_type()
+                .map(|ct| {
+                    format!(
+                        "{}/{}",
+                        ct.c_type,
+                        ct.c_subtype.as_deref().unwrap_or("octet-stream")
+                    )
+                })
+                .unwrap_or_else(|| "application/octet-stream".into());
+            // Some servers include a filename on an inline part, which this
+            // parser classifies as Binary. A Content-ID is the authoritative
+            // signal for body-addressable inline content in that case.
+            let is_inline =
+                matches!(&att.body, PartType::InlineBinary(_)) || att.content_id().is_some();
+            let generated_name = if is_inline {
+                let subtype = att
+                    .content_type()
+                    .and_then(|ct| ct.c_subtype.as_deref())
+                    .unwrap_or("bin");
+                format!("inline_{}.{}", i + 1, subtype)
+            } else {
+                format!("attachment_{}", i + 1)
+            };
+            AttachmentData {
+                filename: att.attachment_name().unwrap_or(&generated_name).to_string(),
+                content_type,
+                content_id: att.content_id().and_then(|cid| {
+                    let cid = cid
+                        .trim()
+                        .trim_start_matches('<')
+                        .trim_end_matches('>')
+                        .trim();
+                    (!cid.is_empty()).then(|| cid.to_string())
+                }),
+                is_inline,
+                bytes: att.contents().to_vec(),
+            }
         })
         .collect();
     Some(ParsedMessage {
@@ -1308,9 +1568,8 @@ fn envelope_row(
         }
         _ => false,
     });
-    // The sync now fetches the full message (`BODY.PEEK[]`), so the snippet
-    // comes from the parsed plain-text body — not a raw MIME/HTML fragment —
-    // and the parsed body itself is persisted in `write_envelope`.
+    // Body fetches use the parsed plain-text body; header-only fetches leave
+    // the snippet empty so the store preserves any previously cached snippet.
     let snippet = match &parsed {
         Some(p) => snippet_from_bodies(&p.plain_body, p.html_body.as_deref()),
         None => fetch
@@ -1428,7 +1687,38 @@ pub async fn set_forwarded(
     Ok(())
 }
 
-pub async fn set_deleted(
+/// Move a UID to a destination mailbox. RFC 6851 MOVE is preferred; when the
+/// server lacks it, COPY + UID EXPUNGE provides the same no-bare-expunge
+/// semantics while scoping removal to this UID.
+pub async fn move_uid_to_mailbox(
+    session: &mut async_imap::Session<Stream>,
+    uid: u32,
+    destination: &str,
+) -> Result<(), String> {
+    match session.uid_mv(uid.to_string(), destination).await {
+        Ok(()) => Ok(()),
+        Err(move_error) => {
+            session
+                .uid_copy(uid.to_string(), destination)
+                .await
+                .map_err(|copy_error| {
+                    format!(
+                        "MOVE to {destination} failed ({move_error}); COPY fallback failed: {copy_error}"
+                    )
+                })?;
+            expunge_uid(session, uid).await
+        }
+    }
+}
+
+fn is_spam_mailbox(folder: &str) -> bool {
+    let lower = folder.to_ascii_lowercase();
+    lower.contains("spam") || lower.contains("junk")
+}
+
+/// Permanently remove exactly one UID. This is only used for messages already
+/// in Trash (or for COPY fallbacks), never as a mailbox-wide EXPUNGE.
+pub async fn expunge_uid(
     session: &mut async_imap::Session<Stream>,
     uid: u32,
 ) -> Result<(), String> {
@@ -1439,7 +1729,13 @@ pub async fn set_deleted(
         .try_collect::<Vec<_>>()
         .await
         .map_err(|e| format!("store deleted: {e}"))?;
-    let _ = session.expunge().await;
+    session
+        .uid_expunge(uid.to_string())
+        .await
+        .map_err(|e| format!("UID EXPUNGE {uid}: {e}"))?
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(|e| format!("UID EXPUNGE {uid}: {e}"))?;
     Ok(())
 }
 
@@ -1456,6 +1752,7 @@ mod tests {
         assert_eq!(detect_folder_kind("Archive", &[]), FolderKind::Archive);
         assert_eq!(detect_folder_kind("Trash", &[]), FolderKind::Trash);
         assert_eq!(detect_folder_kind("Junk Mail", &[]), FolderKind::Junk);
+        assert_eq!(detect_folder_kind("Junk Email", &[]), FolderKind::Junk);
         assert_eq!(detect_folder_kind("Spam", &[]), FolderKind::Junk);
         assert_eq!(detect_folder_kind("Receipts", &[]), FolderKind::Custom);
         assert_eq!(detect_folder_kind("Work/Projects", &[]), FolderKind::Custom);
@@ -1563,5 +1860,27 @@ mod tests {
         assert_eq!(parsed.cc.len(), 1);
         assert_eq!(parsed.bcc.len(), 0);
         assert_eq!(parsed.attachments.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_full_message_keeps_attachment_bytes_and_cid() {
+        let raw = concat!(
+            "From: sender@example.com\r\n",
+            "To: one@example.com\r\n",
+            "Subject: MIME\r\n",
+            "Content-Type: multipart/related; boundary=x\r\n\r\n",
+            "--x\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:logo\">\r\n",
+            "--x\r\nContent-Type: image/png\r\n",
+            "Content-Disposition: inline; filename=\"logo.png\"\r\n",
+            "Content-ID: <logo>\r\n",
+            "Content-Transfer-Encoding: base64\r\n\r\n",
+            "AQID\r\n--x--\r\n"
+        );
+        let parsed = parse_full_message(raw.as_bytes()).unwrap();
+        assert_eq!(parsed.attachments.len(), 1);
+        assert_eq!(parsed.attachments[0].filename, "logo.png");
+        assert_eq!(parsed.attachments[0].content_id.as_deref(), Some("logo"));
+        assert!(parsed.attachments[0].is_inline);
+        assert_eq!(parsed.attachments[0].bytes, vec![1, 2, 3]);
     }
 }

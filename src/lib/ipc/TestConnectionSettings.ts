@@ -7,8 +7,17 @@
  * argument (exactly like `add_account`) so the credential never lives in the
  * IPC contract.
  */
-export type TestConnectionSettings = { email: string, 
-/**
- * "imap" | "smtp" | "caldav".
- */
-protocol: string, server: string, port: number, tls: boolean, };
+export type TestConnectionSettings = {
+  email: string;
+  /**
+   * "imap" | "smtp" | "caldav".
+   */
+  protocol: string;
+  server: string;
+  port: number;
+  tls: boolean;
+  /**
+   * `ssl`, `starttls`, or `plain`.
+   */
+  security: string;
+};

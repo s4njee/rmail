@@ -446,6 +446,17 @@ export function MessageList() {
             </button>
           </Show>
         </div>
+        <div class="list-quick-filters" aria-label="Quick filters">
+          <button type="button" onClick={() => updateSearch("is:unread")}>
+            Unread
+          </button>
+          <button type="button" onClick={() => updateSearch("is:starred")}>
+            Starred
+          </button>
+          <button type="button" onClick={() => updateSearch("has:attachment")}>
+            Has attachment
+          </button>
+        </div>
       </header>
 
       {/* P1.1 bulk triage bar — only while >1 messages are selected. */}

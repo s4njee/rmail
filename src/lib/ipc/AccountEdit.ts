@@ -5,8 +5,20 @@
  * cadence/color). The address and protocol identify the account and are
  * immutable; a password, if changed, is passed separately to the command.
  */
-export type AccountEdit = { id: number, server: string, port: number, tls: boolean, 
-/**
- * `"every 2 min"`, `"on open"`, or `"manual"`.
- */
-syncMode: string, color: string, };
+export type AccountEdit = {
+  id: number;
+  server: string;
+  port: number;
+  tls: boolean;
+  imapSecurity: string;
+  allowPlaintextLogin: boolean;
+  smtpServer: string;
+  smtpPort: number;
+  smtpSecurity: string;
+  smtpUsername: string;
+  /**
+   * `"every 2 min"`, `"on open"`, or `"manual"`.
+   */
+  syncMode: string;
+  color: string;
+};

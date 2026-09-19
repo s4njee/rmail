@@ -16,6 +16,8 @@ import {
   exchangeOAuthCode,
   getOAuthInit,
   listProviderPresets,
+  oauthAvailableProviders,
+  type OAuthProviderId,
   onStoreEvent,
   removeCalendarSource,
   setSyncedFolders,
@@ -43,8 +45,18 @@ type OAuthSession = {
   clientId: string;
 };
 
-function authBadge(p: ProviderPreset): string {
-  if (p.auth === "oauth") return "Sign in with browser";
+function oauthProviderOf(p: ProviderPreset): OAuthProviderId {
+  return p.oauth_provider === "microsoft365" ? "microsoft365" : "google";
+}
+
+function authBadge(p: ProviderPreset, oauthAvailable: boolean): string {
+  if (p.auth === "oauth") {
+    if (oauthAvailable) return "Sign in with browser";
+    // Gmail still works with an app password; Microsoft has no fallback.
+    return oauthProviderOf(p) === "google"
+      ? "App password"
+      : "Not available in this build";
+  }
   if (p.auth === "app_password") return "App password";
   return "Password";
 }
@@ -84,6 +96,8 @@ export function Onboarding(props: { onDone: () => void }) {
   const [testReport, setTestReport] = createSignal<ConnectionTestReport | null>(
     null,
   );
+  const [smtpTestReport, setSmtpTestReport] =
+    createSignal<ConnectionTestReport | null>(null);
 
   // OAuth
   const [oauthSession, setOauthSession] = createSignal<OAuthSession | null>(
@@ -91,6 +105,12 @@ export function Onboarding(props: { onDone: () => void }) {
   );
   const [oauthCode, setOauthCode] = createSignal("");
   const [showPaste, setShowPaste] = createSignal(false);
+  const [usingGmailAppPassword, setUsingGmailAppPassword] = createSignal(false);
+  const [oauthAvailable, setOauthAvailable] = createSignal<
+    ReadonlySet<OAuthProviderId>
+  >(new Set());
+  const browserSignIn = (p: ProviderPreset) =>
+    p.auth === "oauth" && oauthAvailable().has(oauthProviderOf(p));
 
   // Created account + what to sync
   const [account, setAccount] = createSignal<Account | null>(null);
@@ -112,8 +132,16 @@ export function Onboarding(props: { onDone: () => void }) {
   const gotoProvider = () => {
     setStep("provider");
     if (presets().length === 0) {
-      void listProviderPresets()
-        .then(setPresets)
+      // Availability loads first so no provider briefly offers a sign-in
+      // this build can't complete.
+      void Promise.all([
+        oauthAvailableProviders().catch(() => [] as OAuthProviderId[]),
+        listProviderPresets(),
+      ])
+        .then(([available, list]) => {
+          setOauthAvailable(new Set(available));
+          setPresets(list);
+        })
         .catch((e) => setError(String(e)));
     }
   };
@@ -138,6 +166,9 @@ export function Onboarding(props: { onDone: () => void }) {
       // The loopback listener captures the redirect automatically; the 90s
       // wait falls back to the paste-the-code box.
       const result = await waitOAuthCode(init.redirect_uri, init.state);
+      // The user may have chosen the Gmail app-password route while the
+      // browser sign-in was open. Do not let a late redirect reopen OAuth.
+      if (oauthSession()?.state !== init.state) return;
       if (result.ok && result.code) {
         await finishOAuthCode(result.code);
       } else {
@@ -182,11 +213,20 @@ export function Onboarding(props: { onDone: () => void }) {
 
   const choosePreset = (p: ProviderPreset) => {
     setPreset(p);
+    setUsingGmailAppPassword(false);
     setError("");
     if (p.auth === "oauth") {
-      void startOAuth(
-        p.oauth_provider === "microsoft365" ? "microsoft365" : "google",
-      );
+      if (browserSignIn(p)) {
+        void startOAuth(oauthProviderOf(p));
+      } else if (oauthProviderOf(p) === "google") {
+        useGmailAppPassword();
+      } else {
+        setError(
+          "Signing in with Microsoft isn't available in this build of Quill. " +
+            "Microsoft no longer accepts passwords for Outlook.com or Microsoft 365 mail, " +
+            "so these accounts need browser sign-in.",
+        );
+      }
     } else {
       setServer(p.imap.host);
       setPort(p.imap.port);
@@ -197,6 +237,22 @@ export function Onboarding(props: { onDone: () => void }) {
 
   const chooseOther = () => {
     setPreset(null);
+    setUsingGmailAppPassword(false);
+    setError("");
+    setStep("connect");
+  };
+
+  const useGmailAppPassword = () => {
+    // Clearing the session also cancels the late-result check in startOAuth.
+    setOauthSession(null);
+    setShowPaste(false);
+    setBusy(false);
+    setPreset(null);
+    setUsingGmailAppPassword(true);
+    setServer("imap.gmail.com");
+    setPort(993);
+    setTls(true);
+    setServerTouched(false);
     setError("");
     setStep("connect");
   };
@@ -235,10 +291,31 @@ export function Onboarding(props: { onDone: () => void }) {
           server: server().trim(),
           port: port(),
           tls: tls(),
+          security: tls() ? "ssl" : "plain",
         },
         password(),
       );
       setTestReport(report);
+      const smtp = discovery()?.smtp ?? preset()?.smtp;
+      if (smtp) {
+        const smtpReport = await testConnectionSettings(
+          {
+            email: email().trim(),
+            protocol: "smtp",
+            server: smtp.host,
+            port: smtp.port,
+            tls: smtp.tls && smtp.port === 465,
+            security:
+              smtp.tls && smtp.port === 465
+                ? "ssl"
+                : smtp.tls
+                  ? "starttls"
+                  : "plain",
+          },
+          password(),
+        );
+        setSmtpTestReport(smtpReport);
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -251,6 +328,7 @@ export function Onboarding(props: { onDone: () => void }) {
     setError("");
     try {
       const protocol = preset()?.id === "proton" ? "Bridge" : "IMAP";
+      const smtp = discovery()?.smtp ?? preset()?.smtp;
       const acc = await addAccount(
         {
           address: email().trim(),
@@ -261,6 +339,15 @@ export function Onboarding(props: { onDone: () => void }) {
           sync_mode: "every 2 min",
         },
         password(),
+        smtp ? { host: smtp.host, port: smtp.port, tls: smtp.tls } : undefined,
+        smtp
+          ? smtp.tls && smtp.port === 465
+            ? "ssl"
+            : smtp.tls
+              ? "starttls"
+              : "plain"
+          : undefined,
+        email().trim(),
       );
       setAccount(acc);
       await loadSelection(acc);
@@ -479,7 +566,9 @@ export function Onboarding(props: { onDone: () => void }) {
                   onClick={() => choosePreset(p)}
                 >
                   <span class="onboarding__provider-name">{p.name}</span>
-                  <span class="onboarding__provider-badge">{authBadge(p)}</span>
+                  <span class="onboarding__provider-badge">
+                    {authBadge(p, browserSignIn(p))}
+                  </span>
                 </button>
               )}
             </For>
@@ -508,9 +597,11 @@ export function Onboarding(props: { onDone: () => void }) {
             <h1 class="onboarding__title">
               {oauthSession()
                 ? `Sign in with ${oauthSession()!.provider === "google" ? "Google" : "Microsoft 365"}`
-                : preset()
-                  ? `Connect ${preset()!.name}`
-                  : "Connect your account"}
+                : usingGmailAppPassword()
+                  ? "Connect Gmail with an app password"
+                  : preset()
+                    ? `Connect ${preset()!.name}`
+                    : "Connect your account"}
             </h1>
           </div>
 
@@ -545,12 +636,35 @@ export function Onboarding(props: { onDone: () => void }) {
                 </button>
               </div>
             </Show>
+            <Show when={oauthSession()!.provider === "google"}>
+              <div class="onboarding__help">
+                <p>
+                  Need to use an app password instead? Enable 2-Step
+                  Verification, create one in Google Account → Security → App
+                  passwords, then use it only in Quill.
+                </p>
+                <button
+                  type="button"
+                  class="btn btn--secondary"
+                  onClick={useGmailAppPassword}
+                >
+                  Use a Gmail app password
+                </button>
+              </div>
+            </Show>
           </Show>
 
           {/* Password / manual flow */}
           <Show when={!oauthSession()}>
             <Show when={preset() && preset()!.auth === "app_password"}>
               <p class="onboarding__help">{preset()!.help}</p>
+            </Show>
+            <Show when={usingGmailAppPassword()}>
+              <p class="onboarding__help">
+                Enable 2-Step Verification, then create a Gmail app password in
+                Google Account → Security → App passwords. Do not enter your
+                normal Google password here.
+              </p>
             </Show>
             <label class="add-field">
               <span>Email address</span>
@@ -569,7 +683,8 @@ export function Onboarding(props: { onDone: () => void }) {
             </label>
             <label class="add-field">
               <span>
-                {preset() && preset()!.auth === "app_password"
+                {usingGmailAppPassword() ||
+                (preset() && preset()!.auth === "app_password")
                   ? "App-specific password"
                   : "Password"}
               </span>
@@ -579,7 +694,8 @@ export function Onboarding(props: { onDone: () => void }) {
                 onInput={(e) => setPassword(e.currentTarget.value)}
                 autocomplete="current-password"
                 placeholder={
-                  preset() && preset()!.auth === "app_password"
+                  usingGmailAppPassword() ||
+                  (preset() && preset()!.auth === "app_password")
                     ? "xxxx xxxx xxxx xxxx"
                     : ""
                 }
@@ -656,7 +772,19 @@ export function Onboarding(props: { onDone: () => void }) {
                   role="status"
                 >
                   {report().ok
-                    ? `Connection OK — ${report().detail}`
+                    ? `IMAP: ${report().detail}`
+                    : formatIssues(report().issues)}
+                </div>
+              )}
+            </Show>
+            <Show when={smtpTestReport()}>
+              {(report) => (
+                <div
+                  class={`onboarding__test ${report().ok ? "ok" : "fail"}`}
+                  role="status"
+                >
+                  {report().ok
+                    ? `SMTP: ${report().detail}`
                     : formatIssues(report().issues)}
                 </div>
               )}

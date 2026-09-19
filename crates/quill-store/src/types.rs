@@ -42,6 +42,18 @@ pub struct Account {
     pub port: u16,
     /// Use TLS on the connection.
     pub tls: bool,
+    /// IMAP transport: `ssl`, `starttls`, or `plain` (localhost bridge only).
+    pub imap_security: String,
+    /// Whether password LOGIN may proceed without TLS for a localhost bridge.
+    pub allow_plaintext_login: bool,
+    /// SMTP submission hostname, distinct from the IMAP server.
+    pub smtp_server: String,
+    /// SMTP submission port.
+    pub smtp_port: u16,
+    /// SMTP transport: `ssl`, `starttls`, or `plain` (localhost bridge only).
+    pub smtp_security: String,
+    /// SMTP AUTH username; commonly, but not necessarily, the email address.
+    pub smtp_username: String,
     /// Number of folders the account has configured (0 = not shown in the
     /// Settings detail line).
     pub folder_count: u32,
@@ -81,6 +93,72 @@ pub enum ActionType {
     UnsubscribeFolder,
 }
 
+impl ActionType {
+    /// Canonical durable representation used by the action queue. Keep all
+    /// serialization in this one mapping so writers and readers cannot drift.
+    pub fn as_key(self) -> &'static str {
+        match self {
+            Self::MarkRead => "mark_read",
+            Self::MarkUnread => "mark_unread",
+            Self::Star => "star",
+            Self::Unstar => "unstar",
+            Self::Archive => "archive",
+            Self::Delete => "delete",
+            Self::Move => "move",
+            Self::MarkJunk => "mark_junk",
+            Self::MarkNotJunk => "mark_not_junk",
+            Self::Send => "send",
+            Self::MarkAnswered => "mark_answered",
+            Self::MarkForwarded => "mark_forwarded",
+            Self::CreateFolder => "create_folder",
+            Self::RenameFolder => "rename_folder",
+            Self::DeleteFolder => "delete_folder",
+            Self::SubscribeFolder => "subscribe_folder",
+            Self::UnsubscribeFolder => "unsubscribe_folder",
+        }
+    }
+
+    pub fn from_key(value: &str) -> Result<Self, String> {
+        match value {
+            "mark_read" => Ok(Self::MarkRead),
+            "mark_unread" => Ok(Self::MarkUnread),
+            "star" => Ok(Self::Star),
+            "unstar" => Ok(Self::Unstar),
+            "archive" => Ok(Self::Archive),
+            "delete" => Ok(Self::Delete),
+            "move" => Ok(Self::Move),
+            "mark_junk" => Ok(Self::MarkJunk),
+            "mark_not_junk" => Ok(Self::MarkNotJunk),
+            "send" => Ok(Self::Send),
+            "mark_answered" => Ok(Self::MarkAnswered),
+            "mark_forwarded" => Ok(Self::MarkForwarded),
+            "create_folder" => Ok(Self::CreateFolder),
+            "rename_folder" => Ok(Self::RenameFolder),
+            "delete_folder" => Ok(Self::DeleteFolder),
+            "subscribe_folder" => Ok(Self::SubscribeFolder),
+            "unsubscribe_folder" => Ok(Self::UnsubscribeFolder),
+            _ => Err(format!("unknown queued action type: {value}")),
+        }
+    }
+
+    pub fn requires_message_uid(self) -> bool {
+        matches!(
+            self,
+            Self::MarkRead
+                | Self::MarkUnread
+                | Self::Star
+                | Self::Unstar
+                | Self::Archive
+                | Self::Delete
+                | Self::Move
+                | Self::MarkJunk
+                | Self::MarkNotJunk
+                | Self::MarkAnswered
+                | Self::MarkForwarded
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export)]
 pub struct QueuedAction {
@@ -90,10 +168,17 @@ pub struct QueuedAction {
     pub action_type: ActionType,
     pub folder: String,
     pub uid: Option<u32>,
+    pub uidvalidity: Option<u32>,
+    pub message_id_header: Option<String>,
     pub payload: Option<String>,
     #[ts(type = "number")]
     pub created_at_ms: i64,
     pub retries: u32,
+    /// `pending` actions are replayable; `failed` actions reached the retry cap
+    /// and remain visible until the user retries or discards them.
+    pub status: String,
+    #[ts(type = "number")]
+    pub next_attempt_at_ms: i64,
     /// The last replay failure, when the action couldn't be applied (P0.3).
     /// `None` = pending or successful.
     pub last_error: Option<String>,
@@ -128,9 +213,9 @@ pub struct BulkActionResult {
     pub errors: Vec<String>,
 }
 
-/// A send-later message waiting in the durable Outbox (P1.1). The full
-/// outgoing payload never crosses IPC — it lives in the store and is read only
-/// by the flusher; the UI sees the display fields + the composer snapshot.
+/// A durable Outbox row. The full outgoing payload never crosses IPC — it
+/// lives in the store and is read only by the sender; the UI sees display
+/// fields, lifecycle state, and the composer snapshot for Edit.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -144,6 +229,13 @@ pub struct ScheduledMessage {
     pub to: Vec<String>,
     #[ts(type = "number")]
     pub created_at_ms: i64,
+    /// `queued`, `sending`, `sent`, or `failed`.
+    pub status: String,
+    #[ts(type = "number")]
+    pub retries: u32,
+    pub last_error: Option<String>,
+    #[ts(type = "number", optional)]
+    pub sent_at_ms: Option<i64>,
     /// Serialized composer snapshot so Edit can reopen the composer.
     pub draft: String,
 }
@@ -250,6 +342,12 @@ pub struct AccountEdit {
     pub server: String,
     pub port: u16,
     pub tls: bool,
+    pub imap_security: String,
+    pub allow_plaintext_login: bool,
+    pub smtp_server: String,
+    pub smtp_port: u16,
+    pub smtp_security: String,
+    pub smtp_username: String,
     /// `"every 2 min"`, `"on open"`, or `"manual"`.
     pub sync_mode: String,
     pub color: String,
@@ -476,6 +574,18 @@ pub struct Attachment {
     pub on_disk: bool,
 }
 
+/// A decoded MIME part ready to be persisted in the attachment cache.
+/// Unlike [`Attachment`], this is an internal store/sync contract and never
+/// crosses the IPC boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachmentData {
+    pub filename: String,
+    pub content_type: String,
+    pub content_id: Option<String>,
+    pub is_inline: bool,
+    pub bytes: Vec<u8>,
+}
+
 /// The full message, fetched on selection. The body is plain-text paragraphs
 /// and/or sanitized HTML (Epic 7.3).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -578,12 +688,26 @@ pub struct OutgoingMessage {
     pub bcc: Vec<String>,
     pub subject: String,
     pub body: String,
+    /// Reserved for clients that submit a complete rich-text body. The
+    /// composer deliberately leaves this empty: SMTP renders HTML from the
+    /// current plain-text body at send time.
     pub body_html: Option<String>,
+    /// The account's trusted rich HTML signature, appended/prepended while
+    /// rendering the current plain-text composer body.
+    pub html_signature: Option<String>,
+    /// The plain-text counterpart already present in `body`; it is removed
+    /// from the generated HTML to avoid duplicating an HTML signature.
+    pub plain_signature: Option<String>,
+    /// `"above_quote"` or `"bottom"`, used when placing `html_signature`.
+    pub signature_placement: Option<String>,
     pub in_reply_to: Option<String>,
     pub references: Option<String>,
     pub attachments: Vec<OutgoingAttachment>,
     pub original_message_id: Option<MessageId>,
     pub is_forward: Option<bool>,
+    /// Assigned by the backend before a send is queued or submitted, so
+    /// retries and the synced Sent copy retain one stable RFC 5322 identity.
+    pub message_id: Option<String>,
 }
 
 /// A signature configuration for an account / identity (Roadmap 3.5).
@@ -873,6 +997,9 @@ pub struct MailChangedUpdate {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export)]
 pub struct ConnectivityUpdate {
+    /// Account whose state changed; absent only for app-wide/demo updates.
+    #[ts(type = "number | null")]
+    pub account_id: Option<AccountId>,
     /// `"offline"` | `"syncing"` | `"synced"`.
     pub state: String,
     #[ts(type = "number | null")]
@@ -1184,6 +1311,8 @@ pub struct TestConnectionSettings {
     pub server: String,
     pub port: u16,
     pub tls: bool,
+    /// `ssl`, `starttls`, or `plain`.
+    pub security: String,
 }
 
 /// Result of a connection test: reachability + auth per stage, with issues.

@@ -50,6 +50,7 @@ import {
 import { effectiveSidebarWidth } from "../lib/panes";
 import {
   connectivityText,
+  useAccountConnectivity,
   useConnectivity,
   useFootprintBytes,
 } from "../lib/store-events";
@@ -81,6 +82,7 @@ export function Sidebar() {
   const savedSearches = useSavedSearches();
   const filter = useFilter();
   const connectivity = useConnectivity();
+  const accountConnectivity = useAccountConnectivity();
   const footprintBytes = useFootprintBytes();
   const section = useSection();
   // Calendar navigation state is shared with CalendarView (lib/calendar), so
@@ -136,6 +138,20 @@ export function Sidebar() {
     const next = !(accountOpen[id] ?? true);
     setAccountOpen(id, next);
     saveAccountExpanded({ ...accountOpen, [id]: next });
+  };
+
+  const accountStatus = (account: Account) => {
+    const update = accountConnectivity()[account.id];
+    if (update?.state === "syncing") return "Syncing…";
+    if (account.last_error) {
+      return /auth|login|credential|token/i.test(account.last_error)
+        ? "Needs sign-in"
+        : "Server unreachable";
+    }
+    if (update?.last_synced_at_ms != null) {
+      return `Up to date · ${new Date(update.last_synced_at_ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+    }
+    return account.connected ? "Up to date" : "Not connected";
   };
 
   const toggleFolder = async (folder: Folder) => {
@@ -546,6 +562,12 @@ export function Sidebar() {
                         />
                         <span class="sidebar__account-address">
                           {account.address}
+                        </span>
+                        <span
+                          class="sidebar__account-status"
+                          title={accountStatus(account)}
+                        >
+                          {accountStatus(account)}
                         </span>
                       </button>
                       <Show when={expanded()}>
