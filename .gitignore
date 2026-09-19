@@ -11,3 +11,6 @@ scratch
 
 # Local OAuth test credentials (see oauth-config.example.json)
 oauth-config.json
+
+# Assembled website (scripts/build-site.sh)
+dist-site

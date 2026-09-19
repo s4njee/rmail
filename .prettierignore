@@ -8,3 +8,4 @@ pnpm-lock.yaml
 Cargo.lock
 plan2.md
 design_handoff_quill_mail
+dist-site

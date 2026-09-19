@@ -1,0 +1,403 @@
+@font-face {
+  font-family: "Instrument Sans";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/InstrumentSans-latin.woff2") format("woff2");
+}
+
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --border: #e3e7ec;
+  --text: #0f1720;
+  --body: #2a3642;
+  --muted: #5c6874;
+  --accent: #3b5bdb;
+  --accent-ink: #ffffff;
+  --rail: #e8590c;
+  --shadow: 0 1px 2px rgb(15 23 32 / 6%), 0 12px 40px rgb(15 23 32 / 10%);
+  --radius: 14px;
+  --measure: 68ch;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1319;
+    --surface: #151c24;
+    --border: #243040;
+    --text: #eef2f6;
+    --body: #c7d0da;
+    --muted: #8d9aa8;
+    --accent: #7b93f0;
+    --accent-ink: #0e1319;
+    --rail: #ff8a4c;
+    --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 40px rgb(0 0 0 / 35%);
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--body);
+  font-family:
+    "Instrument Sans",
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.wrap {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* Header */
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+}
+
+.brand img {
+  width: 32px;
+  height: 32px;
+}
+
+.site-nav {
+  display: flex;
+  gap: 20px;
+  font-size: 15px;
+}
+
+.site-nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.site-nav a:hover,
+.site-nav a[aria-current="page"] {
+  color: var(--text);
+}
+
+/* Hero */
+.hero {
+  padding: 56px 0 40px;
+  text-align: center;
+}
+
+.pill {
+  display: inline-block;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.pill::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--rail);
+  vertical-align: 1px;
+}
+
+h1,
+h2,
+h3 {
+  color: var(--text);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.hero h1 {
+  margin: 20px auto 16px;
+  max-width: 16ch;
+  font-size: clamp(36px, 6vw, 60px);
+  font-weight: 700;
+}
+
+.lede {
+  margin: 0 auto;
+  max-width: 44ch;
+  color: var(--muted);
+  font-size: clamp(18px, 2.2vw, 21px);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 32px;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  padding: 12px 22px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 16px;
+  text-decoration: none;
+}
+
+.button--primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.note {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.shot {
+  margin: 48px auto 0;
+  max-width: 1080px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  background: var(--surface);
+}
+
+.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Features */
+.section {
+  padding: 72px 0 8px;
+}
+
+.section h2 {
+  margin: 0 0 8px;
+  font-size: clamp(26px, 3.4vw, 34px);
+}
+
+.section > .wrap > p {
+  margin: 0 0 32px;
+  max-width: var(--measure);
+  color: var(--muted);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  padding: 22px 22px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.card h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.card p {
+  margin: 0;
+  font-size: 15.5px;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    600 13px/1.6 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  text-align: center;
+}
+
+.data-flow {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.data-flow li {
+  padding: 16px 20px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 10px 10px 0;
+  background: var(--surface);
+  max-width: var(--measure);
+}
+
+/* Long-form pages */
+.doc {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 32px 24px 24px;
+}
+
+.doc h1 {
+  margin: 16px 0 6px;
+  font-size: clamp(32px, 5vw, 44px);
+}
+
+.doc .meta {
+  margin: 0 0 32px;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.doc h2 {
+  margin: 40px 0 10px;
+  font-size: 23px;
+}
+
+.doc h3 {
+  margin: 24px 0 6px;
+  font-size: 18px;
+}
+
+.doc ul {
+  padding-left: 22px;
+}
+
+.doc li + li {
+  margin-top: 6px;
+}
+
+.callout {
+  margin: 24px 0;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--rail);
+  border-radius: 0 10px 10px 0;
+  background: var(--surface);
+}
+
+.callout p {
+  margin: 0;
+}
+
+.callout p + p {
+  margin-top: 10px;
+}
+
+/* Footer */
+.site-footer {
+  margin-top: 88px;
+  padding: 28px 0 40px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.site-footer .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+.site-footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.site-footer a {
+  color: var(--muted);
+}
+
+@media (max-width: 560px) {
+  body {
+    font-size: 16px;
+  }
+
+  .wrap {
+    padding: 0 16px;
+  }
+
+  .doc {
+    padding: 24px 16px;
+  }
+
+  .site-nav {
+    gap: 14px;
+  }
+
+  .nav-wide {
+    display: none;
+  }
+
+  .hero {
+    padding-top: 32px;
+  }
+
+  .section {
+    padding-top: 52px;
+  }
+}
